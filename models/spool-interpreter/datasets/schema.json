@@ -1,0 +1,14 @@
+{
+  "name": "spool_interpreter_sample",
+  "fields": {
+    "sample_id": "string",
+    "source": "string",
+    "sanitized_spool": "string",
+    "status": "string",
+    "return_code": "string|null",
+    "failure_category": "string",
+    "root_cause": "string",
+    "suggested_fix": "string",
+    "split": "string"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "jcl_validator_sample",
+  "fields": {
+    "sample_id": "string",
+    "source": "string",
+    "sanitized_jcl": "string",
+    "is_valid": "boolean",
+    "error_category": "string|null",
+    "error_line": "integer|null",
+    "error_column": "integer|null",
+    "suggestion": "string|null",
+    "split": "string"
+  }
+}

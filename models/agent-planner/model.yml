@@ -1,0 +1,75 @@
+# Agent Planner - LoRA-tuned local workflow agent for Flow Studio.
+#
+# Task: agent_planning
+# Runtime: candle (CandleGenerativeBackend)
+# Primary candidate: Qwen/Qwen3-4B-Instruct-2507
+# Fallback candidate: HuggingFaceTB/SmolLM3-3B
+
+name: agent-planner
+model_id: agent-planner:v1
+task: agent_planning
+runtime: candle
+version: v1
+description: "Local Flow Studio workflow-planning agent that emits strict JSON plans, tool calls, and Flow DSL edits."
+base_model: Qwen/Qwen3-4B-Instruct-2507
+
+data:
+  seed: 7331
+  schema: datasets/schema.json
+  prompt_spec: datasets/prompt_spec.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/eval_samples.jsonl
+  split_ratios: [0.7, 0.2, 0.1]
+
+training:
+  model_id: Qwen/Qwen3-4B-Instruct-2507
+  max_input_tokens: 2048
+  batch_size: 1
+  grad_accum: 8
+  learning_rate: 2.0e-5
+  epochs: 5
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  seed: 7331
+  precision: fp32
+  grad_checkpointing: true
+  eval_steps: 9999
+  save_steps: 100
+  logging_steps: 10
+  max_steps: -1
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+smoke:
+  base_model: Qwen/Qwen3-0.6B
+  max_input_tokens: 1024
+  batch_size: 1
+  grad_accum: 2
+  learning_rate: 5.0e-4
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  precision: fp32
+  grad_checkpointing: false
+  eval_steps: 5
+  save_steps: 5
+  logging_steps: 2
+  max_steps: 6
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+packaging:
+  max_input_tokens: 2048
+  expected_latency_ms: 2500
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.9
+    low: 0.6

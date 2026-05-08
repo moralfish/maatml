@@ -1,0 +1,85 @@
+# JCL Validator - multi-head BERT classifier for JCL syntax/semantic errors.
+#
+# Task: jcl_validation
+# Runtime: candle (heads in flow_heads.safetensors, base model in model.safetensors)
+#
+# This file consolidates what was previously split across:
+#   configs/jcl_validator/synth.yaml      (data: section below)
+#   configs/jcl_validator/train.yaml      (training: section below)
+#   configs/jcl_validator/train_smoke.yaml (smoke: section below)
+
+name: jcl-validator
+model_id: jcl-validator:v1
+task: jcl_validation
+runtime: candle
+version: v1
+description: "Multi-head BERT classifier that flags JCL syntax/semantic errors before the job is submitted."
+base_model: google-bert/bert-base-uncased
+
+# Data preparation: synthetic generation from JCL templates with injected defects.
+# `prepare_jcl` reads this section.
+data:
+  seed: 1337
+  template_dir: datasets/templates
+  split_ratios: [0.8, 0.1, 0.1]
+  n_valid: 2000
+  n_per_class:
+    missing_dd: 2000
+    invalid_job_card: 2000
+    unresolved_symbolic_parameter: 2000
+    continuation_error: 2000
+    invalid_exec_statement: 2000
+    invalid_dataset_reference_structure: 2000
+    other: 2000
+
+# Training: fine-tunes the BERT base with three classification heads
+# (sequence-level, error-category, line-level) governed by `head_weights`.
+training:
+  model_id: google-bert/bert-base-uncased
+  max_input_tokens: 512
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 2.0e-5
+  epochs: 3
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  seed: 1337
+  precision: fp32
+  grad_checkpointing: true
+  eval_steps: 200
+  save_steps: 200
+  logging_steps: 25
+  max_steps: -1
+  head_weights:
+    seq: 1.0
+    cat: 1.0
+    line: 0.5
+
+# Smoke training: tiny BERT, 10-step run for CI / pipeline sanity checks.
+smoke:
+  base_model: hf-internal-testing/tiny-random-BertModel
+  max_input_tokens: 256
+  batch_size: 4
+  grad_accum: 1
+  learning_rate: 5.0e-4
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  precision: fp32
+  grad_checkpointing: false
+  eval_steps: 5
+  save_steps: 5
+  logging_steps: 2
+  max_steps: 10
+  head_weights:
+    seq: 1.0
+    cat: 1.0
+    line: 0.5
+
+# Packaging: manifest fields the trained checkpoint can't introspect.
+packaging:
+  max_input_tokens: 512
+  expected_latency_ms: 500
+  confidence_thresholds:
+    high: 0.9
+    low: 0.6
