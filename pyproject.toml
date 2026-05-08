@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flow-ml"
+version = "0.1.0"
+description = "Training and packaging workspace for Flow AI models"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Nedal Elghamry" }
+]
+dependencies = [
+  "pydantic>=2.7",
+  "pyyaml>=6.0",
+  "rich>=13.7",
+  "typer>=0.12"
+]
+
+[project.scripts]
+# Console-script entry point so `flow_ml <cmd>` works from any shell after
+# `pip install -e .`.  Equivalent to `python -m flow_ml.cli <cmd>`.
+flow_ml = "flow_ml.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "ruff>=0.5",
+  "mypy>=1.10"
+]
+ml = [
+  "torch>=2.3",
+  "transformers>=5.0",
+  "datasets>=2.19",
+  "evaluate>=0.4",
+  "tokenizers>=0.19",
+  "safetensors>=0.4",
+  "accelerate>=0.30",
+  "peft>=0.10",
+  "sentencepiece>=0.2"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

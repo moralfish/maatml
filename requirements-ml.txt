@@ -1,0 +1,9 @@
+torch>=2.3
+transformers>=5.0
+datasets>=2.19
+evaluate>=0.4
+tokenizers>=0.19
+safetensors>=0.4
+accelerate>=0.30
+peft>=0.10
+sentencepiece>=0.2

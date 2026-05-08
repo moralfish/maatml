@@ -1,0 +1,28 @@
+# Python / IDE / OS
+__pycache__/
+*.pyc
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+.claude/settings.local.json
+
+# Packaging / build metadata
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Per-model generated artifacts: keep folder structure, ignore content
+models/*/output/**
+!models/*/output/.gitkeep
+
+# Generated dataset files (augmented from seeds at prepare time)
+models/*/datasets/samples/augmented_*.jsonl
+models/*/datasets/samples/*.parquet
+
+# Built archives
+*.fm
