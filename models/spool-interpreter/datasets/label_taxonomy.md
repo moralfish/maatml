@@ -11,7 +11,7 @@ Generic z/OS spool categories:
 - other
 
 Smart/RESTART and Smart/RRSAF specific categories. The full DCA / SQLCODE /
-abend reason mapping lives in `flow-starter/docs/smart-restart/messages.md`
+abend reason mapping lives in `flow-studio/docs/smart-restart/messages.md`
 and is synced into `prompt_spec.json` via
 `flow-ml/scripts/sync-smart-restart-knowledge.sh`:
 - smart_restart_resource_unavailable - Db2 down, terminating, forcibly

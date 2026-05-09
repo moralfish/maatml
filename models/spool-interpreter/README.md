@@ -61,6 +61,6 @@ Reports land in `output/eval/<run-name>.{json,md}`.
 
 ## Runtime contract
 
-flow-starter's `CandleGenerativeBackend` loads the merged base+LoRA weights,
+flow-studio's `CandleGenerativeBackend` loads the merged base+LoRA weights,
 renders the user message through `prompt_spec.json`'s template, decodes greedy
 to the configured stop sequence, then JSON-extracts the response payload.

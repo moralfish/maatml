@@ -1,6 +1,6 @@
 """Tests for the `flow_dsl_py` PyO3 binding and its use in the eval round-trip filter.
 
-The binding is built from `flow-starter/crates/flow-dsl-py` via
+The binding is built from `flow-studio/crates/flow-dsl-py` via
 `maturin develop --release`. When it isn't installed (fresh clone, CI
 without the build step) these tests are skipped rather than failing -
 the binding is an optional eval/dataset-quality dependency, not a
@@ -18,7 +18,7 @@ SEED_SAMPLES = REPO_ROOT / "models" / "dsl-generator" / "datasets" / "samples" /
 
 flow_dsl_py = pytest.importorskip(
     "flow_dsl_py",
-    reason="flow_dsl_py not installed (run `cd flow-starter/crates/flow-dsl-py && maturin develop --release`)",
+    reason="flow_dsl_py not installed (run `cd flow-studio/crates/flow-dsl-py && maturin develop --release`)",
 )
 
 

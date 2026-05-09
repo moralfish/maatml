@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Copy the compiled DSL spec from the flow-starter repo into the
+# Copy the compiled DSL spec from the flow-studio repo into the
 # dsl-generator's prompt_spec.json `system` field.
 #
 # Why a copy and not an import or symlink: flow-ml ships standalone (e.g.
-# on a training box without flow-starter checked out), so the model
+# on a training box without flow-studio checked out), so the model
 # package must carry the spec text it was trained against. We also stamp
 # the source git-sha into a `_provenance` block on the JSON so a quick
-# `git log -1 <sha>` from the flow-starter side identifies which exact
+# `git log -1 <sha>` from the flow-studio side identifies which exact
 # adapter catalog the model was grounded against.
 #
 # Usage:
-#   bash flow-ml/scripts/sync-spec-from-flow-starter.sh
-#   FLOW_STARTER=/path/to/flow-starter bash flow-ml/scripts/sync-spec-from-flow-starter.sh
+#   bash flow-ml/scripts/sync-spec-from-flow-studio.sh
+#   FLOW_STARTER=/path/to/flow-studio bash flow-ml/scripts/sync-spec-from-flow-studio.sh
 #
-# Defaults to ../flow-starter relative to the flow-ml repo root.
+# Defaults to ../flow-studio relative to the flow-ml repo root.
 #
 # Idempotent: re-running with no changes upstream produces no diff. Forces
 # a fresh build of `docs/dsl/spec_compiled.md` first via
@@ -23,11 +23,11 @@
 set -euo pipefail
 
 FLOW_ML_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FLOW_STARTER="${FLOW_STARTER:-$(cd "$FLOW_ML_ROOT/../flow-starter" && pwd)}"
+FLOW_STARTER="${FLOW_STARTER:-$(cd "$FLOW_ML_ROOT/../flow-studio" && pwd)}"
 
 if [[ ! -d "$FLOW_STARTER" ]]; then
-  echo "flow-starter checkout not found at $FLOW_STARTER" >&2
-  echo "  set FLOW_STARTER=/path/to/flow-starter and re-run" >&2
+  echo "flow-studio checkout not found at $FLOW_STARTER" >&2
+  echo "  set FLOW_STARTER=/path/to/flow-studio and re-run" >&2
   exit 2
 fi
 
@@ -67,7 +67,7 @@ system = spec_path.read_text(encoding="utf-8")
 spec = json.loads(prompt_spec_path.read_text(encoding="utf-8"))
 spec["system"] = system
 spec["_provenance"] = {
-    "source": "flow-starter:docs/dsl/spec_compiled.md",
+    "source": "flow-studio:docs/dsl/spec_compiled.md",
     "git_sha": source_sha,
     "synced_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
 }

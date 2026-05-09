@@ -549,7 +549,7 @@ def validate(dsl: str, validator_bin: str) -> None:
 def default_validator_bin() -> str:
     # Prefer the workspace target dir so a developer who has already run
     # `cargo build` does not need to re-build under a different profile.
-    flow_starter = REPO.parent / "flow-starter"
+    flow_starter = REPO.parent / "flow-studio"
     candidate = flow_starter / "target" / "debug" / "flow-dsl-validate"
     if candidate.exists():
         return str(candidate)

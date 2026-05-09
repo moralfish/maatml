@@ -4,7 +4,7 @@
 Phase 4c of the frontier-dsl-generator plan. Two batches are appended:
 
   Batch A (12 entries) - canonical: the twelve canonical examples from
-    `flow-starter/docs/dsl/examples.md`, ported here so the model sees
+    `flow-studio/docs/dsl/examples.md`, ported here so the model sees
     them in the train split (not just the eval split). IDs:
     `seed-canonical-001..012`.
 
@@ -723,7 +723,7 @@ def validate(dsl: str, validator_bin: str) -> None:
 
 
 def default_validator_bin() -> str:
-    flow_starter = REPO.parent / "flow-starter"
+    flow_starter = REPO.parent / "flow-studio"
     candidate = flow_starter / "target" / "debug" / "flow-dsl-validate"
     if candidate.exists():
         return str(candidate)

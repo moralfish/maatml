@@ -2,7 +2,7 @@
 
 Adds ~25 hand-curated spool snippets covering each of the four
 smart_restart_* failure categories defined in
-flow-starter/docs/smart-restart/messages.md, plus one or two examples in
+flow-studio/docs/smart-restart/messages.md, plus one or two examples in
 the existing categories that absorb specific DCA codes
 (dataset_resolution_failure, permission_or_security_failure, execution_abend).
 

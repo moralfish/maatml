@@ -68,7 +68,7 @@ python -m flow_ml.cli verify models/dsl-generator/output/dist/dsl-generator-v1.f
   string-valued `dsl` field.
 - **`parser_roundtrip`** - fraction of generated DSL strings that the real
   Rust `flow_dsl::parse` accepts (via the `flow_dsl_py` PyO3 binding from
-  `flow-starter/crates/flow-dsl-py`). When the binding is not installed, the
+  `flow-studio/crates/flow-dsl-py`). When the binding is not installed, the
   fallback is a heuristic check that the DSL has a `flow "..."` header.
 - **`node_count_jaccard`** - sample-wise Jaccard of node IDs between gold and
   prediction; not a strict equality (the model is allowed to choose its own

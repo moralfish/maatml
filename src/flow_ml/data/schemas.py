@@ -33,7 +33,7 @@ class FailureCategory(str, Enum):
     scheduler_or_environment_issue = "scheduler_or_environment_issue"
     other = "other"
     # Smart/RESTART and Smart/RRSAF specific buckets. Sourced from
-    # `flow-starter/docs/smart-restart/messages.md`. Synced into the
+    # `flow-studio/docs/smart-restart/messages.md`. Synced into the
     # spool-interpreter `prompt_spec.json` `failure_categories` array via
     # `flow-ml/scripts/sync-smart-restart-knowledge.sh`.
     smart_restart_resource_unavailable = "smart_restart_resource_unavailable"

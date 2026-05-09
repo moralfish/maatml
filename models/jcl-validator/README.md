@@ -66,8 +66,8 @@ Reports land in `output/eval/<run-name>.{json,md}`.
 
 ## Runtime contract
 
-The Candle backend at `flow-starter/crates/flow-model-runtime/src/backends/jcl.rs`
+The Candle backend at `flow-studio/crates/flow-model-runtime/src/backends/jcl.rs`
 loads `model.safetensors` plus the auxiliary `flow_heads.safetensors` and
 `labels.json`, runs a single forward pass, and returns the three head outputs.
-A `JclValidation` Tauri command in flow-starter wraps this for the canvas's
+A `JclValidation` Tauri command in flow-studio wraps this for the canvas's
 "Validate JCL" node.

@@ -414,7 +414,7 @@ def evaluate_dsl(
     - `edge_count_match`: fraction where the count of `-->` lines matches gold.
 
     The PyO3 binding (`flow_dsl_py`) is built from
-    `flow-starter/crates/flow-dsl-py` via `maturin develop`. If it isn't
+    `flow-studio/crates/flow-dsl-py` via `maturin develop`. If it isn't
     installed in the active environment, `parser_roundtrip` falls back to
     `dsl_header_present` so the evaluator never hard-fails on a missing
     optional dep; a warning is printed once.
@@ -435,7 +435,7 @@ def evaluate_dsl(
         _dsl_py = None
         console.print(
             "[yellow]flow_dsl_py not installed; parser_roundtrip + structural metrics will degrade.[/] "
-            "Build it with `cd flow-starter/crates/flow-dsl-py && maturin develop --release`."
+            "Build it with `cd flow-studio/crates/flow-dsl-py && maturin develop --release`."
         )
 
     model_dir = Path(model_dir)

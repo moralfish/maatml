@@ -8,7 +8,7 @@ This repo is the Python-first training, evaluation, and packaging workspace for 
 |---|---|
 | Training & evaluation | Python — `src/flow_ml/` package, `flow_ml` CLI |
 | Packaging | Python — writes safetensors + tokenizer + manifest into a `.fm` archive |
-| Runtime | Candle (Rust) inside the flow-starter orchestration core |
+| Runtime | Candle (Rust) inside the flow-studio orchestration core |
 
 ## Models
 
@@ -177,7 +177,7 @@ The `.fm` archive is a self-contained import artifact: Flow Studio's Models draw
 
 ## Manifest contract
 
-`src/flow_ml/models/manifest.py` defines `ModelManifest`, which is the shared contract between this Python training workspace and the Candle runtime backends in flow-starter. Any field added here must have a corresponding reader in the Rust side.
+`src/flow_ml/models/manifest.py` defines `ModelManifest`, which is the shared contract between this Python training workspace and the Candle runtime backends in flow-studio. Any field added here must have a corresponding reader in the Rust side.
 
 ## Apple Silicon / MPS notes
 

@@ -110,7 +110,7 @@ def test_package_dsl_emits_dsl_generation_task(tmp_path: Path) -> None:
 
     We don't exercise the transformers forward pass here (that would require
     pulling a base model); instead we verify the manifest contract that the
-    Candle runtime in flow-starter relies on.
+    Candle runtime in flow-studio relies on.
     """
     from flow_ml.packaging.package_model import package_dsl
 
