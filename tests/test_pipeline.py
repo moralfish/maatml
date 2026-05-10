@@ -14,22 +14,24 @@ from flow_ml.data.pipeline import prepare_jcl, prepare_spool
 from flow_ml.utils.io import iter_jsonl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-JCL_TEMPLATES = REPO_ROOT / "models" / "jcl-validator" / "datasets" / "templates"
+JCL_SEEDS = REPO_ROOT / "models" / "jcl-validator" / "datasets" / "samples" / "seed_samples.jsonl"
 SPOOL_SEEDS = REPO_ROOT / "models" / "spool-interpreter" / "datasets" / "samples" / "seed_samples.jsonl"
 
 
-def _make_model_folder(tmp_path: Path, model_yml: str, *, copy_templates: bool = False, copy_seeds: bool = False) -> Path:
-    """Build a tmp `models/foo/` folder containing model.yml and copies of any
-    real data the test points at, then return the folder path."""
+def _make_model_folder(
+    tmp_path: Path,
+    model_yml: str,
+    *,
+    seeds_path: Path | None = None,
+) -> Path:
+    """Build a tmp `models/foo/` folder containing model.yml and a copy of the
+    seed samples file, then return the folder path."""
     mdir = tmp_path / "model"
     mdir.mkdir()
     (mdir / "model.yml").write_text(model_yml, encoding="utf-8")
-    (mdir / "datasets").mkdir()
-    if copy_templates:
-        shutil.copytree(JCL_TEMPLATES, mdir / "datasets" / "templates")
-    if copy_seeds:
-        (mdir / "datasets" / "samples").mkdir()
-        shutil.copy2(SPOOL_SEEDS, mdir / "datasets" / "samples" / "seed_samples.jsonl")
+    (mdir / "datasets" / "samples").mkdir(parents=True)
+    if seeds_path is not None:
+        shutil.copy2(seeds_path, mdir / "datasets" / "samples" / "seed_samples.jsonl")
     return mdir
 
 
@@ -41,26 +43,28 @@ model_id: foo:v1
 task: jcl_validation
 data:
   seed: 7
-  template_dir: datasets/templates
+  seed_samples: datasets/samples/seed_samples.jsonl
   split_ratios: [0.6, 0.2, 0.2]
-  n_valid: 5
-  n_per_class:
-    missing_dd: 5
-    invalid_job_card: 5
-    unresolved_symbolic_parameter: 5
-    continuation_error: 5
-    invalid_exec_statement: 5
-    invalid_dataset_reference_structure: 5
-    other: 5
+  raw_field: request
 """,
-        copy_templates=True,
+        seeds_path=JCL_SEEDS,
     )
     md = load_model_def(mdir)
+    seed_count = sum(
+        1 for line in JCL_SEEDS.read_text().splitlines() if line.strip()
+    )
     summary = prepare_jcl(md)
-    assert sum(summary["split_counts"].values()) == 7 * 5 + 5
+    total = sum(summary["split_counts"].values())
+    assert total == seed_count
     for split in ("train", "val", "test"):
-        rows = list(iter_jsonl(md.prepared_dir / f"{split}.jsonl"))
+        path = md.prepared_dir / f"{split}.jsonl"
+        assert path.exists()
+        rows = list(iter_jsonl(path))
         assert len(rows) == summary["split_counts"][split]
+        for row in rows:
+            assert row["request"]
+            assert row["expected_validation_result"]
+            assert row["category"]
     assert (md.prepared_dir / "dataset_card.md").exists()
 
 
@@ -76,7 +80,7 @@ data:
   split_ratios: [0.5, 0.25, 0.25]
   raw_field: raw_spool
 """,
-        copy_seeds=True,
+        seeds_path=SPOOL_SEEDS,
     )
     md = load_model_def(mdir)
     # Count seeds dynamically: this corpus has grown over time as new
@@ -96,5 +100,8 @@ data:
         rows = list(iter_jsonl(path))
         assert len(rows) == summary["split_counts"][split]
         for row in rows:
-            assert row["sanitized_spool"]
+            assert row["request"]
+            assert row["expected_interpretation"]
+            assert row["category"]
             assert "raw_spool" not in row
+            assert "sanitized_spool" not in row

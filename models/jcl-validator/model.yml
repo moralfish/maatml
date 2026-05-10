@@ -1,85 +1,94 @@
-# JCL Validator - multi-head BERT classifier for JCL syntax/semantic errors.
+# JCL Validator - LoRA-tuned Qwen3-1.7B that emits structured JCL validation
+# results from sanitized JCL input.
 #
 # Task: jcl_validation
-# Runtime: candle (heads in flow_heads.safetensors, base model in model.safetensors)
+# Runtime: candle (CandleGenerativeBackend in flow-studio's flow-model-runtime)
+# Spec:    docs/flow_inference_model_training_instructions.md (per FlowGraphGenerator template)
 #
-# This file consolidates what was previously split across:
-#   configs/jcl_validator/synth.yaml      (data: section below)
-#   configs/jcl_validator/train.yaml      (training: section below)
-#   configs/jcl_validator/train_smoke.yaml (smoke: section below)
+# Architecture: pure SFT on 3-message conversations (system/user/assistant).
+# Replaces the previous multi-head BERT classifier. Latency goes from ~100 ms
+# (BERT) → ~1-2 s (Qwen3-1.7B SFT) — acceptable for a one-shot pre-submit
+# validation step. Quality + interpretability win: model emits a structured
+# JclValidationResult JSON with line numbers, severities, and suggestions
+# instead of opaque classifier outputs.
+#
+# Cross-platform target: Mac / Windows / Linux with 16 GB RAM minimum.
+# Qwen3-1.7B at fp16 packs to ~3.4 GB on disk and ~4-5 GB total runtime.
 
 name: jcl-validator
 model_id: jcl-validator:v1
 task: jcl_validation
 runtime: candle
 version: v1
-description: "Multi-head BERT classifier that flags JCL syntax/semantic errors before the job is submitted."
-base_model: google-bert/bert-base-uncased
+description: "LoRA-tuned Qwen3-1.7B that emits JclValidationResult JSON from sanitized JCL input."
+base_model: Qwen/Qwen3-1.7B
 
-# Data preparation: synthetic generation from JCL templates with injected defects.
-# `prepare_jcl` reads this section.
 data:
   seed: 1337
-  template_dir: datasets/templates
+  prompt_spec: datasets/prompt_spec.json
+  schema: datasets/jcl_validation_schema.json
+  contracts: datasets/node_contracts.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/test_prompt_set.jsonl
+  raw_field: request
   split_ratios: [0.8, 0.1, 0.1]
-  n_valid: 2000
-  n_per_class:
-    missing_dd: 2000
-    invalid_job_card: 2000
-    unresolved_symbolic_parameter: 2000
-    continuation_error: 2000
-    invalid_exec_statement: 2000
-    invalid_dataset_reference_structure: 2000
-    other: 2000
 
-# Training: fine-tunes the BERT base with three classification heads
-# (sequence-level, error-category, line-level) governed by `head_weights`.
 training:
-  model_id: google-bert/bert-base-uncased
-  max_input_tokens: 512
-  batch_size: 8
-  grad_accum: 2
-  learning_rate: 2.0e-5
-  epochs: 3
+  model_id: Qwen/Qwen3-1.7B
+  max_input_tokens: 4096
+  # v3 at batch_size 2 / bf16 produced grad_norm=8.6e13 and an MPS
+  # segfault at step 20 on the 1000-sample corpus. Same class of bug
+  # FGG hit earlier; matching FGG's stable config (batch_size 1,
+  # grad_accum 16, fp32) here too. ~2x slower per step but reliable.
+  batch_size: 1
+  grad_accum: 16
+  learning_rate: 1.0e-4
+  # epochs 6 on the ~1000-sample corpus (v3): the 4-epoch v2 model
+  # exhibited token-level mode collapse on rare error codes; more
+  # passes give the model time to internalise minority categories.
+  epochs: 6
   weight_decay: 0.01
-  warmup_ratio: 0.1
+  warmup_ratio: 0.05
   seed: 1337
   precision: fp32
-  grad_checkpointing: true
-  eval_steps: 200
+  grad_checkpointing: false
+  eval_steps: 9999
   save_steps: 200
-  logging_steps: 25
+  logging_steps: 20
   max_steps: -1
-  head_weights:
-    seq: 1.0
-    cat: 1.0
-    line: 0.5
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
 
-# Smoke training: tiny BERT, 10-step run for CI / pipeline sanity checks.
 smoke:
-  base_model: hf-internal-testing/tiny-random-BertModel
-  max_input_tokens: 256
-  batch_size: 4
-  grad_accum: 1
+  base_model: Qwen/Qwen3-0.6B
+  max_input_tokens: 2048
+  batch_size: 1
+  grad_accum: 2
   learning_rate: 5.0e-4
   epochs: 1
   weight_decay: 0.0
   warmup_ratio: 0.0
-  precision: fp32
+  precision: bf16
   grad_checkpointing: false
   eval_steps: 5
   save_steps: 5
   logging_steps: 2
-  max_steps: 10
-  head_weights:
-    seq: 1.0
-    cat: 1.0
-    line: 0.5
+  max_steps: 6
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
 
-# Packaging: manifest fields the trained checkpoint can't introspect.
 packaging:
-  max_input_tokens: 512
-  expected_latency_ms: 500
+  max_input_tokens: 4096
+  expected_latency_ms: 1500
+  weights_dtype: f16
   confidence_thresholds:
     high: 0.9
     low: 0.6

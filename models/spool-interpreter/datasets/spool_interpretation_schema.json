@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flow.studio/schemas/spool-interpretation.json",
+  "title": "SpoolInterpretation",
+  "description": "Canonical SpoolInterpretation emitted by the Spool Interpreter. Mirrors the SpoolInterpretation Pydantic type in flow_ml.data.schemas.",
+  "type": "object",
+  "required": ["summary", "status", "rootCause", "suggestedFix", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["completed", "failed", "abended", "skipped", "running"]
+    },
+    "returnCode": { "type": ["string", "null"] },
+    "rootCause": { "type": "string", "minLength": 1 },
+    "suggestedFix": { "type": "string", "minLength": 1 },
+    "failureCategory": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "dataset_resolution_failure",
+        "allocation_failure",
+        "permission_or_security_failure",
+        "jcl_syntax_failure",
+        "utility_parameter_failure",
+        "execution_abend",
+        "scheduler_or_environment_issue",
+        "other",
+        "smart_restart_resource_unavailable",
+        "smart_restart_configuration",
+        "smart_restart_application_logic",
+        "smart_restart_input_syntax"
+      ]
+    },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+  }
+}

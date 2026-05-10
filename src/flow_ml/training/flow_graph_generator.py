@@ -1,10 +1,14 @@
-"""LoRA fine-tune for JCL Validator: sanitized JCL → JclValidationResult JSON.
+"""LoRA fine-tune for FlowGraphGenerator: natural-language workflow request
+→ Flow Graph JSON proposal.
 
-Pure SFT on 3-message conversations (system, user, assistant). Replaces
-the previous multi-head BERT classifier. The user content is the JCL
-document; the assistant content is the gold validation result as JSON.
+Pure SFT on 3-message conversations (system, user, assistant). The
+assistant turn is a serialised JSON object matching `FlowGraphDto` plus
+a `warnings` array. Loss masked over system+user; unmasked over assistant.
 
-Thin task-specific wrapper over `flow_ml.training.sft_base`.
+This module is a thin task-specific wrapper over `flow_ml.training.sft_base`.
+What's different about FlowGraph: the gold output lives at
+`sample["expected_graph"]` and the prompt template uses
+`<<USER_REQUEST>>` for the user-text placeholder.
 """
 from __future__ import annotations
 
@@ -27,43 +31,48 @@ from .sft_base import (
 )
 
 
+# Re-exported for legacy imports (tests, evaluation runner, etc.)
 __all__ = [
     "LoraSettings",
     "SFTDataCollator",
-    "JclTrainConfig",
-    "JclTrainResult",
+    "SFTTrainConfig",
+    "SFTTrainResult",
     "_ListDataset",
     "_maybe_attach_lora",
     "_resolve_device",
     "build_chat_example",
     "render_assistant_target",
     "render_inference_prompt",
-    "train_jcl",
+    "train_flow_graph",
+    "FlowGraphTrainConfig",
+    "FlowGraphTrainResult",
 ]
 
 # Aliases preserved for callers that imported the old class names.
-JclTrainConfig = SFTTrainConfig
-JclTrainResult = SFTTrainResult
+FlowGraphTrainConfig = SFTTrainConfig
+FlowGraphTrainResult = SFTTrainResult
 
 DEFAULT_PROMPT_SPEC = (
     Path(__file__).resolve().parents[3]
     / "models"
-    / "jcl-validator"
+    / "flow-graph-generator"
     / "datasets"
     / "prompt_spec.json"
 )
 
-TARGET_FIELD = "expected_validation_result"
+TARGET_FIELD = "expected_graph"
 USER_PLACEHOLDER = "<<USER_REQUEST>>"
 
 
 def render_inference_prompt(request: str, prompt_spec: dict, tokenizer) -> list[int]:
+    """Single-shot inference prompt for FlowGraph. Wraps the shared base
+    with the FlowGraph-specific user_placeholder."""
     return _base_render_inference_prompt(
         request, prompt_spec, tokenizer, user_placeholder=USER_PLACEHOLDER
     )
 
 
-def train_jcl(
+def train_flow_graph(
     model_def: ModelDefinition,
     *,
     smoke: bool = False,
@@ -74,7 +83,7 @@ def train_jcl(
     device: str = "auto",
     seed: Optional[int] = None,
 ) -> SFTTrainResult:
-    """Fine-tune JCL Validator (LoRA) from a `ModelDefinition`."""
+    """Fine-tune FlowGraphGenerator (LoRA) from a `ModelDefinition`."""
     return train_sft(
         model_def,
         target_field=TARGET_FIELD,
@@ -88,12 +97,12 @@ def train_jcl(
         limit=limit,
         device=device,
         seed=seed,
-        log_label="JCL",
+        log_label="FlowGraph",
     )
 
 
 def train() -> None:
     from rich.console import Console
     Console().print(
-        "Use flow_ml.training.jcl_validator.train_jcl(model_def, ...)"
+        "Use flow_ml.training.flow_graph_generator.train_flow_graph(model_def, ...)"
     )

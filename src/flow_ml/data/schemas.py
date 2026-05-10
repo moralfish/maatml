@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,34 +48,6 @@ class Split(str, Enum):
     test = "test"
 
 
-class JclSample(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sample_id: str
-    source: str
-    sanitized_jcl: str
-    is_valid: bool
-    error_category: Optional[ErrorCategory] = None
-    error_line: Optional[int] = Field(default=None, ge=1)
-    error_column: Optional[int] = Field(default=None, ge=1)
-    suggestion: Optional[str] = None
-    split: Split
-
-
-class SpoolSample(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    sample_id: str
-    source: str
-    sanitized_spool: str
-    status: str
-    return_code: Optional[str] = None
-    failure_category: FailureCategory
-    root_cause: str
-    suggested_fix: str
-    split: Split
-
-
 class JclError(BaseModel):
     line: int = Field(ge=1)
     column: Optional[int] = Field(default=None, ge=1)
@@ -91,78 +63,146 @@ class JclValidationResult(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
-class SpoolInterpretation(BaseModel):
-    summary: str
-    status: str
-    returnCode: Optional[str] = None
-    rootCause: str
-    suggestedFix: str
-    confidence: float = Field(ge=0.0, le=1.0)
+class JclSample(BaseModel):
+    """Generative SFT training sample for the JCL Validator.
 
+    `request` is the sanitized JCL text the user supplies;
+    `expected_validation_result` is the gold `JclValidationResult` JSON
+    the model should emit. `category` aligns with the ErrorCategory enum
+    plus a `valid` bucket for clean inputs.
 
-class DslSample(BaseModel):
-    """Training sample for the DSL Generator. `description` is plain English;
-    `dsl` is a canonical Flow DSL document the model should reproduce."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    sample_id: str
-    source: str
-    description: str
-    dsl: str
-    split: Split
-
-
-class DslGeneration(BaseModel):
-    """Runtime response shape declared in `prompt_spec.response_schema`."""
-
-    dsl: str
-
-
-class AgentToolCall(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str
-    arguments: dict
-
-
-class AgentPlanStep(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    title: str
-    action: str
-    depends_on: list[str] = Field(default_factory=list)
-
-
-class AgentPlan(BaseModel):
-    """Runtime response shape for the local Flow Studio workflow-planning agent."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    intent_summary: str
-    plan_steps: list[AgentPlanStep]
-    tool_calls: list[AgentToolCall] = Field(default_factory=list)
-    dsl_patch: Optional[str] = None
-    dsl: Optional[str] = None
-    confidence: float = Field(ge=0.0, le=1.0)
-    refusal_reason: Optional[str] = None
-
-
-class AgentSample(BaseModel):
-    """Training sample for the Agent Planner.
-
-    `request` is the user's natural-language ask. `context` is optional Flow
-    Studio state, serialized as a short string. `agent_plan` is the strict JSON
-    object the model should emit.
+    The legacy multi-head classifier carried per-error fields directly on
+    the sample (is_valid, error_category, error_line, ...). With the
+    generative SFT pivot those move into `expected_validation_result.errors[]`.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     sample_id: str
     source: str
+    category: str
     request: str
-    context: str = ""
-    expected_intent: str
-    agent_plan: AgentPlan
+    expected_validation_result: JclValidationResult
+    split: Split
+
+
+class SpoolInterpretation(BaseModel):
+    """Runtime response shape for the Spool Interpreter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str = Field(min_length=1)
+    status: str
+    returnCode: Optional[str] = None
+    rootCause: str = Field(min_length=1)
+    suggestedFix: str = Field(min_length=1)
+    failureCategory: Optional[str] = None
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class SpoolSample(BaseModel):
+    """Generative SFT training sample for the Spool Interpreter.
+
+    `request` is the sanitized spool dump; `expected_interpretation` is the
+    gold `SpoolInterpretation` JSON. `category` aligns with the
+    FailureCategory enum plus a `completed` bucket for clean-completion
+    samples.
+
+    The legacy classifier-shape carried per-field rows (sanitized_spool,
+    failure_category, root_cause, suggested_fix). With the generative SFT
+    pivot those move into `expected_interpretation`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sample_id: str
+    source: str
+    category: str
+    request: str
+    expected_interpretation: SpoolInterpretation
+    split: Split
+
+
+# ---------------------------------------------------------------------------
+# FlowGraphGenerator (mirrors flow-studio's apps/shared-types/src/graph.ts)
+# ---------------------------------------------------------------------------
+
+NodeKind = Literal["action", "ai", "cloud_ai", "utility"]
+EdgeOutcome = Literal["pass", "fail", "always"]
+
+
+class Position(BaseModel):
+    """react-flow node position. flow-studio re-lays out on import; the model
+    can use a simple grid (e.g. step k → x=k*200, y=100)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    x: float
+    y: float
+
+
+class FlowNodeDto(BaseModel):
+    """Mirror of `FlowNodeDto` in flow-studio/apps/shared-types/src/graph.ts.
+
+    `data` is polymorphic by `type`: action carries adapter+actionId+payload,
+    ai carries modelId, cloud_ai carries provider+modelId+prompt, utility
+    carries actionId. Validation of per-kind required fields lives in
+    `flow_ml.validation.flow_graph_validator` (layer 5).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    type: NodeKind
+    position: Position
+    data: dict[str, Any]
+
+
+class FlowEdgeDto(BaseModel):
+    """Mirror of `FlowEdgeDto` in flow-studio. `outcome` defaults to `always`
+    when omitted. Edge ids follow `e-<source>-<outcome>-<target>` by
+    convention but are free-form strings for the validator."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    target: str = Field(min_length=1)
+    label: Optional[str] = None
+    condition: Optional[str] = None
+    outcome: Optional[EdgeOutcome] = None
+
+
+class FlowGraphProposal(BaseModel):
+    """Runtime response shape: the JSON object FlowGraphGenerator emits.
+    Mirrors `FlowGraphDto` plus a `warnings` array for the safety / ambiguity
+    surface that flow-studio's TS type didn't carry but the spec requires.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    name: str
+    version: str
+    nodes: list[FlowNodeDto] = Field(default_factory=list)
+    edges: list[FlowEdgeDto] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class FlowGraphSample(BaseModel):
+    """Training sample for FlowGraphGenerator.
+
+    `request` is the user's natural-language ask. `expected_graph` is the
+    gold FlowGraphProposal (validated against the same schema as runtime
+    output). `category` tracks the §7 taxonomy (simple, conditional,
+    parallel, jcl-validation, ..., unsafe, repair) for stratified eval.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sample_id: str
+    source: str
+    category: str
+    request: str
+    expected_graph: FlowGraphProposal
     split: Split

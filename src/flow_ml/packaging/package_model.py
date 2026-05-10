@@ -15,10 +15,30 @@ from ..utils.io import sha256_file
 
 console = Console()
 
-JCL_REQUIRED = ("model.safetensors", "config.json", "tokenizer.json", "flow_heads.safetensors", "flow_metadata.json", "labels.json")
-SPOOL_REQUIRED = ("model.safetensors", "config.json", "tokenizer.json", "prompt_spec.json")
-DSL_REQUIRED = ("model.safetensors", "config.json", "tokenizer.json", "prompt_spec.json")
-AGENT_REQUIRED = ("model.safetensors", "config.json", "tokenizer.json", "prompt_spec.json")
+JCL_REQUIRED = (
+    "model.safetensors",
+    "config.json",
+    "tokenizer.json",
+    "prompt_spec.json",
+    "jcl_validation_schema.json",
+    "node_contracts.json",
+)
+SPOOL_REQUIRED = (
+    "model.safetensors",
+    "config.json",
+    "tokenizer.json",
+    "prompt_spec.json",
+    "spool_interpretation_schema.json",
+    "node_contracts.json",
+)
+FLOW_GRAPH_REQUIRED = (
+    "model.safetensors",
+    "config.json",
+    "tokenizer.json",
+    "prompt_spec.json",
+    "flow_graph_schema.json",
+    "node_contracts.json",
+)
 
 
 @dataclass
@@ -62,15 +82,18 @@ def _check_required(pkg_dir: Path, required: tuple[str, ...]) -> tuple[list[str]
 def _write_fm_archive(pkg_dir: Path, fm_path: Path) -> Path:
     """Pack the unpacked package directory into a single ``.fm`` archive.
 
-    A ``.fm`` ("flow model") is a renamed deflated zip - same on-disk layout
-    as the unpacked directory, just bundled as one file the user can drag
-    into Flow Studio's Models drawer.  We deflate (not store) to keep weights
-    compressible at a small CPU cost; safetensors round to ~2-5% smaller.
+    A ``.fm`` ("flow model") is a renamed zip - same on-disk layout as
+    the unpacked directory, just bundled as one file the user can drag
+    into Flow Studio's Models drawer. We use ``ZIP_STORED`` (no
+    compression): safetensors are already binary and only round 1-3%
+    smaller under DEFLATE, but the pack+unpack CPU cost added ~30-60s
+    per multi-GB model on flow-studio's install path. With STORED the
+    archive is effectively a tar — extraction is a plain disk copy.
     """
     fm_path.parent.mkdir(parents=True, exist_ok=True)
     if fm_path.exists():
         fm_path.unlink()
-    with zipfile.ZipFile(fm_path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    with zipfile.ZipFile(fm_path, "w", compression=zipfile.ZIP_STORED) as zf:
         for entry in sorted(pkg_dir.rglob("*")):
             if entry.is_file():
                 arcname = entry.relative_to(pkg_dir)
@@ -186,6 +209,39 @@ def _build_manifest(
     )
 
 
+def _normalize_qwen_config(pkg_dir: Path) -> None:
+    """Make the saved `config.json` candle-friendly.
+
+    transformers 5.x nests the rope params inside ``rope_parameters``:
+
+        "rope_parameters": { "rope_theta": 1000000, "rope_type": "default" }
+
+    candle-transformers' Qwen2/Qwen3 ``Config`` structs still expect the
+    legacy flat fields (``rope_theta`` and optional ``rope_scaling``) at
+    the top level. Without this lift the runtime parse fails with
+    ``missing field 'rope_theta'`` and the install rolls back. Idempotent
+    — does nothing when the flat field already exists.
+    """
+    cfg_path = pkg_dir / "config.json"
+    if not cfg_path.exists():
+        return
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    rope_params = cfg.get("rope_parameters")
+    if isinstance(rope_params, dict):
+        if "rope_theta" not in cfg and "rope_theta" in rope_params:
+            cfg["rope_theta"] = rope_params["rope_theta"]
+        if (
+            "rope_scaling" not in cfg
+            and rope_params.get("rope_type")
+            and rope_params["rope_type"] != "default"
+        ):
+            cfg["rope_scaling"] = {
+                "type": rope_params["rope_type"],
+                **{k: v for k, v in rope_params.items() if k not in ("rope_theta", "rope_type")},
+            }
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+
+
 def _convert_weights_to_dtype(pkg_dir: Path, target_dtype: str) -> None:
     """Re-save `model.safetensors` at half precision when `target_dtype` is
     not `"f32"`. Mandatory for 7B+ bases so the resulting `.fm` archive
@@ -243,27 +299,70 @@ def package_jcl(
     checkpoint_dir: str | Path,
     out_dir: str | Path,
     *,
+    prompt_spec_path: Optional[str | Path] = None,
+    schema_path: Optional[str | Path] = None,
+    contracts_path: Optional[str | Path] = None,
     model_id: str = "jcl-validator:v1",
-    base_checkpoint: Optional[str] = None,
-    max_input_tokens: int = 2048,
-    expected_latency_ms: int = 500,
+    base_checkpoint: Optional[str] = "Qwen/Qwen3-1.7B",
+    max_input_tokens: int = 4096,
+    expected_latency_ms: int = 1500,
     confidence_thresholds: Optional[ConfidenceThresholds] = None,
     version: str = "v1",
+    weights_dtype: str = "f16",
 ) -> PackageResult:
+    """Package a generative-SFT JCL Validator checkpoint for the Candle runtime.
+
+    Layout matches `package_flow_graph` plus the JCL-specific schema +
+    contracts payload files. The runtime's 6-layer JCL validator reads
+    them directly from the package.
+
+    `weights_dtype` defaults to `"f16"` for cross-platform 16 GB-RAM
+    targets — Qwen3-1.7B at fp16 packs to ~3.4 GB on disk.
+    """
     src = Path(checkpoint_dir)
     dst = Path(out_dir)
     if dst.exists():
         shutil.rmtree(dst)
     _copytree_filtered(src, dst)
 
-    if base_checkpoint is None:
-        meta_path = dst / "flow_metadata.json"
-        if meta_path.exists():
-            base_checkpoint = json.loads(meta_path.read_text(encoding="utf-8")).get("flow_base_model_id")
+    spec_dst = dst / "prompt_spec.json"
+    if not spec_dst.exists():
+        if prompt_spec_path is None:
+            raise FileNotFoundError(
+                f"package_jcl: {spec_dst} missing and no --prompt-spec provided"
+            )
+        shutil.copy2(prompt_spec_path, spec_dst)
+
+    schema_dst = dst / "jcl_validation_schema.json"
+    if not schema_dst.exists():
+        if schema_path is None:
+            schema_path = (
+                Path(__file__).resolve().parents[3]
+                / "models"
+                / "jcl-validator"
+                / "datasets"
+                / "jcl_validation_schema.json"
+            )
+        shutil.copy2(schema_path, schema_dst)
+
+    contracts_dst = dst / "node_contracts.json"
+    if not contracts_dst.exists():
+        if contracts_path is None:
+            contracts_path = (
+                Path(__file__).resolve().parents[3]
+                / "models"
+                / "jcl-validator"
+                / "datasets"
+                / "node_contracts.json"
+            )
+        shutil.copy2(contracts_path, contracts_dst)
 
     present, missing = _check_required(dst, JCL_REQUIRED)
     if missing:
         raise FileNotFoundError(f"package_jcl: missing files in {dst}: {missing}")
+
+    _convert_weights_to_dtype(dst, weights_dtype)
+    _normalize_qwen_config(dst)
 
     manifest = _build_manifest(
         model_id=model_id,
@@ -272,14 +371,17 @@ def package_jcl(
         pkg_dir=dst,
         max_input_tokens=max_input_tokens,
         expected_latency_ms=expected_latency_ms,
-        extra_files=["flow_heads.safetensors", "flow_metadata.json", "labels.json"],
-        labels_file="labels.json",
+        extra_files=["prompt_spec.json", "jcl_validation_schema.json", "node_contracts.json"],
+        prompt_spec_file="prompt_spec.json",
         confidence_thresholds=confidence_thresholds,
         version=version,
+        weights_dtype=weights_dtype,
     )
     manifest.write(dst / "manifest.json")
     fm_path = _write_fm_archive(dst, dst.parent / f"{dst.name}.fm")
-    console.print(f"[green]package jcl[/]: {dst}  (fm: {fm_path})")
+    console.print(
+        f"[green]package jcl[/]: {dst}  (dtype={weights_dtype}, fm: {fm_path})"
+    )
     return PackageResult(pkg_dir=dst, manifest=manifest, files=present, fm_path=fm_path)
 
 
@@ -288,13 +390,17 @@ def package_spool(
     out_dir: str | Path,
     *,
     prompt_spec_path: Optional[str | Path] = None,
+    schema_path: Optional[str | Path] = None,
+    contracts_path: Optional[str | Path] = None,
     model_id: str = "spool-interpreter:v1",
-    base_checkpoint: Optional[str] = "HuggingFaceTB/SmolLM2-360M-Instruct",
-    max_input_tokens: int = 2048,
+    base_checkpoint: Optional[str] = "Qwen/Qwen3-1.7B",
+    max_input_tokens: int = 4096,
     expected_latency_ms: int = 1500,
     confidence_thresholds: Optional[ConfidenceThresholds] = None,
     version: str = "v1",
+    weights_dtype: str = "f16",
 ) -> PackageResult:
+    """Package a generative-SFT Spool Interpreter checkpoint for the Candle runtime."""
     src = Path(checkpoint_dir)
     dst = Path(out_dir)
     if dst.exists():
@@ -309,9 +415,36 @@ def package_spool(
             )
         shutil.copy2(prompt_spec_path, spec_dst)
 
+    schema_dst = dst / "spool_interpretation_schema.json"
+    if not schema_dst.exists():
+        if schema_path is None:
+            schema_path = (
+                Path(__file__).resolve().parents[3]
+                / "models"
+                / "spool-interpreter"
+                / "datasets"
+                / "spool_interpretation_schema.json"
+            )
+        shutil.copy2(schema_path, schema_dst)
+
+    contracts_dst = dst / "node_contracts.json"
+    if not contracts_dst.exists():
+        if contracts_path is None:
+            contracts_path = (
+                Path(__file__).resolve().parents[3]
+                / "models"
+                / "spool-interpreter"
+                / "datasets"
+                / "node_contracts.json"
+            )
+        shutil.copy2(contracts_path, contracts_dst)
+
     present, missing = _check_required(dst, SPOOL_REQUIRED)
     if missing:
         raise FileNotFoundError(f"package_spool: missing files in {dst}: {missing}")
+
+    _convert_weights_to_dtype(dst, weights_dtype)
+    _normalize_qwen_config(dst)
 
     manifest = _build_manifest(
         model_id=model_id,
@@ -320,47 +453,48 @@ def package_spool(
         pkg_dir=dst,
         max_input_tokens=max_input_tokens,
         expected_latency_ms=expected_latency_ms,
-        extra_files=["prompt_spec.json"],
+        extra_files=["prompt_spec.json", "spool_interpretation_schema.json", "node_contracts.json"],
         prompt_spec_file="prompt_spec.json",
         confidence_thresholds=confidence_thresholds,
         version=version,
+        weights_dtype=weights_dtype,
     )
     manifest.write(dst / "manifest.json")
     fm_path = _write_fm_archive(dst, dst.parent / f"{dst.name}.fm")
-    console.print(f"[green]package spool[/]: {dst}  (fm: {fm_path})")
+    console.print(
+        f"[green]package spool[/]: {dst}  (dtype={weights_dtype}, fm: {fm_path})"
+    )
     return PackageResult(pkg_dir=dst, manifest=manifest, files=present, fm_path=fm_path)
 
 
-def package_dsl(
+
+def package_flow_graph(
     checkpoint_dir: str | Path,
     out_dir: str | Path,
     *,
     prompt_spec_path: Optional[str | Path] = None,
-    model_id: str = "dsl-generator:v1",
-    base_checkpoint: Optional[str] = "HuggingFaceTB/SmolLM2-360M-Instruct",
-    max_input_tokens: int = 2048,
-    expected_latency_ms: int = 2000,
+    schema_path: Optional[str | Path] = None,
+    contracts_path: Optional[str | Path] = None,
+    model_id: str = "flow-graph-generator:v1",
+    base_checkpoint: Optional[str] = "Qwen/Qwen3-1.7B",
+    max_input_tokens: int = 4096,
+    expected_latency_ms: int = 800,
     confidence_thresholds: Optional[ConfidenceThresholds] = None,
     version: str = "v1",
-    weights_dtype: str = "f32",
+    weights_dtype: str = "f16",
 ) -> PackageResult:
-    """Package a DSL Generator checkpoint for the Candle runtime.
+    """Package a FlowGraphGenerator checkpoint for the Candle runtime.
 
-    Layout mirrors `package_spool`; the task-specific bit is
-    `manifest.task = "dsl_generation"`. The runtime's
-    `CandleGenerativeBackend` recognises both tasks
-    (`spool_interpretation` and `dsl_generation`) and dispatches the same
-    decode loop with the package's own `prompt_spec.json` driving system
-    prompt + response schema.
+    Layout matches `package_dsl` plus two extra payload files:
+    `flow_graph_schema.json` (the FlowGraphDto JSON Schema) and
+    `node_contracts.json` (the closed vocabulary). The runtime's
+    7-layer validator reads both of these directly from the package
+    so the model proposal can be validated without reaching into the
+    flow-studio source tree.
 
-    `weights_dtype` selects the on-disk precision of `model.safetensors`.
-    Defaults to `"f32"` for backwards compatibility with 360M / 1.7B
-    bases. Set to `"f16"` (recommended) or `"bf16"` for 7B+ bases:
-    halves the on-disk size and the runtime memory footprint, fitting a
-    7B Qwen2 base on a 16-32 GB Mac. The runtime's `weights_dtype` field
-    on its `ModelManifest` matches this and routes the
-    `VarBuilder::from_mmaped_safetensors` call to the matching
-    `candle_core::DType`.
+    `weights_dtype` defaults to `"f16"` for cross-platform 16 GB-RAM
+    targets — Qwen3-1.7B at fp16 packs to ~3.4 GB on disk and ~4-5 GB
+    runtime, well inside the 16 GB envelope on every supported OS.
     """
     src = Path(checkpoint_dir)
     dst = Path(out_dir)
@@ -372,26 +506,50 @@ def package_dsl(
     if not spec_dst.exists():
         if prompt_spec_path is None:
             raise FileNotFoundError(
-                f"package_dsl: {spec_dst} missing and no --prompt-spec provided"
+                f"package_flow_graph: {spec_dst} missing and no --prompt-spec provided"
             )
         shutil.copy2(prompt_spec_path, spec_dst)
 
-    present, missing = _check_required(dst, DSL_REQUIRED)
-    if missing:
-        raise FileNotFoundError(f"package_dsl: missing files in {dst}: {missing}")
+    schema_dst = dst / "flow_graph_schema.json"
+    if not schema_dst.exists():
+        if schema_path is None:
+            # default to the repo's source-of-truth schema
+            schema_path = (
+                Path(__file__).resolve().parents[3]
+                / "models"
+                / "flow-graph-generator"
+                / "datasets"
+                / "flow_graph_schema.json"
+            )
+        shutil.copy2(schema_path, schema_dst)
 
-    # Convert before hashing the file in `_build_manifest`, so the
-    # recorded sha256 matches the on-disk bytes the runtime will mmap.
+    contracts_dst = dst / "node_contracts.json"
+    if not contracts_dst.exists():
+        if contracts_path is None:
+            contracts_path = (
+                Path(__file__).resolve().parents[3]
+                / "models"
+                / "flow-graph-generator"
+                / "datasets"
+                / "node_contracts.json"
+            )
+        shutil.copy2(contracts_path, contracts_dst)
+
+    present, missing = _check_required(dst, FLOW_GRAPH_REQUIRED)
+    if missing:
+        raise FileNotFoundError(f"package_flow_graph: missing files in {dst}: {missing}")
+
     _convert_weights_to_dtype(dst, weights_dtype)
+    _normalize_qwen_config(dst)
 
     manifest = _build_manifest(
         model_id=model_id,
-        task="dsl_generation",
+        task="flow_graph_generation",
         base_checkpoint=base_checkpoint,
         pkg_dir=dst,
         max_input_tokens=max_input_tokens,
         expected_latency_ms=expected_latency_ms,
-        extra_files=["prompt_spec.json"],
+        extra_files=["prompt_spec.json", "flow_graph_schema.json", "node_contracts.json"],
         prompt_spec_file="prompt_spec.json",
         confidence_thresholds=confidence_thresholds,
         version=version,
@@ -400,62 +558,7 @@ def package_dsl(
     manifest.write(dst / "manifest.json")
     fm_path = _write_fm_archive(dst, dst.parent / f"{dst.name}.fm")
     console.print(
-        f"[green]package dsl[/]: {dst}  (dtype={weights_dtype}, fm: {fm_path})"
-    )
-    return PackageResult(pkg_dir=dst, manifest=manifest, files=present, fm_path=fm_path)
-
-
-def package_agent(
-    checkpoint_dir: str | Path,
-    out_dir: str | Path,
-    *,
-    prompt_spec_path: Optional[str | Path] = None,
-    model_id: str = "agent-planner:v1",
-    base_checkpoint: Optional[str] = "Qwen/Qwen3-4B-Instruct-2507",
-    max_input_tokens: int = 2048,
-    expected_latency_ms: int = 2500,
-    confidence_thresholds: Optional[ConfidenceThresholds] = None,
-    version: str = "v1",
-    weights_dtype: str = "f32",
-) -> PackageResult:
-    """Package an Agent Planner checkpoint for the local generative runtime."""
-    src = Path(checkpoint_dir)
-    dst = Path(out_dir)
-    if dst.exists():
-        shutil.rmtree(dst)
-    _copytree_filtered(src, dst)
-
-    spec_dst = dst / "prompt_spec.json"
-    if not spec_dst.exists():
-        if prompt_spec_path is None:
-            raise FileNotFoundError(
-                f"package_agent: {spec_dst} missing and no --prompt-spec provided"
-            )
-        shutil.copy2(prompt_spec_path, spec_dst)
-
-    present, missing = _check_required(dst, AGENT_REQUIRED)
-    if missing:
-        raise FileNotFoundError(f"package_agent: missing files in {dst}: {missing}")
-
-    _convert_weights_to_dtype(dst, weights_dtype)
-
-    manifest = _build_manifest(
-        model_id=model_id,
-        task="agent_planning",
-        base_checkpoint=base_checkpoint,
-        pkg_dir=dst,
-        max_input_tokens=max_input_tokens,
-        expected_latency_ms=expected_latency_ms,
-        extra_files=["prompt_spec.json"],
-        prompt_spec_file="prompt_spec.json",
-        confidence_thresholds=confidence_thresholds,
-        version=version,
-        weights_dtype=weights_dtype,
-    )
-    manifest.write(dst / "manifest.json")
-    fm_path = _write_fm_archive(dst, dst.parent / f"{dst.name}.fm")
-    console.print(
-        f"[green]package agent[/]: {dst}  (dtype={weights_dtype}, fm: {fm_path})"
+        f"[green]package flow_graph[/]: {dst}  (dtype={weights_dtype}, fm: {fm_path})"
     )
     return PackageResult(pkg_dir=dst, manifest=manifest, files=present, fm_path=fm_path)
 
@@ -524,24 +627,11 @@ def verify_package(pkg_path: str | Path) -> VerifyResult:
 
     forward_ok = False
     try:
-        if manifest.task == "jcl_validation":
-            from ..training.jcl_validator import JclMultiHeadModel
-            from transformers import AutoTokenizer
-            import torch
-
-            tok = AutoTokenizer.from_pretrained(pkg)
-            model = JclMultiHeadModel.load(pkg)
-            model.eval()
-            enc = tok("//J JOB\n", return_tensors="pt", return_offsets_mapping=False)
-            with torch.inference_mode():
-                out = model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])
-            for k in ("seq_logits", "cat_logits", "line_logits"):
-                if k not in out:
-                    issues.append(f"jcl forward missing {k}")
-                    break
-            else:
-                forward_ok = True
-        elif manifest.task in ("spool_interpretation", "dsl_generation", "agent_planning"):
+        if manifest.task in (
+            "jcl_validation",
+            "spool_interpretation",
+            "flow_graph_generation",
+        ):
             from transformers import AutoModelForCausalLM, AutoTokenizer
             import torch
 
@@ -568,5 +658,5 @@ def verify_package(pkg_path: str | Path) -> VerifyResult:
 def package_model() -> None:
     console.print(
         "Use flow_ml.packaging.package_model.package_jcl(...) / package_spool(...) "
-        "/ package_dsl(...) / package_agent(...)"
+        "/ package_flow_graph(...)"
     )

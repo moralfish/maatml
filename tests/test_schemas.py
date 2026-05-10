@@ -19,13 +19,22 @@ from flow_ml.data.schemas import (
 def test_jcl_sample_round_trip() -> None:
     sample = JclSample(
         sample_id="abc",
-        source="syn",
-        sanitized_jcl="//J JOB\n",
-        is_valid=False,
-        error_category=ErrorCategory.missing_dd,
-        error_line=2,
-        error_column=1,
-        suggestion="add DD",
+        source="hand:starter",
+        category="missing_dd",
+        request="//RUNJOB JOB (ACCT)\n//STEP01 EXEC PGM=IEBGENER\n",
+        expected_validation_result=JclValidationResult(
+            valid=False,
+            errors=[
+                JclError(
+                    line=2,
+                    severity=Severity.error,
+                    code=ErrorCategory.missing_dd,
+                    message="IEBGENER step missing required DD statements.",
+                    suggestion="Add SYSUT1 and SYSUT2.",
+                )
+            ],
+            confidence=0.91,
+        ),
         split=Split.train,
     )
     payload = sample.model_dump(mode="json")
@@ -33,27 +42,25 @@ def test_jcl_sample_round_trip() -> None:
     assert again == sample
 
 
-def test_jcl_sample_rejects_unknown_category() -> None:
+def test_jcl_sample_rejects_invalid_validation_result() -> None:
     with pytest.raises(ValidationError):
         JclSample(
             sample_id="abc",
-            source="syn",
-            sanitized_jcl="x",
-            is_valid=False,
-            error_category="not_a_category",  # type: ignore[arg-type]
+            source="hand:starter",
+            category="missing_dd",
+            request="x",
+            expected_validation_result={"valid": True, "errors": [], "confidence": 1.5},  # bad confidence
             split=Split.train,
         )
 
 
-def test_jcl_sample_error_line_must_be_positive() -> None:
+def test_jcl_error_line_must_be_positive() -> None:
     with pytest.raises(ValidationError):
-        JclSample(
-            sample_id="x",
-            source="s",
-            sanitized_jcl="y",
-            is_valid=False,
-            error_line=0,
-            split=Split.val,
+        JclError(
+            line=0,
+            severity=Severity.error,
+            code=ErrorCategory.missing_dd,
+            message="x",
         )
 
 
@@ -61,12 +68,17 @@ def test_spool_sample_round_trip() -> None:
     sample = SpoolSample(
         sample_id="s1",
         source="fixture",
-        sanitized_spool="JOB ENDED",
-        status="failed",
-        return_code="0008",
-        failure_category=FailureCategory.dataset_resolution_failure,
-        root_cause="missing dataset",
-        suggested_fix="check catalog",
+        category="dataset_resolution_failure",
+        request="JOB ENDED\nIEF212I MYJOB STEP1 - DATA SET NOT FOUND",
+        expected_interpretation={
+            "summary": "Dataset MY.DATA not found.",
+            "status": "failed",
+            "returnCode": "0008",
+            "rootCause": "Catalog has no entry for MY.DATA.",
+            "suggestedFix": "Verify dataset name; allocate or restore from backup.",
+            "failureCategory": FailureCategory.dataset_resolution_failure.value,
+            "confidence": 0.92,
+        },
         split=Split.test,
     )
     payload = sample.model_dump(mode="json")

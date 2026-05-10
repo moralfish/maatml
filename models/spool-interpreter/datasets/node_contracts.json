@@ -1,0 +1,32 @@
+{
+  "_provenance": {
+    "source": "Hand-authored. Bounded vocabulary for SpoolInterpretation. failure_category mirrors FailureCategory enum in flow_ml/data/schemas.py (12 values incl. Smart/RESTART subcategories synced from flow-studio/docs/smart-restart/messages.md).",
+    "schema_version": "1"
+  },
+  "statuses": ["completed", "failed", "abended", "skipped", "running"],
+  "failure_categories": [
+    "dataset_resolution_failure",
+    "allocation_failure",
+    "permission_or_security_failure",
+    "jcl_syntax_failure",
+    "utility_parameter_failure",
+    "execution_abend",
+    "scheduler_or_environment_issue",
+    "other",
+    "smart_restart_resource_unavailable",
+    "smart_restart_configuration",
+    "smart_restart_application_logic",
+    "smart_restart_input_syntax"
+  ],
+  "return_code": {
+    "format": "string-of-4-hex-or-decimal-digits-or-null",
+    "examples": ["0000", "0008", "012C", null],
+    "rationale": "z/OS return codes are conventionally 4-character strings; null is allowed when the spool didn't expose one (e.g. abend before completion)."
+  },
+  "non_empty_strings": ["summary", "rootCause", "suggestedFix"],
+  "confidence": {
+    "min": 0.0,
+    "max": 1.0,
+    "calibration_note": "0.9+ when the spool clearly indicates the cause; 0.7-0.9 on plausible reads; <0.7 when the spool is ambiguous or truncated."
+  }
+}

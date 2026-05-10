@@ -1,66 +1,75 @@
 # Spool Interpreter
 
-Local generative model that interprets sanitized z/OS job spool output into a
-structured failure summary so Flow Studio can present "what failed and how to
-fix it" without a cloud round-trip.
+LoRA-tuned `Qwen/Qwen3-1.7B` that reads sanitized z/OS spool output and emits a structured `SpoolInterpretation` JSON object. Pure SFT on 3-message conversations. Replaces the legacy SmolLM2-360M baseline — same task, much sharper categorisation and confidence calibration.
 
-- **Task string (manifest):** `spool_interpretation`
-- **Model id:** `spool-interpreter:v1`
-- **Base model:** SmolLM2-360M-Instruct (LoRA fine-tune via PEFT)
-- **Runtime backend:** `CandleGenerativeBackend`
-- **Response schema:**
-  ```json
-  {
-    "failure_category": "S0C7|JCL_ERROR|...",
-    "root_cause": "string",
-    "suggested_fix": "string"
-  }
-  ```
+Authoritative spec: [`training_instructions.md`](training_instructions.md).
 
-## Dataset
+## Targets
 
-- `datasets/prompt_spec.json` - system prompt + ChatML template + decoding
-  params.
-- `datasets/schema.json` - sample shape (`raw_spool`, target categories,
-  `root_cause`, `suggested_fix`).
-- `datasets/label_taxonomy.md` - failure category taxonomy.
-- `datasets/samples/seed_samples.jsonl` - hand-authored spool excerpts paired
-  with gold interpretations.
+- **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
+- **Final artefact**: merged safetensors loaded by `flow-model-runtime` (Candle).
+- **Disk footprint**: ~3.4 GB at fp16. Same envelope as FlowGraphGenerator + JCL Validator.
 
-## End-to-end commands
+## Output shape
 
-```bash
-# 1. Prepare splits (60/20/20 hash-stable split of the seed corpus)
-python -m flow_ml.cli prepare models/spool-interpreter/
-
-# 2. Smoke training (SmolLM2-135M, 6 steps)
-python -m flow_ml.cli train models/spool-interpreter/ --smoke
-
-# 3. Full training (SmolLM2-360M, 5 epochs)
-python -m flow_ml.cli train models/spool-interpreter/
-
-# 4. Evaluate the most recent checkpoint
-python -m flow_ml.cli evaluate models/spool-interpreter/
-
-# 5. Package -> .fm archive
-python -m flow_ml.cli package models/spool-interpreter/ --version v1
-
-# 6. Verify the .fm
-python -m flow_ml.cli verify models/spool-interpreter/output/dist/spool-interpreter-v1.fm
+```json
+{
+  "summary": "Build job ABENDed at STEP02 (S0C7).",
+  "status": "abended",
+  "returnCode": null,
+  "rootCause": "Data exception (S0C7) reading numeric field with invalid packed-decimal data in INFILE record 17.",
+  "suggestedFix": "Validate INFILE before submission; clean or reject record 17.",
+  "failureCategory": "execution_abend",
+  "confidence": 0.91
+}
 ```
 
-## Evaluation criteria
+`status` is one of: `completed`, `failed`, `abended`, `skipped`, `running`.
+`failureCategory` is one of 12 enum values (incl. 4 Smart/RESTART subcategories) or `null` on `status: completed`.
 
-`evaluate_spool` computes:
+Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json) and the JSON Schema at [`datasets/spool_interpretation_schema.json`](datasets/spool_interpretation_schema.json).
 
-- **`json_validity`** - fraction of generations that parse as the target schema.
-- **`category_accuracy`** - exact match on `failure_category`.
-- **`root_cause_rouge_l`** - ROUGE-L F1 against gold `root_cause`.
+## Layout
 
-Reports land in `output/eval/<run-name>.{json,md}`.
+```
+models/spool-interpreter/
+├── README.md
+├── training_instructions.md
+├── model.yml
+└── datasets/
+    ├── prompt_spec.json
+    ├── spool_interpretation_schema.json
+    ├── node_contracts.json
+    └── samples/
+        ├── seed_samples.jsonl       (39 hand-authored; expand by hand-authoring more rows)
+        └── test_prompt_set.jsonl    (8 fixed eval anchors)
+```
 
-## Runtime contract
+## Workflow
 
-flow-studio's `CandleGenerativeBackend` loads the merged base+LoRA weights,
-renders the user message through `prompt_spec.json`'s template, decodes greedy
-to the configured stop sequence, then JSON-extracts the response payload.
+```bash
+flow_ml prepare  models/spool-interpreter/
+flow_ml train    models/spool-interpreter/ --smoke
+flow_ml train    models/spool-interpreter/
+flow_ml evaluate models/spool-interpreter/
+flow_ml package  models/spool-interpreter/ --version v0.1
+```
+
+Expand the seed corpus by hand-authoring rows in
+`datasets/samples/seed_samples.jsonl` (each row:
+`{sample_id, source, category, request, expected_interpretation, split?}`)
+and re-running `flow_ml prepare` before training.
+
+## Quality gates
+
+| Metric | Target |
+|---|---|
+| `json_parse_rate` | ≥ 0.95 |
+| `schema_conformance_rate` | ≥ 0.90 |
+| `status_accuracy` | ≥ 0.90 |
+| `failure_category_accuracy` | ≥ 0.80 |
+| `return_code_accuracy` | ≥ 0.85 (when present) |
+
+## Smart/RESTART knowledge sync
+
+The 4 Smart/RESTART subcategories (resource_unavailable, configuration, application_logic, input_syntax) come from `../flow-studio/docs/smart-restart/messages.md`. Re-sync via [`scripts/sync-smart-restart-knowledge.sh`](../../scripts/sync-smart-restart-knowledge.sh) when that source updates.

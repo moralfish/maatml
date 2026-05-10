@@ -1,0 +1,45 @@
+{
+  "_provenance": {
+    "source": "Hand-authored from flow-studio crates/flow-adapter-* registry. Sync via scripts/sync-spec-from-flow-studio.sh once the flow-studio JSON-Schema generator lands.",
+    "schema_version": "1"
+  },
+  "node_kinds": ["action", "ai", "cloud_ai", "utility"],
+  "action_triples": [
+    { "adapter": "shell", "actionId": "run-command", "required": ["command"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "shell", "actionId": "git", "required": ["args"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "shell", "actionId": "npm", "required": ["args"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "shell", "actionId": "pnpm", "required": ["args"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "shell", "actionId": "cargo", "required": ["args"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "shell", "actionId": "kubectl", "required": ["args"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "shell", "actionId": "curl", "required": ["args"], "optional": ["cwd", "timeoutMs", "maxOutputBytes", "env"] },
+    { "adapter": "zowe", "actionId": "cli-raw", "required": ["command"], "optional": ["outputFilter", "connectionId", "profile"] },
+    { "adapter": "mri-toolkit", "actionId": "prepare", "required": ["toolkitUrl", "toolkitDir"], "optional": ["force"] }
+  ],
+  "utility_actions": {
+    "sleep": { "required": ["actionId"], "optional": ["durationMs"] },
+    "log": { "required": ["actionId"], "optional": ["message", "level"] },
+    "set-variable": { "required": ["actionId"], "optional": ["name", "value"] }
+  },
+  "ai_models": ["jcl-validator", "spool-interpreter", "flow-graph-generator"],
+  "cloud_providers": ["claude", "openai", "gemini"],
+  "forbidden_adapters": ["ssh", "zosmf", "mock"],
+  "refusal_categories": [
+    {
+      "name": "credential.read_secret",
+      "description": "Reading credentials, secrets, API keys, or any sensitive auth material directly into the graph."
+    },
+    {
+      "name": "shell.exec_unrestricted",
+      "description": "Arbitrary or unrestricted shell execution outside the curated shell allowlist (run-command, git, npm, pnpm, cargo, kubectl, curl)."
+    },
+    {
+      "name": "external.http_post",
+      "description": "Posting data to arbitrary external HTTP endpoints not gated by an audited adapter."
+    },
+    {
+      "name": "network.upload_file",
+      "description": "Uploading user files to external services or arbitrary network destinations."
+    }
+  ],
+  "edge_outcomes": ["pass", "fail", "always"]
+}

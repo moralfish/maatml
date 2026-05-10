@@ -1,47 +1,53 @@
-# Spool Interpreter - LoRA-tuned SmolLM2 that turns sanitized z/OS spool output
-# into a structured failure interpretation: { failure_category, root_cause, suggested_fix }.
+# Spool Interpreter - LoRA-tuned Qwen3-1.7B that turns sanitized z/OS spool
+# output into a structured SpoolInterpretation JSON:
+# { summary, status, returnCode, rootCause, suggestedFix, confidence }.
 #
 # Task: spool_interpretation
-# Runtime: candle (CandleGenerativeBackend)
+# Runtime: candle (CandleGenerativeBackend in flow-studio's flow-model-runtime)
+# Spec:    docs/flow_inference_model_training_instructions.md (per FlowGraphGenerator template)
 #
-# Consolidated from:
-#   configs/spool_interpreter/data.yaml
-#   configs/spool_interpreter/train.yaml
-#   configs/spool_interpreter/train_smoke.yaml
+# Architecture: pure SFT on 3-message conversations (system/user/assistant).
+# Bumped from SmolLM2-360M to Qwen3-1.7B for cross-toolchain consistency
+# with FlowGraphGenerator + JCL Validator. Quality jumps materially on
+# the 12-category root-cause classification + structured JSON output.
+# Latency goes from <100 ms (SmolLM2) → ~1-2 s (Qwen3-1.7B) — acceptable
+# for post-job interpretation.
+#
+# Cross-platform target: Mac / Windows / Linux with 16 GB RAM minimum.
 
 name: spool-interpreter
 model_id: spool-interpreter:v1
 task: spool_interpretation
 runtime: candle
 version: v1
-description: "LoRA-tuned SmolLM2 that interprets z/OS job spool output into a structured failure summary."
-base_model: HuggingFaceTB/SmolLM2-360M-Instruct
+description: "LoRA-tuned Qwen3-1.7B that interprets z/OS job spool output into a structured SpoolInterpretation JSON."
+base_model: Qwen/Qwen3-1.7B
 
-# Data preparation: hand-authored seed corpus, hash-stable splits.
 data:
   seed: 7331
-  schema: datasets/schema.json
   prompt_spec: datasets/prompt_spec.json
+  schema: datasets/spool_interpretation_schema.json
+  contracts: datasets/node_contracts.json
   seed_samples: datasets/samples/seed_samples.jsonl
-  raw_field: raw_spool
-  split_ratios: [0.6, 0.2, 0.2]
+  benchmark_samples: datasets/samples/test_prompt_set.jsonl
+  raw_field: request
+  split_ratios: [0.8, 0.1, 0.1]
 
-# Training: SmolLM2-360M base + LoRA r=16 on q/k/v/o projections.
 training:
-  model_id: HuggingFaceTB/SmolLM2-360M-Instruct
-  max_input_tokens: 2048
-  batch_size: 1
+  model_id: Qwen/Qwen3-1.7B
+  max_input_tokens: 4096
+  batch_size: 2
   grad_accum: 8
-  learning_rate: 2.0e-5
-  epochs: 5
+  learning_rate: 1.0e-4
+  epochs: 4
   weight_decay: 0.01
   warmup_ratio: 0.05
   seed: 7331
-  precision: fp32
-  grad_checkpointing: true
-  eval_steps: 50
-  save_steps: 50
-  logging_steps: 5
+  precision: bf16
+  grad_checkpointing: false
+  eval_steps: 9999
+  save_steps: 200
+  logging_steps: 20
   max_steps: -1
   lora:
     enabled: true
@@ -50,17 +56,16 @@ training:
     dropout: 0.05
     target_modules: [q_proj, k_proj, v_proj, o_proj]
 
-# Smoke: SmolLM2-135M, 6 optimizer steps for CI sanity.
 smoke:
-  base_model: HuggingFaceTB/SmolLM2-135M-Instruct
-  max_input_tokens: 1024
+  base_model: Qwen/Qwen3-0.6B
+  max_input_tokens: 2048
   batch_size: 1
   grad_accum: 2
   learning_rate: 5.0e-4
   epochs: 1
   weight_decay: 0.0
   warmup_ratio: 0.0
-  precision: fp32
+  precision: bf16
   grad_checkpointing: false
   eval_steps: 5
   save_steps: 5
@@ -74,8 +79,9 @@ smoke:
     target_modules: [q_proj, k_proj, v_proj, o_proj]
 
 packaging:
-  max_input_tokens: 2048
+  max_input_tokens: 4096
   expected_latency_ms: 1500
+  weights_dtype: f16
   confidence_thresholds:
     high: 0.9
     low: 0.6

@@ -1,73 +1,84 @@
 # JCL Validator
 
-Multi-head BERT classifier that flags JCL syntax/semantic errors before a job
-is submitted to z/OS. Trained on synthetically generated JCL with injected
-defects.
+LoRA-tuned `Qwen/Qwen3-1.7B` that validates a sanitized JCL document and emits a structured `JclValidationResult` JSON object. Pure SFT on 3-message conversations (system, user, assistant). Replaces the legacy multi-head BERT classifier — same task, better interpretability, structured output that downstream code can act on.
 
-- **Task string (manifest):** `jcl_validation`
-- **Model id:** `jcl-validator:v1`
-- **Base model:** `google-bert/bert-base-uncased`
-- **Runtime backend:** `CandleBackend` (BERT-arch with three flow-specific heads)
+Authoritative spec: [`training_instructions.md`](training_instructions.md).
 
-## Heads
+## Targets
 
-The model emits three classification heads simultaneously, scored against
-`packaging.confidence_thresholds`:
+- **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
+- **Final artefact**: merged safetensors loaded by `flow-model-runtime` (Candle).
+- **Disk footprint**: ~3.4 GB at fp16. Same envelope as FlowGraphGenerator.
 
-- **seq** - is this JCL valid as a whole? (binary)
-- **cat** - error category (one of seven; see `datasets/label_taxonomy.md`).
-- **line** - line-level token classification (which line carries the defect).
+## Output shape
 
-`training.head_weights` controls how much each head contributes to the loss.
-
-## Dataset
-
-- `datasets/schema.json` - sample shape (sanitized JCL + per-head labels).
-- `datasets/label_taxonomy.md` - the seven error categories with examples.
-- `datasets/templates/*.jcl` - 8 valid JCL templates (single-step, multi-step,
-  proc call, with set, IEBGENER, COBOL compile, concat DD, sort step) used by
-  `flow_ml.data.synthetic.jcl_generator` to render valid samples and inject
-  defects.
-
-`prepare jcl` runs the synthetic generator and writes train/val/test JSONLs
-into `output/prepared/`. Sizes default to 2000 per error class plus 2000 valid.
-
-## End-to-end commands
-
-```bash
-# 1. Prepare splits (synthetic generation, ~16,000 samples by default)
-python -m flow_ml.cli prepare models/jcl-validator/
-
-# 2. Smoke training (tiny BERT, 10 steps)
-python -m flow_ml.cli train models/jcl-validator/ --smoke
-
-# 3. Full training (BERT-base, 3 epochs)
-python -m flow_ml.cli train models/jcl-validator/
-
-# 4. Evaluate the most recent checkpoint
-python -m flow_ml.cli evaluate models/jcl-validator/
-
-# 5. Package -> .fm archive
-python -m flow_ml.cli package models/jcl-validator/ --version v1
-
-# 6. Verify the .fm
-python -m flow_ml.cli verify models/jcl-validator/output/dist/jcl-validator-v1.fm
+```json
+{
+  "valid": false,
+  "errors": [
+    {
+      "line": 7,
+      "severity": "error",
+      "code": "missing_dd",
+      "message": "IEBGENER step missing SYSUT1 and SYSUT2 DD statements.",
+      "suggestion": "Add `//SYSUT1 DD ...` and `//SYSUT2 DD ...`."
+    }
+  ],
+  "confidence": 0.91
+}
 ```
 
-## Evaluation criteria
+`valid: true` iff `errors: []`. Cap of 5 errors per result. `code` is one of:
+`missing_dd`, `invalid_job_card`, `unresolved_symbolic_parameter`,
+`continuation_error`, `invalid_exec_statement`,
+`invalid_dataset_reference_structure`, `other`, `none`.
 
-`evaluate_jcl` computes per-head metrics:
+Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json) and the JSON Schema at [`datasets/jcl_validation_schema.json`](datasets/jcl_validation_schema.json).
 
-- **seq** accuracy and F1.
-- **cat** macro-F1 across the seven categories.
-- **line** token-level F1.
+## Layout
 
-Reports land in `output/eval/<run-name>.{json,md}`.
+```
+models/jcl-validator/
+├── README.md
+├── training_instructions.md
+├── model.yml
+└── datasets/
+    ├── prompt_spec.json
+    ├── jcl_validation_schema.json
+    ├── node_contracts.json
+    └── samples/
+        ├── seed_samples.jsonl
+        └── test_prompt_set.jsonl
+```
 
-## Runtime contract
+## Workflow
 
-The Candle backend at `flow-studio/crates/flow-model-runtime/src/backends/jcl.rs`
-loads `model.safetensors` plus the auxiliary `flow_heads.safetensors` and
-`labels.json`, runs a single forward pass, and returns the three head outputs.
-A `JclValidation` Tauri command in flow-studio wraps this for the canvas's
-"Validate JCL" node.
+```bash
+flow_ml prepare  models/jcl-validator/
+flow_ml train    models/jcl-validator/ --smoke   # ~2 min on Qwen3-0.6B
+flow_ml train    models/jcl-validator/           # ~30-40 min on Qwen3-1.7B (M5 Max bf16)
+flow_ml evaluate models/jcl-validator/
+flow_ml package  models/jcl-validator/ --version v0.1
+```
+
+Expand the seed corpus by hand-authoring rows in
+`datasets/samples/seed_samples.jsonl` (each row:
+`{sample_id, source, category, request, expected_validation_result, split?}`)
+and re-running `flow_ml prepare` before training.
+
+## Quality gates
+
+| Metric | Target |
+|---|---|
+| `json_parse_rate` | ≥ 0.95 |
+| `schema_conformance_rate` | ≥ 0.90 |
+| `severity_accuracy` | ≥ 0.85 |
+| `code_accuracy` | ≥ 0.85 |
+| `valid_flag_accuracy` | ≥ 0.95 |
+| `line_within_3_accuracy` | ≥ 0.70 |
+
+`line_within_3` allows ±3 lines of slack on the predicted error line — practical UI tolerance.
+
+## Latency note
+
+Generative inference on Qwen3-1.7B is ~1–2 s per sample on M5 Max bf16. The legacy BERT classifier was ~100 ms. Acceptable trade-off for the structured-output + pinpoint-line + suggestion gains, but real-time use cases (sub-200 ms SLA) should batch validations or run async.

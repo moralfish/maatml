@@ -1,0 +1,75 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://flow.studio/schemas/flow-graph.json",
+  "title": "FlowGraphDto",
+  "description": "Canonical Flow Graph JSON shape emitted by FlowGraphGenerator. Mirrors apps/shared-types/src/graph.ts in flow-studio. Until the TS-to-JSON-Schema generator lands in flow-studio, this file is hand-authored and synced by scripts/sync-spec-from-flow-studio.sh.",
+  "type": "object",
+  "required": ["id", "name", "version", "nodes", "edges"],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "version": { "type": "string" },
+    "nodes": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/FlowNodeDto" }
+    },
+    "edges": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/FlowEdgeDto" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "definitions": {
+    "FlowNodeDto": {
+      "type": "object",
+      "required": ["id", "type", "position", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "enum": ["action", "ai", "cloud_ai", "utility"]
+        },
+        "position": { "$ref": "#/definitions/Position" },
+        "data": { "$ref": "#/definitions/NodeData" }
+      }
+    },
+    "Position": {
+      "type": "object",
+      "required": ["x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      }
+    },
+    "NodeData": {
+      "type": "object",
+      "required": ["label"],
+      "properties": {
+        "label": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "FlowEdgeDto": {
+      "type": "object",
+      "required": ["id", "source", "target"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "target": { "type": "string", "minLength": 1 },
+        "label": { "type": "string" },
+        "condition": { "type": "string" },
+        "outcome": {
+          "type": "string",
+          "enum": ["pass", "fail", "always"]
+        }
+      }
+    }
+  }
+}

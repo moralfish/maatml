@@ -14,10 +14,11 @@ This repo is the Python-first training, evaluation, and packaging workspace for 
 
 | model folder | task key | model id | base model | runtime backend |
 |---|---|---|---|---|
-| `models/jcl-validator/` | `jcl_validation` | `jcl-validator:v1` | `google-bert/bert-base-uncased` | `CandleBackend` |
-| `models/spool-interpreter/` | `spool_interpretation` | `spool-interpreter:v1` | `HuggingFaceTB/SmolLM2-360M-Instruct` + LoRA | `CandleGenerativeBackend` |
-| `models/dsl-generator/` | `dsl_generation` | `dsl-generator:v1` | `Qwen/Qwen2.5-Coder-7B-Instruct` + LoRA | `CandleGenerativeBackend` |
-| `models/agent-planner/` | `agent_planning` | `agent-planner:v1` | `Qwen/Qwen3-4B-Instruct-2507` + LoRA | `CandleGenerativeBackend` |
+| `models/jcl-validator/` | `jcl_validation` | `jcl-validator:v1` | `Qwen/Qwen3-1.7B` + LoRA | `CandleGenerativeBackend` |
+| `models/spool-interpreter/` | `spool_interpretation` | `spool-interpreter:v1` | `Qwen/Qwen3-1.7B` + LoRA | `CandleGenerativeBackend` |
+| `models/flow-graph-generator/` | `flow_graph_generation` | `flow-graph-generator:v1` | `Qwen/Qwen3-1.7B` + LoRA | `CandleGenerativeBackend` |
+
+All three models follow the same generative SFT pattern (3-message conversations, LoRA + bf16, merged safetensors, 7-layer out-of-model validator). The canonical training spec is [`flow_inference_model_training_instructions.md`](flow_inference_model_training_instructions.md). Per-model details live alongside each model in `models/<name>/training_instructions.md`. The cross-platform inference target is Mac/Windows/Linux with 16 GB RAM minimum.
 
 ## `model.yml` — single source of truth
 
@@ -74,25 +75,27 @@ src/flow_ml/
   config.py           # ModelDefinition, PackagingSpec, load_model_def()
   cli.py              # Typer app — 6 commands (prepare, train, evaluate, package, verify, plan)
   data/
-    pipeline.py       # prepare_jcl / prepare_spool / prepare_dsl / prepare_agent
-    schemas.py        # Pydantic sample types for all four tasks
-    sanitizer.py      # PII / secret redaction applied before tokenization
-    sanitization.yaml # redaction rule definitions
+    pipeline.py        # prepare_jcl / prepare_spool / prepare_flow_graph
+    schemas.py         # Pydantic sample types for all three tasks
+    sanitizer.py       # PII / secret redaction applied before tokenization
+    sanitization.yaml  # redaction rule definitions
     synthetic/
       jcl_generator.py   # synthetic JCL corpus from templates + defect injection
-      dsl_generator.py   # rule-based DSL augmenter
   training/
-    jcl_validator.py     # multi-head BERT fine-tune
-    spool_interpreter.py # SmolLM2 + LoRA
-    dsl_generator.py     # Qwen2.5-Coder + LoRA
-    agent_planner.py     # Qwen3 + LoRA
+    jcl_validator.py        # Qwen3-1.7B + LoRA generative trainer
+    spool_interpreter.py    # Qwen3-1.7B + LoRA generative trainer
+    flow_graph_generator.py # Qwen3-1.7B + LoRA generative trainer
+    sft_base.py             # shared SFT skeleton (collator, render, train loop)
+  validation/
+    flow_graph_validator.py # Flow Graph 7-layer out-of-model validator
+    jcl_validator.py        # JCL validation result validator
+    spool_validator.py      # Spool interpretation validator
   evaluation/
-    runner.py        # evaluate_jcl / evaluate_spool / evaluate_dsl / evaluate_agent
-    graph_diff.py    # DSL graph structure comparison utilities
+    runner.py        # evaluate_jcl / evaluate_spool / evaluate_flow_graph
   models/
     manifest.py      # ModelManifest + ConfidenceThresholds (runtime contract)
   packaging/
-    package_model.py # package_jcl / package_spool / package_dsl / package_agent / verify_package
+    package_model.py # package_jcl / package_spool / package_flow_graph / verify_package
   tokenization/
     strategy.md      # tokenization decisions
   utils/
@@ -124,28 +127,23 @@ prepare  →  train --smoke  →  train  →  evaluate  →  package  →  verif
 
 Generates a fully synthetic corpus from the 8 JCL templates in `datasets/templates/`. Defect injectors produce labelled samples for each of the seven error categories, plus a valid set. Default: 2 000 samples per class + 2 000 valid ≈ 16 000 total. Splits: 80 / 10 / 10.
 
-### Spool Interpreter and DSL Generator (`prepare_spool`, `prepare_dsl`)
+### Spool Interpreter, Flow Graph Generator (`prepare_spool`, `prepare_flow_graph`)
 
-Load hand-authored seed samples from `datasets/samples/seed_samples.jsonl`, apply hash-stable deterministic splitting. DSL Generator also runs the rule-based augmenter (`dsl_generator.py`) to expand the seed corpus to ~3 500 samples before splitting.
+Load hand-authored seed samples from `datasets/samples/seed_samples.jsonl` and apply hash-stable deterministic 80/10/10 splitting. Each row carries `{sample_id, source, category, request, expected_output, split?}`; samples are authored by hand and human-reviewed before they land in the corpus.
 
-### Agent Planner (`prepare_agent`)
-
-Same as spool / DSL: load seed + eval samples from JSONL, hash-stable split. `datasets/samples/eval_samples.jsonl` is always routed to the test split to keep the benchmark fixed across retrains.
-
-All four prepare functions write `output/prepared/{train,val,test}.jsonl`.
+All three prepare functions write `output/prepared/{train,val,test}.jsonl`.
 
 ## Training
 
-Each trainer reads its section from `model.yml` into a typed config (`JclTrainConfig`, `SpoolTrainConfig`, `DslTrainConfig`, `AgentTrainConfig`) via Pydantic. The `--smoke` flag calls `model_def.merged_smoke()`, which overlays the `smoke:` block on top of `training:` and swaps in the smaller `smoke.base_model`.
+Each trainer reads its section from `model.yml` into a typed config (`JclTrainConfig`, `SpoolTrainConfig`, `FlowGraphTrainConfig`) via Pydantic. The `--smoke` flag calls `model_def.merged_smoke()`, which overlays the `smoke:` block on top of `training:` and swaps in the smaller `smoke.base_model` (typically `Qwen3-0.6B`).
 
 | trainer | architecture | LoRA | loss |
 |---|---|---|---|
-| `jcl_validator` | BERT + 3 custom heads (seq, cat, line) | no | weighted sum of 3 CE losses |
-| `spool_interpreter` | causal LM | yes | CLM (labels masked over prompt) |
-| `dsl_generator` | causal LM | yes | CLM (labels masked over prompt) |
-| `agent_planner` | causal LM | yes | CLM (labels masked over prompt) |
+| `jcl_validator` | causal LM (Qwen3-1.7B) | yes | CLM (labels masked over system + user; unmasked over assistant JSON) |
+| `spool_interpreter` | causal LM (Qwen3-1.7B) | yes | CLM (labels masked over system + user; unmasked over assistant JSON) |
+| `flow_graph_generator` | causal LM (Qwen3-1.7B) | yes | CLM (labels masked over system + user; unmasked over assistant JSON) |
 
-All trainers use HuggingFace `Trainer` / `TrainingArguments`, set `dataloader_num_workers=0`, and force `attn_implementation="eager"` on generative models (SDPA on MPS has known regressions). `eval_steps: 9999` in generative `model.yml` files disables mid-training evaluation on MPS to avoid the unified-memory runaway.
+All trainers use HuggingFace `Trainer` / `TrainingArguments`, set `dataloader_num_workers=0`, and load weights at fp32 with `bf16=True` autocast for stability on MPS (loading at bf16 + autocast bf16 has produced NaN gradients). `eval_steps: 9999` in `model.yml` files disables mid-training evaluation on MPS to avoid the unified-memory runaway. `grad_checkpointing` defaults to `false` on the 1.7B trainers — recomputation drift on MPS bf16 was the source of v1 NaN runs.
 
 ## Evaluation
 
@@ -153,20 +151,19 @@ All trainers use HuggingFace `Trainer` / `TrainingArguments`, set `dataloader_nu
 
 | task | metrics |
 |---|---|
-| `jcl_validation` | seq accuracy + F1, cat macro-F1, line token-F1 |
-| `spool_interpretation` | json_validity, category_accuracy, root_cause_rouge_l |
-| `dsl_generation` | json_validity, parser_roundtrip, node_count_jaccard, edge_count_match |
-| `agent_planning` | json_validity, schema_validity, intent_match, dsl_presence_accuracy, refusal_accuracy, action_jaccard |
+| `jcl_validation` | json_parse_rate, schema_conformance_rate, severity_accuracy, code_accuracy, valid_flag_accuracy, line_within_3_accuracy |
+| `spool_interpretation` | json_parse_rate, schema_conformance_rate, failure_category_accuracy, return_code_accuracy |
+| `flow_graph_generation` | json_parse_rate, schema_conformance_rate, node_type_validity_rate, edge_ref_validity_rate, node_contract_validity_rate, security_policy_pass_rate, forbidden_rejection_rate (= 1.00) |
 
-The `--baseline PATH` option loads a previous report JSON and adds a `baseline_delta` section to the new report.
+Each evaluator runs the per-task 7-layer validator over the model's generation. The `--baseline PATH` option loads a previous report JSON and adds a `baseline_delta` section to the new report.
 
 ## Packaging and the `.fm` archive
 
 `package_*` functions in `packaging/package_model.py`:
 
 1. Copy the checkpoint's `config.json`, `tokenizer.json`, and related files.
-2. Merge LoRA adapter weights back into the base model and save as `model.safetensors` (generative models). For JCL Validator, also writes `flow_heads.safetensors` + `labels.json`.
-3. Convert weights to the dtype specified by `packaging.weights_dtype` (`f32` default; `f16` for DSL Generator and Agent Planner to keep 7B packages around 14 GB).
+2. Merge LoRA adapter weights back into the base model and save as `model.safetensors`. For Flow Graph Generator, also writes `flow_graph_schema.json` + `node_contracts.json` so the runtime's 7-layer validator has the full vocabulary/schema in-package.
+3. Convert weights to the dtype specified by `packaging.weights_dtype` (`f16` default for the 1.7B SFT models, keeping `.fm` archives around 3.4 GB).
 4. Write `manifest.json` from `ModelManifest` (model_id, task, runtime, version, base_model, max_input_tokens, expected_latency_ms, confidence_thresholds, weights_dtype).
 5. Copy `prompt_spec.json` when present.
 6. Zip everything into `<model_id>-<version>.fm` (deflated).

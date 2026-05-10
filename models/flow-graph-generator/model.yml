@@ -1,0 +1,135 @@
+# FlowGraphGenerator - LoRA-tuned Qwen3-1.7B that converts natural-language
+# workflow requests into Flow Graph JSON proposals.
+#
+# Task: flow_graph_generation
+# Runtime: candle (CandleGenerativeBackend in flow-studio's flow-model-runtime)
+# Spec:    docs/flow_inference_model_training_instructions.md
+#
+# Cross-platform target: Mac / Windows / Linux with 16 GB RAM minimum.
+# Qwen3-1.7B at fp16 packs to ~3.4 GB on disk and ~4-5 GB total runtime
+# memory (weights + KV cache + activations at 4096 ctx). Comfortably fits
+# inside the 16 GB envelope on every supported OS.
+#
+# The model emits proposals only - flow-studio validates outside the model
+# via the 7-layer validator (JSON parse, schema, node-type, edge-ref,
+# node-contract, security policy, canonical graph). It never executes.
+
+name: flow-graph-generator
+model_id: flow-graph-generator:v1
+task: flow_graph_generation
+runtime: candle
+version: v1
+description: "LoRA-tuned Qwen3-1.7B that emits Flow Graph JSON proposals from natural-language workflow requests."
+base_model: Qwen/Qwen3-1.7B
+
+# Data preparation: hand-authored seeds + Claude-paraphrase pass producing
+# 500-1000 samples. No rule-based augmentation - the safety categories
+# (unsafe, ambiguous, repair) need careful gold-graph design that
+# augmentation can't synthesise.
+data:
+  seed: 7331
+  prompt_spec: datasets/prompt_spec.json
+  schema: datasets/flow_graph_schema.json
+  contracts: datasets/node_contracts.json
+  intent_aliases: datasets/intent_aliases.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/test_prompt_set.jsonl
+  raw_field: request
+  split_ratios: [0.8, 0.1, 0.1]
+
+# Training: Qwen3-1.7B + LoRA on attention projections.
+#
+# Why these knobs:
+#   - precision bf16: M5 Max neural accelerators are bf16-native; Qwen3
+#     trains stably at bf16. The trainer's bf16 gate is lifted to MPS as
+#     part of this model (was CUDA-only).
+#   - max_input_tokens 4096: the doc's recommendation; system prompt is
+#     ~1500 tokens, so plenty of room for the user request + assistant
+#     graph response without truncation.
+#   - batch_size 2 with grad_accum 8: effective batch 16, fits 1.7B
+#     activations on M5 Max with grad_checkpointing on.
+#   - learning_rate 2e-4: doc-recommended for Qwen3-1.7B + LoRA r=16.
+#   - epochs 4: SFT on a structured-output task converges quickly; 4 is
+#     enough headroom to hit the safety-refusal bar without overfitting.
+#   - target_modules attention-only: matches agent-planner's 4B precedent
+#     and the doc's recommendation.
+training:
+  model_id: Qwen/Qwen3-1.7B
+  max_input_tokens: 4096
+  # FGG samples have ~4× the length variance of JCL/Spool (span 431 tokens
+  # vs 172/98). At batch_size 2, mismatched-length samples get heavily
+  # padded, and PyTorch's SDPA attention NaN's the gradient on MPS when
+  # the attention mask zeros out a large fraction of keys. Workaround:
+  # batch_size 1 (no intra-batch padding) with grad_accum 16 to preserve
+  # the effective batch of 16. ~1.5x slower per step but stable.
+  batch_size: 1
+  grad_accum: 16
+  learning_rate: 1.0e-4
+  # epochs 4 on 500 samples → ~125 optimizer steps. The previous knob of
+  # 12 epochs was sized for the old 133-sample corpus; with the rebuilt
+  # 500-sample corpus, 4 epochs gives more total steps than the old
+  # 12-epoch run on 133 samples and matches JCL/Spool's training shape.
+  epochs: 4
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  seed: 7331
+  # FGG sequences are ~50% longer than JCL/Spool (p95 ~815 vs ~554) and
+  # the JSON-heavy assistant target keeps attention saturating in bf16
+  # on MPS — a full Qwen3-1.7B run produced grad_norm=NaN from step 1.
+  # JCL and Spool with shorter sequences train cleanly at bf16, so we
+  # leave them; FGG runs at fp32 for numerical headroom (~2x slower but
+  # converges). Revisit if Apple ships a more stable bf16 attention.
+  precision: fp32
+  # grad_checkpointing OFF: 1.7B at fp32 weights + bf16 autocast easily
+  # fits 64 GB unified memory without it, and the recomputation is what
+  # diverged on MPS bf16 in the first run. Re-enable only if memory
+  # pressure forces it.
+  grad_checkpointing: false
+  eval_steps: 9999
+  save_steps: 200
+  logging_steps: 20
+  max_steps: -1
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+# Smoke profile: Qwen3-0.6B for fast pipeline validation. Same chat
+# template as the real base, so the loss-mask logic in the trainer
+# behaves identically. Quality is intentionally bad - smoke is for
+# pipeline mechanics, not eval scores.
+smoke:
+  base_model: Qwen/Qwen3-0.6B
+  max_input_tokens: 2048
+  batch_size: 1
+  grad_accum: 2
+  learning_rate: 5.0e-4
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  precision: bf16
+  grad_checkpointing: false
+  eval_steps: 5
+  save_steps: 5
+  logging_steps: 2
+  max_steps: 6
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.0
+    target_modules: [q_proj, k_proj, v_proj, o_proj]
+
+# Packaging: ship F16 safetensors. The doc explicitly requires safetensors
+# (not GGUF) because the runtime is Rust+Candle. f16 weights pack to
+# ~3.4 GB, well under the 5 GB archive cap, and load directly into
+# Candle's Metal/CUDA backends without dequantisation.
+packaging:
+  max_input_tokens: 4096
+  expected_latency_ms: 800
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.9
+    low: 0.6

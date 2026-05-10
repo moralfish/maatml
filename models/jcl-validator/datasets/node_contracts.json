@@ -1,0 +1,27 @@
+{
+  "_provenance": {
+    "source": "Hand-authored. Bounded vocabulary for JclValidationResult. Mirrors ErrorCategory + Severity enums in flow_ml/data/schemas.py.",
+    "schema_version": "1"
+  },
+  "severities": ["error", "warning", "info"],
+  "error_codes": [
+    "missing_dd",
+    "invalid_job_card",
+    "unresolved_symbolic_parameter",
+    "continuation_error",
+    "invalid_exec_statement",
+    "invalid_dataset_reference_structure",
+    "other",
+    "none"
+  ],
+  "max_errors_per_result": 5,
+  "valid_when": {
+    "valid_true_iff_errors_empty": true,
+    "rationale": "If `valid: true`, the `errors` array MUST be empty. If `valid: false`, the array MUST contain at least one entry."
+  },
+  "confidence": {
+    "min": 0.0,
+    "max": 1.0,
+    "calibration_note": "0.9+ on clean valid samples; 0.7-0.9 on confident error detections; <0.7 when ambiguous."
+  }
+}

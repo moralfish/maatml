@@ -20,7 +20,11 @@ import typer
 from rich.console import Console
 
 from .config import ModelDefinition, load_model_def
-from .data.pipeline import prepare_agent, prepare_dsl, prepare_jcl, prepare_spool
+from .data.pipeline import (
+    prepare_flow_graph,
+    prepare_jcl,
+    prepare_spool,
+)
 
 # MPS unsupported-op fallback to CPU; harmless on non-Mac.
 os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
@@ -62,10 +66,8 @@ def cmd_prepare(
         prepare_jcl(md)
     elif md.task == "spool_interpretation":
         prepare_spool(md)
-    elif md.task == "dsl_generation":
-        prepare_dsl(md)
-    elif md.task == "agent_planning":
-        prepare_agent(md)
+    elif md.task == "flow_graph_generation":
+        prepare_flow_graph(md)
     else:
         raise typer.BadParameter(f"Unknown task: {md.task}")
 
@@ -86,12 +88,9 @@ def cmd_train(
     elif md.task == "spool_interpretation":
         from .training.spool_interpreter import train_spool
         result = train_spool(md, smoke=smoke, limit=limit, device=device, seed=seed)
-    elif md.task == "dsl_generation":
-        from .training.dsl_generator import train_dsl
-        result = train_dsl(md, smoke=smoke, limit=limit, device=device, seed=seed)
-    elif md.task == "agent_planning":
-        from .training.agent_planner import train_agent
-        result = train_agent(md, smoke=smoke, limit=limit, device=device, seed=seed)
+    elif md.task == "flow_graph_generation":
+        from .training.flow_graph_generator import train_flow_graph
+        result = train_flow_graph(md, smoke=smoke, limit=limit, device=device, seed=seed)
     else:
         raise typer.BadParameter(f"Unknown task: {md.task}")
     console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
@@ -127,16 +126,9 @@ def cmd_evaluate(
             baseline_path=baseline, device=device, split=split,
             max_input_tokens=max_input_tokens,
         )
-    elif md.task == "dsl_generation":
-        from .evaluation.runner import evaluate_dsl
-        report = evaluate_dsl(
-            ckpt, md.prepared_dir, out_path,
-            baseline_path=baseline, device=device, split=split,
-            max_input_tokens=max_input_tokens,
-        )
-    elif md.task == "agent_planning":
-        from .evaluation.runner import evaluate_agent
-        report = evaluate_agent(
+    elif md.task == "flow_graph_generation":
+        from .evaluation.runner import evaluate_flow_graph
+        report = evaluate_flow_graph(
             ckpt, md.prepared_dir, out_path,
             baseline_path=baseline, device=device, split=split,
             max_input_tokens=max_input_tokens,
@@ -168,33 +160,39 @@ def cmd_package(
         expected_latency_ms=md.packaging.expected_latency_ms,
         version=ver,
     )
+    prompt_spec = md.resolve(md.data["prompt_spec"]) if md.data.get("prompt_spec") else None
+    schema = md.resolve(md.data["schema"]) if md.data.get("schema") else None
+    contracts = md.resolve(md.data["contracts"]) if md.data.get("contracts") else None
     if md.task == "jcl_validation":
         from .packaging.package_model import package_jcl
-        result = package_jcl(ckpt, dist_dir, **pkg_kwargs)
-    elif md.task == "spool_interpretation":
-        from .packaging.package_model import package_spool
-        prompt_spec = md.resolve(md.data["prompt_spec"]) if md.data.get("prompt_spec") else None
-        result = package_spool(ckpt, dist_dir, prompt_spec_path=prompt_spec, **pkg_kwargs)
-    elif md.task == "dsl_generation":
-        from .packaging.package_model import package_dsl
-        prompt_spec = md.resolve(md.data["prompt_spec"]) if md.data.get("prompt_spec") else None
-        # `weights_dtype` flows from the model.yml `packaging:` block so
-        # 7B-class bases ship at F16 by default without needing a CLI
-        # flag; legacy 360M/1.7B packages keep the F32 default.
-        result = package_dsl(
+        result = package_jcl(
             ckpt,
             dist_dir,
             prompt_spec_path=prompt_spec,
+            schema_path=schema,
+            contracts_path=contracts,
             weights_dtype=md.packaging.weights_dtype,
             **pkg_kwargs,
         )
-    elif md.task == "agent_planning":
-        from .packaging.package_model import package_agent
-        prompt_spec = md.resolve(md.data["prompt_spec"]) if md.data.get("prompt_spec") else None
-        result = package_agent(
+    elif md.task == "spool_interpretation":
+        from .packaging.package_model import package_spool
+        result = package_spool(
             ckpt,
             dist_dir,
             prompt_spec_path=prompt_spec,
+            schema_path=schema,
+            contracts_path=contracts,
+            weights_dtype=md.packaging.weights_dtype,
+            **pkg_kwargs,
+        )
+    elif md.task == "flow_graph_generation":
+        from .packaging.package_model import package_flow_graph
+        result = package_flow_graph(
+            ckpt,
+            dist_dir,
+            prompt_spec_path=prompt_spec,
+            schema_path=schema,
+            contracts_path=contracts,
             weights_dtype=md.packaging.weights_dtype,
             **pkg_kwargs,
         )

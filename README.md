@@ -12,10 +12,9 @@ Local models, each self-contained in its own folder under `models/`:
 
 | model | task (manifest)        | model id                 | base                             | runtime backend           |
 |-------|------------------------|--------------------------|----------------------------------|---------------------------|
-| [JCL Validator](models/jcl-validator/)         | `jcl_validation`       | `jcl-validator:v1`     | google-bert/bert-base-uncased  | CandleBackend           |
-| [Spool Interpreter](models/spool-interpreter/) | `spool_interpretation` | `spool-interpreter:v1` | SmolLM2-360M-Instruct + LoRA   | CandleGenerativeBackend |
-| [DSL Generator](models/dsl-generator/)         | `dsl_generation`       | `dsl-generator:v1`     | Qwen2.5-Coder-7B-Instruct + LoRA | CandleGenerativeBackend |
-| [Agent Planner](models/agent-planner/)         | `agent_planning`       | `agent-planner:v1`     | Qwen3-4B-Instruct + LoRA       | CandleGenerativeBackend |
+| [JCL Validator](models/jcl-validator/)             | `jcl_validation`        | `jcl-validator:v1`        | Qwen3-1.7B + LoRA              | CandleGenerativeBackend |
+| [Spool Interpreter](models/spool-interpreter/)     | `spool_interpretation`  | `spool-interpreter:v1`    | Qwen3-1.7B + LoRA              | CandleGenerativeBackend |
+| [Flow Graph Generator](models/flow-graph-generator/) | `flow_graph_generation` | `flow-graph-generator:v1` | Qwen3-1.7B + LoRA              | CandleGenerativeBackend |
 
 
 ## Repository layout
@@ -42,32 +41,34 @@ models/                     # one folder per model - the only thing that matters
       # dist/<model_id>-<version>/
       # dist/<model_id>-<version>.fm
 
-  spool-interpreter/  ...   # same layout
-  dsl-generator/      ...   # same layout
-  agent-planner/      ...   # same layout
+  spool-interpreter/      ...   # same layout
+  flow-graph-generator/   ...   # same layout
 
 src/flow_ml/                # Python package
   config.py                 # ModelDefinition + load_model_def(model_dir)
   cli.py                    # flow_ml CLI (6 commands, all take a model folder)
   data/
-    pipeline.py             # prepare_jcl / prepare_spool / prepare_dsl / prepare_agent
+    pipeline.py             # prepare_jcl / prepare_spool / prepare_flow_graph
     sanitization.yaml       # global PII/secret redaction rules
     sanitizer.py
     schemas.py
     synthetic/
       jcl_generator.py      # synthetic JCL corpus
-      dsl_generator.py      # rule-based DSL augmenter
   training/
-    jcl_validator.py        # multi-head BERT trainer
-    spool_interpreter.py    # SmolLM2 + LoRA generative trainer
-    dsl_generator.py        # Qwen2.5-Coder + LoRA generative trainer
-    agent_planner.py        # Qwen3 + LoRA local workflow-agent trainer
+    jcl_validator.py        # Qwen3-1.7B + LoRA generative trainer
+    spool_interpreter.py    # Qwen3-1.7B + LoRA generative trainer
+    flow_graph_generator.py # Qwen3-1.7B + LoRA generative trainer (FlowGraphDto)
+    sft_base.py             # shared SFT skeleton (collator, render, train loop)
+  validation/               # 7-layer out-of-model validators per task
+    flow_graph_validator.py
+    jcl_validator.py
+    spool_validator.py
   evaluation/runner.py
   packaging/package_model.py # writes unpacked dir + .fm archive
   models/manifest.py         # ModelManifest contract
   utils/io.py
 scripts/                    # CLI shims (forward to flow_ml.cli)
-tests/                      # 83 tests collected, CPU-only, no model downloads
+tests/                      # collected on every push and PR
 ```
 
 ## Requirements
@@ -75,10 +76,10 @@ tests/                      # 83 tests collected, CPU-only, no model downloads
 - **Python** 3.10+ (developed against 3.13)
 - **OS** macOS, Linux. Windows untested.
 - **Disk** ~3 GB for the ML stack alone; add base-model weights as needed
-  (BERT-base ~440 MB, SmolLM2-360M ~720 MB, Qwen3/Qwen2.5-Coder bases are
-  multi-GB, and the packaged DSL 7B artifact is ~14 GB at f16).
-- **Memory** 16 GB unified memory is enough for JCL and small-model smoke runs;
-  32 GB+ is recommended for 7B-class DSL LoRA work.
+  (Qwen3-1.7B ~3.4 GB at fp16, Qwen3-0.6B ~1.5 GB for smoke runs).
+- **Memory** 16 GB unified memory is the design target — Qwen3-1.7B at
+  bf16 lands at ~10 GB total runtime memory. 32 GB+ is comfortable for
+  multiple models loaded simultaneously during eval.
 
 ## Installation
 
@@ -107,33 +108,105 @@ flow_ml plan     <model-dir>                                              # prin
 
 Run `flow_ml <command> --help` for full options.
 
-## End-to-end example (DSL Generator)
+## End-to-end example (Flow Graph Generator)
 
 ```bash
-# 1. Prepare splits (runs the augmenter -> ~3500 samples; writes train/val/test.jsonl)
-python -m flow_ml.cli prepare models/dsl-generator/
+# 1. Hand-author seed samples in
+#    models/flow-graph-generator/datasets/samples/seed_samples.jsonl
+#    (each row: {sample_id, source, category, request, expected_graph, split})
 
-# 2. Smoke training (SmolLM2-135M, 6 steps, ~5 seconds on M5 Max)
-python -m flow_ml.cli train models/dsl-generator/ --smoke
+# 2. Prepare splits (writes train/val/test.jsonl)
+python -m flow_ml.cli prepare models/flow-graph-generator/
 
-# 3. Full training (Qwen2.5-Coder-7B, 3 epochs)
-python -m flow_ml.cli train models/dsl-generator/
+# 3. Smoke training (Qwen3-0.6B, 6 steps, ~5 seconds on M5 Max)
+python -m flow_ml.cli train models/flow-graph-generator/ --smoke
 
-# 4. Evaluate the most recent checkpoint
-python -m flow_ml.cli evaluate models/dsl-generator/
+# 4. Full training (Qwen3-1.7B, 4-12 epochs depending on dataset size)
+python -m flow_ml.cli train models/flow-graph-generator/
 
-# 5. Package -> .fm archive in output/dist/
-python -m flow_ml.cli package models/dsl-generator/ --version v1
+# 5. Evaluate the most recent checkpoint
+python -m flow_ml.cli evaluate models/flow-graph-generator/
 
-# 6. Verify the .fm
-python -m flow_ml.cli verify models/dsl-generator/output/dist/dsl-generator-v1.fm
+# 6. Package -> .fm archive in output/dist/
+python -m flow_ml.cli package models/flow-graph-generator/ --version v0.1
+
+# 7. Verify the .fm
+python -m flow_ml.cli verify models/flow-graph-generator/output/dist/flow-graph-generator-v1.fm
 ```
 
 The `.fm` (flow model) archive is a deflated zip of the packaged model
 directory: `manifest.json`, `model.safetensors`, `config.json`, `tokenizer.json`,
-`prompt_spec.json` (when applicable), and any task-specific extras
-(`flow_heads.safetensors` + `labels.json` for jcl). Flow Studio's Models drawer
-imports `.fm` files directly.
+`prompt_spec.json`, and any task-specific extras (Flow Graph ships
+`flow_graph_schema.json` + `node_contracts.json` for the runtime's 7-layer
+validator). Flow Studio's Models drawer imports `.fm` files directly.
+
+## Batch scripts (all three models)
+
+All three SFT models share the same Qwen3-1.7B base, so it's natural to
+drive the lifecycle in one shot. Three wrappers under [`scripts/`](scripts/)
+do exactly that — each iterates over `jcl-validator`, `spool-interpreter`,
+and `flow-graph-generator`, isolates failures (one task failing does not
+abort the others), and prints a summary at the end.
+
+### Build (or refresh) the seed corpora
+
+The seed samples live in each model's `datasets/samples/seed_samples.jsonl`.
+Each builder is deterministic (seeded RNG), template-based, and gates every
+generated row through the per-task layer-validator before writing — no API
+calls, fully reproducible.
+
+```bash
+.venv/bin/python scripts/build_jcl_seeds.py          # ~500 samples, 8 categories
+.venv/bin/python scripts/build_spool_seeds.py        # ~500 samples, 13 categories
+.venv/bin/python scripts/build_flow_graph_seeds.py   # ~500 samples, 13 categories
+
+# Larger corpus, or extend without overwriting:
+.venv/bin/python scripts/build_jcl_seeds.py --target 800
+.venv/bin/python scripts/build_jcl_seeds.py --append
+```
+
+### Train all three
+
+```bash
+# Smoke run (Qwen3-0.6B, 6 steps each, ~30 seconds total on M5 Max)
+.venv/bin/python scripts/train_all.py --smoke
+
+# Full training (Qwen3-1.7B, ~6-8 min per task on M5 Max, ~25 min total)
+.venv/bin/python scripts/train_all.py
+
+# Subset / device override / skip prepare if splits already exist
+.venv/bin/python scripts/train_all.py --only jcl spool
+.venv/bin/python scripts/train_all.py --skip-prepare
+.venv/bin/python scripts/train_all.py --device cpu
+```
+
+Each task gets its own LoRA adapter under `<model-dir>/output/checkpoints/`;
+no cross-contamination. The base model weights are reloaded between tasks
+(disk-cached after the first load, so the overhead is small).
+
+### Evaluate all three
+
+```bash
+.venv/bin/python scripts/evaluate_all.py                     # latest ckpt of each, test split
+.venv/bin/python scripts/evaluate_all.py --split val
+.venv/bin/python scripts/evaluate_all.py --only flow_graph
+.venv/bin/python scripts/evaluate_all.py --limit 20          # quick smoke
+```
+
+Each task writes `report.{json,md}` under `<model-dir>/output/eval/` and
+the wrapper prints a headline metric (parse rate / schema conformance) per
+row in the summary.
+
+### Package all three
+
+```bash
+.venv/bin/python scripts/package_all.py                      # latest ckpt, model.yml version
+.venv/bin/python scripts/package_all.py --version v0.2
+.venv/bin/python scripts/package_all.py --only flow_graph
+```
+
+Each task writes `<model-dir>/output/dist/<id>-<version>/` (unpacked) and
+`<id>-<version>.fm` (drag-and-droppable archive) sized at ~3-4 GB per model.
 
 ## Adding a new model
 
@@ -141,21 +214,26 @@ imports `.fm` files directly.
 2. Write `models/<name>/model.yml` (copy one of the existing three as a template).
 3. Write `models/<name>/README.md` documenting the data strategy and evaluation criteria.
 4. Drop hand-written assets (schema.json, prompt_spec.json, seed_samples.jsonl) into `models/<name>/datasets/`.
-5. If the task is one of the four already supported (`jcl_validation`, `spool_interpretation`, `dsl_generation`, `agent_planning`), the CLI works out of the box. New tasks need a `prepare_*` / `train_*` / `evaluate_*` / `package_*` quad in `src/flow_ml/` and corresponding dispatch branches in `cli.py`.
+5. If the task is one of the three already supported (`jcl_validation`, `spool_interpretation`, `flow_graph_generation`), the CLI works out of the box. New tasks need a `prepare_*` / `train_*` / `evaluate_*` / `package_*` quad in `src/flow_ml/` and corresponding dispatch branches in `cli.py`.
 
 ## Apple Silicon / MPS notes
 
-- Default precision is **fp32**; bf16 is reserved for CUDA.
-- DSL Generator's `model.yml` sets `eval_steps: 9999` to disable mid-training eval on MPS - the unified memory allocator does not release the val-set tensors between eval and training, causing a runaway slowdown. A single post-training eval pass runs after `trainer.train()` returns.
-- The trainers force `attn_implementation="eager"` - SDPA on MPS has known correctness/perf regressions across PyTorch versions.
+- Default precision is **bf16** (autocast). Weights stay at fp32 for a stable
+  master copy; the `bf16=True` flag in `TrainingArguments` enables the
+  autocast over fp32. Loading weights AT bf16 + autocast bf16 can NaN on MPS.
+- All trainers set `eval_steps: 9999` to disable mid-training eval on MPS — the
+  unified memory allocator does not release the val-set tensors between eval
+  and training, causing a runaway slowdown. A single post-training eval pass
+  runs after `trainer.train()` returns.
+- `grad_checkpointing` defaults to `false` on the 1.7B trainers; recomputation
+  on MPS bf16 has destabilised in past runs and 1.7B fits a 64 GB Mac without it.
 - `dataloader_num_workers=0` everywhere (multi-worker + MPS deadlocks via fork pickling).
-- Generative models are LoRA-tuned. The DSL Generator ships f16 safetensors so
-  its Qwen2.5-Coder-7B package stays around 14 GB instead of an f32-sized dump.
+- Models ship f16 safetensors so packages land at ~3.4 GB and fit a 16 GB Mac.
 
 ## Development
 
 - Lint: `ruff check src tests scripts`
-- Tests: `pytest -q` (83 collected; current baseline is 82 passed, 1 skipped)
+- Tests: `pytest -q` (current baseline: 48 passed)
 - CI runs `validate_repo.py` + `pytest` on every push and PR.
 
 ## Further reading
