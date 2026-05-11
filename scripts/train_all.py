@@ -40,8 +40,8 @@ from flow_ml.data.pipeline import (  # noqa: E402
     prepare_spool,
 )
 from flow_ml.training.flow_graph_generator import train_flow_graph  # noqa: E402
-from flow_ml.training.jcl_validator import train_jcl  # noqa: E402
-from flow_ml.training.spool_interpreter import train_spool  # noqa: E402
+from flow_ml.training.jcl_classifier import train_jcl_classifier  # noqa: E402
+from flow_ml.training.spool_seq2seq import train_spool_seq2seq  # noqa: E402
 
 
 console = Console()
@@ -60,13 +60,13 @@ TASKS: dict[str, Task] = {
         name="jcl-validator",
         model_dir=REPO / "models" / "jcl-validator",
         prepare_fn=prepare_jcl,
-        train_fn=train_jcl,
+        train_fn=train_jcl_classifier,
     ),
     "spool": Task(
         name="spool-interpreter",
         model_dir=REPO / "models" / "spool-interpreter",
         prepare_fn=prepare_spool,
-        train_fn=train_spool,
+        train_fn=train_spool_seq2seq,
     ),
     "flow_graph": Task(
         name="flow-graph-generator",

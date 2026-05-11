@@ -1,27 +1,27 @@
-# JCL Validator - LoRA-tuned Qwen3-1.7B that emits structured JCL validation
-# results from sanitized JCL input.
+# JCL Validator v2 — ModernBERT-base multi-head classifier with custom
+# column-aware JCL tokenizer.
 #
-# Task: jcl_validation
-# Runtime: candle (CandleGenerativeBackend in flow-studio's flow-model-runtime)
-# Spec:    docs/flow_inference_model_training_instructions.md (per FlowGraphGenerator template)
+# Architecture: 4-head sequence classifier (validity / error_code /
+# severity / line_localization). Full fine-tune, no LoRA. Output is a
+# structured `JclValidationResult` JSON the runtime emits directly from
+# the head logits (no generative decoding).
 #
-# Architecture: pure SFT on 3-message conversations (system/user/assistant).
-# Replaces the previous multi-head BERT classifier. Latency goes from ~100 ms
-# (BERT) → ~1-2 s (Qwen3-1.7B SFT) — acceptable for a one-shot pre-submit
-# validation step. Quality + interpretability win: model emits a structured
-# JclValidationResult JSON with line numbers, severities, and suggestions
-# instead of opaque classifier outputs.
+# Replaces the v1 generative SFT pipeline (Qwen3-1.7B + LoRA, retired).
+# Goals: <500 ms latency, ~150-200 MB on-disk, custom tokenizer that
+# preserves JCL column-sensitive grammar (columns 1-2 = `//`, columns
+# 73-80 = ignored sequence numbers, column 72 = continuation marker).
 #
-# Cross-platform target: Mac / Windows / Linux with 16 GB RAM minimum.
-# Qwen3-1.7B at fp16 packs to ~3.4 GB on disk and ~4-5 GB total runtime.
+# Loaded in flow-studio via `BertClassifierBackend`. Manifest's
+# `architecture: candle_bert_classifier` selects the dispatch arm.
 
 name: jcl-validator
 model_id: jcl-validator:v1
 task: jcl_validation
 runtime: candle
+architecture: classifier
 version: v1
-description: "LoRA-tuned Qwen3-1.7B that emits JclValidationResult JSON from sanitized JCL input."
-base_model: Qwen/Qwen3-1.7B
+description: "ModernBERT-base multi-head classifier with custom JCL tokenizer; emits JclValidationResult JSON."
+base_model: answerdotai/ModernBERT-base
 
 data:
   seed: 1337
@@ -32,43 +32,51 @@ data:
   benchmark_samples: datasets/samples/test_prompt_set.jsonl
   raw_field: request
   split_ratios: [0.8, 0.1, 0.1]
+  # The custom JCL tokenizer is trained separately (one-shot) on a
+  # 10k-sample corpus, then committed alongside the model. See
+  # `training_instructions.md` §21 for the build sequence.
+  tokenizer: datasets/tokenizer.json
 
 training:
-  model_id: Qwen/Qwen3-1.7B
-  max_input_tokens: 4096
-  # v3 at batch_size 2 / bf16 produced grad_norm=8.6e13 and an MPS
-  # segfault at step 20 on the 1000-sample corpus. Same class of bug
-  # FGG hit earlier; matching FGG's stable config (batch_size 1,
-  # grad_accum 16, fp32) here too. ~2x slower per step but reliable.
-  batch_size: 1
-  grad_accum: 16
-  learning_rate: 1.0e-4
-  # epochs 6 on the ~1000-sample corpus (v3): the 4-epoch v2 model
-  # exhibited token-level mode collapse on rare error codes; more
-  # passes give the model time to internalise minority categories.
-  epochs: 6
+  model_id: answerdotai/ModernBERT-base
+  # 1024-token cap fits all of the synthetic seed decks (the longest is
+  # ~600 tokens after column normalisation). 2048 OOMs the MPS allocator
+  # on M5 Max because attention is O(seq_len^2 × batch). If real-world
+  # decks exceed 1024 we'd revisit with gradient checkpointing.
+  max_input_tokens: 1024
+  # bs=8 × grad_accum=2 ⇒ effective batch 16, but the attention matmul
+  # only holds 8 sequences at a time.
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 2.0e-5
+  epochs: 4
   weight_decay: 0.01
-  warmup_ratio: 0.05
+  warmup_ratio: 0.06
   seed: 1337
-  precision: fp32
+  # bf16 autocast on MPS/CUDA, fp32 weights for master copy. ModernBERT
+  # is small enough that we don't need the FGG-style fp32-everything
+  # workaround.
+  precision: bf16
   grad_checkpointing: false
   eval_steps: 9999
-  save_steps: 200
-  logging_steps: 20
+  save_steps: 250
+  logging_steps: 25
   max_steps: -1
-  lora:
-    enabled: true
-    r: 16
-    alpha: 32
-    dropout: 0.05
-    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  # Multi-head loss weights. validity + error_code dominate; severity is
+  # easier (most codes are always `error`), so it gets less weight;
+  # line_localization is noisiest, so it gets the smallest.
+  head_loss_weights:
+    validity: 1.0
+    error_code: 1.0
+    severity: 0.5
+    line: 0.3
 
 smoke:
-  base_model: Qwen/Qwen3-0.6B
-  max_input_tokens: 2048
-  batch_size: 1
-  grad_accum: 2
-  learning_rate: 5.0e-4
+  base_model: answerdotai/ModernBERT-base
+  max_input_tokens: 1024
+  batch_size: 2
+  grad_accum: 1
+  learning_rate: 5.0e-5
   epochs: 1
   weight_decay: 0.0
   warmup_ratio: 0.0
@@ -78,16 +86,15 @@ smoke:
   save_steps: 5
   logging_steps: 2
   max_steps: 6
-  lora:
-    enabled: true
-    r: 8
-    alpha: 16
-    dropout: 0.0
-    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  head_loss_weights:
+    validity: 1.0
+    error_code: 1.0
+    severity: 0.5
+    line: 0.3
 
 packaging:
-  max_input_tokens: 4096
-  expected_latency_ms: 1500
+  max_input_tokens: 2048
+  expected_latency_ms: 500
   weights_dtype: f16
   confidence_thresholds:
     high: 0.9

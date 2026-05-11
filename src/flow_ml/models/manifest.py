@@ -37,6 +37,13 @@ class ModelManifest(BaseModel):
     config: str = "config.json"
     labels_file: Optional[str] = None
     prompt_spec_file: Optional[str] = None
+    # Runtime architecture hint — flow-studio's loader routes by this
+    # to pick `CandleGenerativeBackend` (default), `BertClassifierBackend`,
+    # or `T5Seq2SeqBackend`. Snake-case matches the Rust enum names.
+    # Allowed: `generative_sft` | `candle_bert_classifier` | `candle_t5_seq2seq`.
+    # Omit on legacy v1 generative packages — runtime defaults to
+    # generative for back-compat.
+    architecture: Optional[str] = None
     max_input_tokens: int = Field(gt=0)
     expected_latency_ms: int = Field(gt=0)
     version: str = "v1"
@@ -48,7 +55,12 @@ class ModelManifest(BaseModel):
     def write(self, path: str | Path) -> Path:
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        payload = self.model_dump(mode="json")
+        # `exclude_none=True` keeps optional/legacy fields like
+        # `architecture` and `prompt_spec_file` out of the JSON when they
+        # weren't set. The Rust deserializer treats missing fields as
+        # default (`GenerativeSft` / `None`) but cannot parse an explicit
+        # `null` into the `ModelArchitecture` enum.
+        payload = self.model_dump(mode="json", exclude_none=True)
         p.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         return p
 

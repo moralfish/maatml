@@ -1,225 +1,293 @@
-# Spool Interpreter — Training Instructions
+# Spool Interpreter — Training Instructions (v2 seq2seq)
 
 ## 1. Purpose
 
-Local AI inference model for Flow that reads a z/OS job spool dump and emits a structured `SpoolInterpretation` JSON object. The model produces interpretation only — Flow Studio surfaces the result alongside the original spool; downstream actions (notify, archive, etc.) are scheduled by separate flow nodes.
-
----
-
-## 2. Recommended Base Models
-
-Same ladder as the FlowGraphGenerator family:
-
-| Stage | Model | Purpose |
-|---|---|---|
-| First experiment | Qwen3-1.7B | Validate dataset and pipeline quickly |
-| MVP local model | Qwen3-1.7B | Default local-inference target if metrics pass |
-| Balanced quality | Qwen3-4B-Instruct-2507 | Use only if 1.7B misses semantic-accuracy bars |
-| Code-flavoured benchmark | Qwen2.5-Coder-3B-Instruct | Comparison baseline |
-| Higher-quality benchmark | Qwen2.5-Coder-7B-Instruct | Optional only after MVP is stable |
-
-**Starting point: Qwen3-1.7B.** This is a substantial bump from the legacy SmolLM2-360M baseline; expect a meaningful quality jump on the 12-category root-cause classification.
-
----
-
-## 3. Training Objective
-
-```
-Sanitized z/OS spool output  ->  SpoolInterpretation JSON
-```
-
-Learn to:
-
-- Identify the job's terminal status (completed / failed / abended / skipped / running).
-- Extract the return code (4-char string) when present.
-- Localise the root cause of failure to one of 12 categories.
-- Produce short, actionable `summary`, `rootCause`, and `suggestedFix` strings.
-- Calibrate confidence.
-
-Must NOT:
-
-- Run any executor action.
-- Invent failure categories.
-- Return prose, markdown, or commentary outside the JSON.
-
----
-
-## 4. Expected Output Format
-
-Required shape:
+Post-execution interpretation of z/OS job spool output. Takes sanitised JES2
+spool transcripts and emits a structured `SpoolInterpretation` JSON the
+runtime renders directly:
 
 ```json
 {
-  "summary": "Build job ABENDed at STEP02 (S0C7).",
-  "status": "abended",
-  "returnCode": null,
-  "rootCause": "Data exception (S0C7) reading numeric field with invalid packed-decimal data in INFILE record 17.",
-  "suggestedFix": "Validate INFILE before submission; clean or reject record 17.",
+  "summary": "...",
+  "status": "failed|completed|...",
+  "returnCode": "S0C7",
+  "rootCause": "...",
+  "suggestedFix": "...",
+  "explanation": "...",
+  "relatedDocs": ["abend-s0c7", "ile-data-validation"],
   "failureCategory": "execution_abend",
-  "confidence": 0.91
+  "confidence": 0.92
 }
 ```
 
-Field rules in [`training_instructions.md`](training_instructions.md) §5 / [`datasets/node_contracts.json`](datasets/node_contracts.json).
+Replaces the v1 generative-SFT pipeline (Qwen3-1.7B + LoRA) with a
+flan-t5-base encoder-decoder per the original architecture spec.
 
----
+| | v1 (retired) | v2 (this doc) |
+|---|---|---|
+| Base | Qwen3-1.7B | flan-t5-base (~250 MB fp32 / ~600 MB after fine-tune) |
+| Method | LoRA SFT | Full fine-tune seq2seq |
+| Size | ~3.4 GB fp16 | ~600 MB fp16 target |
+| Input cap | 4096 tokens | 1024 tokens (T5 native; chunking deferred) |
+| Latency | ~1-2 s | <2 s target |
+| Output schema | 6 fields | 8 fields (`explanation` + `relatedDocs` added) |
 
-## 5. Bounded Vocabulary
+## 2. Base model
 
-Allowed `status` values:
+`google/flan-t5-base` — encoder-decoder, ~250M params. Instruction-tuned
+upstream which helps the structured-output task converge faster than vanilla
+t5-base. fp16 packaging targets ~600 MB on disk; INT8 deferred per the
+all-Candle runtime decision (Candle ships T5 in `candle-transformers::models::t5`).
 
-```text
-completed
-failed
-abended
-skipped
-running
-```
+Smoke profile keeps the same base — no scale ladder for seq2seq. Smoke
+trims epochs + dataset.
 
-Allowed `failureCategory` values (12 total, plus `null` on `status: completed`):
+## 3. Training objective
 
-```text
-dataset_resolution_failure
-allocation_failure
-permission_or_security_failure
-jcl_syntax_failure
-utility_parameter_failure
-execution_abend
-scheduler_or_environment_issue
-other
-smart_restart_resource_unavailable
-smart_restart_configuration
-smart_restart_application_logic
-smart_restart_input_syntax
-```
+Seq2seq conditional generation. **Input**: sanitised spool transcript
+(plain text, optionally prefixed with a task marker like `interpret spool:`).
+**Target**: the canonical `SpoolInterpretation` JSON serialised as a string.
 
-Smart/RESTART subcategories are synced from `../flow-studio/docs/smart-restart/messages.md` by [`scripts/sync-smart-restart-knowledge.sh`](../../scripts/sync-smart-restart-knowledge.sh).
+Loss: standard cross-entropy on target tokens with teacher forcing
+(`Seq2SeqTrainingArguments` default). Pad tokens in `labels` masked to `-100`
+so they don't contribute to loss.
 
----
+The runtime greedily decodes the target string and parses it back to the
+typed `SpoolInterpretation`. The validator (§14) catches malformed output.
 
-## 6. Dataset Format
-
-JSONL. Each row carries a hand-authored or Claude-generated training example:
+## 4. Expected output format
 
 ```json
 {
-  "sample_id": "seed-spool-001",
-  "category": "execution_abend",
-  "source": "hand:starter",
-  "request": "<sanitized spool dump text>",
-  "expected_interpretation": { "summary": "...", "status": "abended", ... }
+  "summary": "Job FAILED at step COPY01 with S0C7 (data exception).",
+  "status": "failed",
+  "returnCode": "S0C7",
+  "rootCause": "S0C7 on packed-decimal arithmetic — input field contains non-numeric data.",
+  "suggestedFix": "Validate input data for packed-decimal fields before arithmetic; recompile with NUMPROC(NOPFD) for development; check upstream extract for trailing blanks.",
+  "explanation": "The job entered step COPY01 normally and began processing the input dataset. On the third record the COBOL program attempted a COMPUTE on a packed-decimal field that contained spaces, triggering an S0C7 data exception. Execution halted immediately; subsequent steps were flushed.",
+  "relatedDocs": ["abend-s0c7", "cobol-data-exception", "numproc-options"],
+  "failureCategory": "execution_abend",
+  "confidence": 0.94
 }
 ```
 
-`category` aligns with the failureCategory enum plus a `completed` bucket for clean-completion samples.
+New in v2:
+- `explanation` — 2-4 sentence narrative walking through the chain of events
+  that led to the outcome. Distinct from `summary` (which is a 1-sentence
+  recap). Required when `status != "completed"`; optional otherwise.
+- `relatedDocs` — string array of internal doc keys per failure category
+  (e.g. `abend-s0c7`, `dataset-not-cataloged`). Keys, not URLs — the
+  frontend maps them to actual help links at render time.
 
-Dataset split: 80% / 10% / 10%.
+## 5. Bounded vocabulary
 
----
+From `models/spool-interpreter/datasets/node_contracts.json`:
 
-## 7. Dataset Categories
+- `status_values`: `["completed", "failed", "abended", "skipped", "running"]`
+- `failure_categories`: 12 values (dataset/allocation/permission/jcl-syntax/
+  utility-parameter/execution-abend/scheduler/other + 4 smart-restart variants)
+- `related_docs_catalog` (new in v2): per-category doc-key suggestions the
+  seed builder draws from.
 
-Balance across the 12 failureCategory values plus a `completed` clean-completion bucket. Smart/RESTART subcategories need extra hand-curation because Claude has limited prior exposure to those Smart/RESTART-specific patterns.
+`returnCode` is free-text (MVS codes like `S0C7`, `RC=08`) so it has no
+bounded enum.
 
----
+## 6. Dataset format
 
-## 8. Dataset Size Targets
+JSONL — each row:
 
-| Stage | Size |
-|---|---:|
-| Smoke test | 50–100 |
-| First usable | 500–1,000 |
-| Internal | 2,000–5,000 |
+```json
+{
+  "sample_id": "syn-s0c7-001",
+  "source": "synthetic:template",
+  "category": "execution_abend",
+  "request": "<sanitised spool transcript, multi-line>",
+  "expected_interpretation": {
+    "summary": "...",
+    "status": "failed",
+    "returnCode": "S0C7",
+    "rootCause": "...",
+    "suggestedFix": "...",
+    "explanation": "...",
+    "relatedDocs": ["abend-s0c7"],
+    "failureCategory": "execution_abend",
+    "confidence": 0.93
+  },
+  "split": "train"
+}
+```
 
-Bootstrap workflow: hand-author ~30 starter samples covering all categories → expand to 500+ by hand-authoring (or any out-of-band tool you trust) → keep every row gated by the 6-layer `validate_spool_result` check before merging → retrain.
+The seq2seq dataset class concatenates the request as the source and
+serialises `expected_interpretation` as compact JSON for the target.
 
----
+## 7. Splits
 
-## 9. System Prompt
+80 / 10 / 10 by sample-id hash (same as v1; deterministic across reruns).
 
-In [`datasets/prompt_spec.json`](datasets/prompt_spec.json) `system` field. Stays consistent across runs.
+## 8. Dataset size targets
 
----
+| Stage | Samples |
+|---|---|
+| Smoke | 100-200 |
+| MVP | 1500+ |
+| Internal | 3000+ |
+| Stronger | 6000+ |
 
-## 10. Training Method
+flan-t5 needs more data than the JCL classifier because the output space
+is open-ended text (within JSON braces). The structured constraints help
+convergence but don't shrink the target distribution the way 8-way
+classification does.
 
-Supervised fine-tuning with LoRA. Same shape as FlowGraphGenerator + JCL Validator.
+## 9. System prompt
 
----
+flan-t5 doesn't take a system prompt slot the way chat models do. The
+source-side task marker (`interpret spool: <transcript>`) is fixed in
+`prompt_spec.json` and prepended at both training and inference. The
+runtime's `prompt_spec.json` lookup table still ships so the manifest
+file list stays uniform with the other two models.
 
-## 11. Training Configuration
+## 10. Training method
 
-| Setting | Value |
-|---|---:|
-| Epochs | 4 |
-| Learning rate | 1e-4 |
-| LoRA rank | 16 |
-| LoRA alpha | 32 |
-| LoRA dropout | 0.05 |
-| Max sequence length | 4096 |
-| Batch size | 2 |
-| Grad accumulation | 8 |
-| Precision | bf16 (autocast) |
+**Full fine-tune** — no LoRA. flan-t5-base at 250 M parameters fine-tunes
+comfortably on a 16-32 GB Mac. The resulting safetensors merge straight
+into the package (no LoRA-adapter merge step).
 
----
+## 11. Training config
 
-## 12. Validation Requirements
+```yaml
+training:
+  model_id: google/flan-t5-base
+  source_max_len: 1024        # T5 native cap; chunking deferred to v3
+  target_max_len: 512         # JSON target rarely exceeds 300 tokens
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 3.0e-5
+  epochs: 6
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  precision: bf16
+  grad_checkpointing: false
+  eval_steps: 9999            # post-train eval only
+  save_steps: 250
+  logging_steps: 25
+  generation:
+    num_beams: 1              # greedy at inference; beam search deferred
+    max_new_tokens: 512
+```
 
-The 6-layer Python validator at [`src/flow_ml/validation/spool_validator.py`](../../src/flow_ml/validation/spool_validator.py) enforces:
+Smoke overrides reduce to `epochs: 1, max_steps: 8, batch_size: 2`.
 
-1. JSON parse
-2. JSON schema (matches `spool_interpretation_schema.json`)
-3. status enum
-4. failureCategory enum (or null on completed)
-5. Field shape (non-empty summary, rootCause, suggestedFix; returnCode is string or null)
-6. Consistency (status=completed ⟹ failureCategory in {null, "other"})
+## 12. Training environment
 
----
+- Python 3.13, `transformers`, `safetensors`.
+- flan-t5 lives in `transformers.T5ForConditionalGeneration`; weights load
+  cleanly under MPS via `device_map="mps"` with the standard fp32 →
+  bf16 autocast.
+- Candle runtime side uses `candle-transformers::models::t5` for both
+  encoder and decoder.
 
-## 13. Evaluation Metrics
+## 13. Tokenizer
+
+flan-t5's SentencePiece tokenizer ships with the base model. No custom
+pre-tokenizer (unlike JCL — spool transcripts are conventional text). The
+SentencePiece model is included in the package as `tokenizer.json` (via
+`AutoTokenizer.save_pretrained(use_fast=True)`).
+
+## 14. Validation requirements
+
+`flow_ml.validation.spool_validator` extends from the v1 six-layer gate
+with two additional layers:
+
+| Layer | Check |
+|---|---|
+| 1 | JSON parse |
+| 2 | Schema conformance |
+| 3 | Status enum (`completed`/`failed`/`abended`/`skipped`/`running`) |
+| 4 | Failure-category enum (12 values) |
+| 5 | Field-shape consistency (`returnCode` shape, `confidence` range) |
+| 6 | Free-text non-empty (`rootCause`, `suggestedFix`) |
+| **7** | `explanation` non-empty when `status != "completed"` |
+| **8** | `relatedDocs` is an array (possibly empty) of strings |
+
+Schema bump: `spool_interpretation_schema.json` adds `explanation` and
+`relatedDocs` as optional properties.
+
+## 15. Evaluation metrics
+
+Required gates (test split):
 
 | Metric | Target |
-|---|---:|
-| `json_parse_rate` | ≥ 0.95 |
-| `schema_conformance_rate` | ≥ 0.90 |
-| `status_accuracy` | ≥ 0.90 |
-| `failure_category_accuracy` | ≥ 0.80 |
-| `return_code_accuracy` | ≥ 0.85 (string match when present) |
+|---|---|
+| `json_parse_rate` | ≥0.99 |
+| `schema_conformance_rate` | ≥0.99 |
+| `status_accuracy` | ≥0.90 |
+| `failure_category_accuracy` | ≥0.80 |
+| `return_code_match_rate` | ≥0.85 |
+| `explanation_present_rate` | ≥0.95 (new in v2) |
+| `related_docs_coverage_rate` | ≥0.80 (new in v2) |
+| `p95_latency_ms` | <2000 |
 
----
+## 16. Test prompt set
 
-## 14. Test Prompt Set
+`models/spool-interpreter/datasets/samples/test_prompt_set.jsonl` — fixed
+anchors that survive corpus regeneration. Covers every `failureCategory`
+plus two `completed` samples.
 
-Maintain a fixed `test_prompt_set.jsonl` reused after every training run. Include:
-- One `completed` clean-completion spool.
-- One sample per failureCategory.
-- A multi-failure spool where the model must pick the dominant cause.
-- A truncated spool to test confidence calibration.
+## 17. Repair dataset
 
----
+Not separately materialised. Repair-style data (malformed transcripts that
+should still parse to a coherent interpretation) lives inline in the
+synthetic templates — each category has 1-2 templates that exercise
+truncated / noisy spool fragments.
 
-## 15. Artifact Requirements
+## 18. Artifact requirements
 
-Final `.fm` archive contains:
+Package contents (per `package_spool` in `packaging/package_model.py`):
 
-```text
-model.safetensors
-config.json
-tokenizer.json
-prompt_spec.json
-spool_interpretation_schema.json
-node_contracts.json
-manifest.json
+```
+spool-interpreter-v1/
+├── manifest.json                       # architecture: candle_t5_seq2seq
+├── model.safetensors                   # flan-t5-base encoder+decoder merged
+├── config.json                         # T5 architecture
+├── tokenizer.json                      # SentencePiece tokenizer (fast)
+├── spiece.model                        # SentencePiece model (if not embedded)
+├── prompt_spec.json                    # task marker + system message
+├── spool_interpretation_schema.json    # output JSON schema (v2 with new fields)
+└── node_contracts.json                 # bounded vocab + related-docs catalog
 ```
 
-Merged safetensors at fp16. Total package ~3.4 GB.
+Manifest `architecture` field: `candle_t5_seq2seq`.
 
----
+## 19. Versioning
 
-## 16. Versioning
+`v1` is the first seq2seq release (the v1 generative model is retired).
+Subsequent retrains bump `v1.1`, `v1.2`, etc. via `model.yml`.
 
-```text
-spool-interpreter-1.7b-v0.1
-spool-interpreter-1.7b-v0.2
-spool-interpreter-4b-instruct-2507-v0.1
+## 20. First training milestone
+
+Success criteria for the first end-to-end run:
+- Training completes without OOM / NaN gradients.
+- `eval_loss` < 1.0 at end of training.
+- All eval gates in §15 met on the test split.
+- `.fm` package ≤700 MB (fp16).
+- Round-trip inference test in flow-studio's `T5Seq2SeqBackend` produces
+  the same JSON shape the v1 SFT model emitted (with the two new fields).
+
+## 21. Recommended sequence
+
+```bash
+# 1. Regenerate seed samples with the v2 schema fields.
+.venv/bin/python scripts/build_spool_seeds.py --target 1500 \
+    --out models/spool-interpreter/datasets/samples/seed_samples.jsonl
+
+# 2. Train.
+flow_ml prepare models/spool-interpreter/
+flow_ml train models/spool-interpreter/ --smoke  # ~1 min sanity check
+flow_ml train models/spool-interpreter/          # ~30 min on M5 Max
+
+# 3. Evaluate.
+flow_ml evaluate models/spool-interpreter/
+
+# 4. Package + install into flow-studio.
+flow_ml package models/spool-interpreter/ --version v1
 ```

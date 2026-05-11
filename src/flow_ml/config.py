@@ -76,6 +76,12 @@ class ModelDefinition(BaseModel):
         ),
     )
     runtime: str = "candle"
+    # Architecture dispatch hint for the CLI's `train` subcommand. Allowed:
+    # `generative` (default — Qwen3+LoRA SFT path used by Flow Graph
+    # Generator), `classifier` (ModernBERT multi-head for JCL Validator
+    # v2), `seq2seq` (T5/BART encoder-decoder for Spool Interpreter v2).
+    # Loader uses this to route to the right trainer module.
+    architecture: str = "generative"
     version: str = "v1"
     description: str = ""
     base_model: Optional[str] = None

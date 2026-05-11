@@ -82,12 +82,33 @@ def cmd_train(
 ) -> None:
     """Fine-tune the model declared by <model-dir>/model.yml."""
     md = load_model_def(model_dir)
+    # Architecture-aware dispatch: each model.yml declares its
+    # `architecture` (`classifier` / `seq2seq` / falls through to the
+    # generative SFT default). Lets JCL run the BERT classifier path,
+    # Spool run the T5 seq2seq path, and FGG keep the LoRA SFT path.
+    architecture = md.architecture
     if md.task == "jcl_validation":
-        from .training.jcl_validator import train_jcl
-        result = train_jcl(md, smoke=smoke, limit=limit, device=device, seed=seed)
+        if architecture == "classifier":
+            from .training.jcl_classifier import train_jcl_classifier
+            result = train_jcl_classifier(
+                md, smoke=smoke, limit=limit, device=device, seed=seed
+            )
+        else:
+            raise typer.BadParameter(
+                "jcl_validation now requires `architecture: classifier` in model.yml; "
+                "the v1 generative-SFT path was retired."
+            )
     elif md.task == "spool_interpretation":
-        from .training.spool_interpreter import train_spool
-        result = train_spool(md, smoke=smoke, limit=limit, device=device, seed=seed)
+        if architecture == "seq2seq":
+            from .training.spool_seq2seq import train_spool_seq2seq
+            result = train_spool_seq2seq(
+                md, smoke=smoke, limit=limit, device=device, seed=seed
+            )
+        else:
+            raise typer.BadParameter(
+                "spool_interpretation now requires `architecture: seq2seq` in model.yml; "
+                "the v1 generative-SFT path was retired."
+            )
     elif md.task == "flow_graph_generation":
         from .training.flow_graph_generator import train_flow_graph
         result = train_flow_graph(md, smoke=smoke, limit=limit, device=device, seed=seed)

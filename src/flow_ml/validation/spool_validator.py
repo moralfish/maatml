@@ -1,6 +1,6 @@
 """Out-of-model validator for Spool Interpreter output.
 
-Six layers, mirroring the JCL + FlowGraph validators:
+Eight layers, mirroring the JCL + FlowGraph validators:
 
   1. JSON parse                      — text → dict
   2. JSON schema                     — matches `SpoolInterpretation` JSON Schema
@@ -10,6 +10,10 @@ Six layers, mirroring the JCL + FlowGraph validators:
                                        returnCode is string-or-null
   6. Consistency                     — `status: completed` ⟹ failureCategory ∈ {null, "other"};
                                        confidence ∈ [0, 1]
+  7. Explanation present             — non-empty `explanation` when status != "completed"
+  8. relatedDocs shape               — array of non-empty strings (possibly empty)
+
+Layers 7-8 are new in v2 with the seq2seq rebuild.
 """
 from __future__ import annotations
 
@@ -43,7 +47,7 @@ class SpoolValidationResultGate:
 
     @property
     def ok(self) -> bool:
-        return self.passed_layers == {1, 2, 3, 4, 5, 6}
+        return self.passed_layers == {1, 2, 3, 4, 5, 6, 7, 8}
 
 
 def _strip_fences(text: str) -> str:
@@ -195,5 +199,59 @@ def validate_spool_result(
         layer6_ok = False
     if layer6_ok:
         result.passed_layers.add(6)
+
+    # Layer 7 — explanation present when status != "completed"
+    explanation = result.parsed.get("explanation")
+    if status == "completed":
+        # explanation is optional on success; treat anything that's not
+        # a non-string-or-null as failure.
+        if explanation is None or (isinstance(explanation, str)):
+            result.passed_layers.add(7)
+        else:
+            result.errors.append(
+                SpoolValidationError(
+                    layer=7,
+                    code="invalid_explanation_type",
+                    message=f"explanation must be string or null; got {type(explanation).__name__}",
+                    location="explanation",
+                )
+            )
+    else:
+        if isinstance(explanation, str) and explanation.strip():
+            result.passed_layers.add(7)
+        else:
+            result.errors.append(
+                SpoolValidationError(
+                    layer=7,
+                    code="missing_explanation",
+                    message=(
+                        f"explanation must be a non-empty string when status={status!r}"
+                    ),
+                    location="explanation",
+                )
+            )
+
+    # Layer 8 — relatedDocs shape (array of non-empty strings; empty OK)
+    related_docs = result.parsed.get("relatedDocs", [])
+    if not isinstance(related_docs, list):
+        result.errors.append(
+            SpoolValidationError(
+                layer=8,
+                code="invalid_related_docs_type",
+                message=f"relatedDocs must be a list; got {type(related_docs).__name__}",
+                location="relatedDocs",
+            )
+        )
+    elif any(not isinstance(d, str) or not d.strip() for d in related_docs):
+        result.errors.append(
+            SpoolValidationError(
+                layer=8,
+                code="invalid_related_docs_item",
+                message="relatedDocs entries must be non-empty strings",
+                location="relatedDocs",
+            )
+        )
+    else:
+        result.passed_layers.add(8)
 
     return result

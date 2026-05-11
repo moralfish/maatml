@@ -100,31 +100,28 @@ def evaluate_jcl(
     baseline_path: Optional[str | Path] = None,
     device: str = "auto",
     split: str = "test",
-    max_input_tokens: int = 4096,
+    max_input_tokens: int = 1024,
     failures_to_keep: int = 20,
     limit: Optional[int] = None,
 ) -> Report:
-    """Evaluate the generative-SFT JCL Validator on the held-out split.
+    """Evaluate the v2 BERT multi-head JCL classifier on the held-out split.
 
-    For each row: render the inference prompt (system + sanitized JCL),
-    generate, run the 6-layer Python validator, then compute per-task
-    semantic metrics:
-      - json_parse_rate, schema_conformance_rate (validator layers 1-2)
-      - severity_accuracy, code_accuracy (the model picked the right enum
-        bucket for the FIRST gold error)
-      - valid_flag_accuracy (predicted `valid` matches gold)
-      - line_within_3_accuracy (predicted first-error line within ±3 of gold)
+    For each row: pre-tokenize JCL → BPE encode → ModernBERT forward →
+    4 head argmax → build `JclValidationResult` via the `error_message_templates`
+    block in `node_contracts.json` → run the 6-layer Python validator → aggregate.
     """
+    import json as _json
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from safetensors.torch import load_file
+    from transformers import AutoModel, PreTrainedTokenizerFast
 
-    from ..training.jcl_validator import _resolve_device, render_inference_prompt
+    from ..tokenization import pre_tokenize_jcl
+    from ..training.jcl_classifier import ERROR_CODES, SEVERITIES
+    from ..training.sft_base import _resolve_device
     from ..validation import validate_jcl_result
 
     model_dir = Path(model_dir)
     dataset_dir = Path(dataset_dir)
-    spec_path = model_dir / "prompt_spec.json"
-    prompt_spec = json.loads(spec_path.read_text(encoding="utf-8"))
 
     repo_dataset = (
         Path(__file__).resolve().parents[3] / "models" / "jcl-validator" / "datasets"
@@ -147,16 +144,59 @@ def evaluate_jcl(
         rows = rows[:limit]
 
     target_device = _resolve_device(device)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    inference_dtype = (
-        torch.float16 if target_device.type in ("mps", "cuda") else torch.float32
+
+    # Tokenizer: prefer the custom JCL BPE; fall back to a sibling `tokenizer.json`
+    # in the model dir if the trainer saved one.
+    tokenizer_path = model_dir / "tokenizer.json"
+    if not tokenizer_path.exists():
+        tokenizer_path = repo_dataset / "tokenizer.json"
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_file=str(tokenizer_path),
+        model_max_length=max_input_tokens,
+        pad_token="<PAD>",
+        unk_token="<UNK>",
+        cls_token="<CLS>",
+        sep_token="<SEP>",
+        mask_token="<MASK>",
+        additional_special_tokens=["<COL1>", "<CONT>"],
     )
-    model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=inference_dtype).to(
-        target_device
-    )
-    model.eval()
+
+    encoder = AutoModel.from_pretrained(model_dir).to(target_device)
+    encoder.eval()
+    hidden = encoder.config.hidden_size
+
+    head_state = load_file(model_dir / "classifier_heads.safetensors")
+    heads: dict[str, dict[str, torch.Tensor]] = {}
+    for name in ("validity", "error_code", "severity", "line"):
+        heads[name] = {
+            "weight": head_state[f"heads.{name}.weight"].to(target_device),
+            "bias": head_state[f"heads.{name}.bias"].to(target_device),
+        }
+
+    # node_contracts.json holds the per-code message templates the runtime
+    # fills into ValidationResult.errors[].message / .suggestion.
+    contracts = _json.loads(contracts_path.read_text(encoding="utf-8"))
+    templates = contracts.get("error_message_templates", {})
+
+    def _head_forward(name: str, x: torch.Tensor) -> torch.Tensor:
+        h = heads[name]
+        return torch.nn.functional.linear(x, h["weight"], h["bias"])
+
+    def _first_error_line(line_logits: torch.Tensor, encoding, pre: str) -> Optional[int]:
+        # line_logits: (1, T, 2). Argmax per token → first non-special
+        # token where class==1; count `<COL1>` markers up to its char offset.
+        cls_per_tok = line_logits.squeeze(0).argmax(dim=-1).tolist()
+        tokens = encoding.tokens()
+        offsets = encoding.offsets
+        for i, label in enumerate(cls_per_tok):
+            if label != 1:
+                continue
+            tok = tokens[i] if i < len(tokens) else ""
+            if tok.startswith("<") and tok.endswith(">"):
+                continue
+            char_offset = offsets[i][0] if i < len(offsets) else 0
+            return max(1, pre[:min(char_offset, len(pre))].count("<COL1>"))
+        return None
 
     layer_pass: dict[int, int] = {i: 0 for i in range(1, 7)}
     all_layers_pass = 0
@@ -173,30 +213,79 @@ def evaluate_jcl(
 
     with torch.inference_mode():
         for row in rows:
-            prompt_ids = render_inference_prompt(row["request"], prompt_spec, tokenizer)
-            if len(prompt_ids) > max_input_tokens:
-                prompt_ids = prompt_ids[-max_input_tokens:]
-            input_ids = torch.tensor([prompt_ids], dtype=torch.long, device=target_device)
-            attention_mask = torch.ones_like(input_ids)
+            pre = pre_tokenize_jcl(row["request"])
+            encoding = tokenizer(
+                pre,
+                max_length=max_input_tokens,
+                truncation=True,
+                return_offsets_mapping=True,
+                return_tensors=None,
+            )
+            input_ids = torch.tensor([encoding["input_ids"]], dtype=torch.long, device=target_device)
+            attention_mask = torch.tensor(
+                [encoding["attention_mask"]], dtype=torch.long, device=target_device
+            )
+
+            # Wrap a thin object so `_first_error_line` can read .tokens()/.offsets
+            class _Enc:
+                def __init__(self, e):
+                    self._e = e
+
+                def tokens(self):
+                    return self._e.tokens(0) if hasattr(self._e, "tokens") else []
+
+                @property
+                def offsets(self):
+                    return self._e["offset_mapping"]
 
             t0 = time.perf_counter()
-            generated = model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=prompt_spec.get("max_new_tokens", 1024),
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-            )
+            out = encoder(input_ids=input_ids, attention_mask=attention_mask)
+            seq = out.last_hidden_state
+            pooled = seq[:, 0, :]
+            validity_logits = _head_forward("validity", pooled)
+            error_code_logits = _head_forward("error_code", pooled)
+            severity_logits = _head_forward("severity", pooled)
+            line_logits = _head_forward("line", seq)
             if target_device.type == "mps":
                 torch.mps.synchronize()
             elif target_device.type == "cuda":
                 torch.cuda.synchronize()
             timings.append((time.perf_counter() - t0) * 1000.0)
 
-            gen_text = tokenizer.decode(
-                generated[0, input_ids.shape[1]:], skip_special_tokens=True
-            ).strip()
+            validity_probs = torch.softmax(validity_logits.squeeze(0), dim=-1)
+            valid_idx = int(validity_probs.argmax().item())
+            valid_conf = float(validity_probs[valid_idx].item())
+            code_idx = int(error_code_logits.squeeze(0).argmax().item())
+            severity_idx = int(severity_logits.squeeze(0).argmax().item())
+
+            is_valid = valid_idx == 1
+            code = ERROR_CODES[code_idx] if code_idx < len(ERROR_CODES) else "other"
+            severity_str = SEVERITIES[severity_idx] if severity_idx < len(SEVERITIES) else "error"
+
+            line_no: Optional[int] = None
+            if not is_valid:
+                line_no = _first_error_line(line_logits, _Enc(encoding), pre)
+
+            errors_out: list[dict] = []
+            if not is_valid:
+                tpl = templates.get(code) or templates.get("other") or {
+                    "message": f"{code} (no template registered)",
+                    "suggestion": "",
+                }
+                errors_out.append({
+                    "line": int(line_no) if line_no else 1,
+                    "column": 1,
+                    "severity": severity_str if severity_str != "none" else "error",
+                    "code": code,
+                    "message": tpl.get("message", ""),
+                    "suggestion": tpl.get("suggestion") or None,
+                })
+            pred_json = {
+                "valid": bool(is_valid),
+                "errors": errors_out,
+                "confidence": valid_conf,
+            }
+            gen_text = _json.dumps(pred_json, ensure_ascii=False)
 
             result = validate_jcl_result(
                 gen_text,
@@ -311,28 +400,30 @@ def evaluate_spool(
     baseline_path: Optional[str | Path] = None,
     device: str = "auto",
     split: str = "test",
-    max_input_tokens: int = 4096,
+    max_input_tokens: int = 1024,
     failures_to_keep: int = 20,
     limit: Optional[int] = None,
 ) -> Report:
-    """Evaluate the generative-SFT Spool Interpreter on the held-out split.
+    """Evaluate the v2 seq2seq Spool Interpreter on the held-out split.
 
-    Pipeline mirrors evaluate_jcl: render inference prompt, generate, run
-    the 6-layer Python validator, then compute per-task semantic metrics:
+    Pipeline: encode the spool transcript with the `interpret spool:`
+    task prefix → greedy decode via T5ForConditionalGeneration → run the
+    8-layer Python validator → compute per-task semantic metrics:
       - json_parse_rate, schema_conformance_rate
       - status_accuracy, failure_category_accuracy
       - return_code_accuracy (exact string match when gold has one)
+      - explanation_present_rate (new in v2)
+      - related_docs_coverage_rate (new in v2)
     """
     import torch
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-    from ..training.spool_interpreter import _resolve_device, render_inference_prompt
+    from ..training.sft_base import _resolve_device
+    from ..training.spool_seq2seq import TASK_PREFIX
     from ..validation import validate_spool_result
 
     model_dir = Path(model_dir)
     dataset_dir = Path(dataset_dir)
-    spec_path = model_dir / "prompt_spec.json"
-    prompt_spec = json.loads(spec_path.read_text(encoding="utf-8"))
 
     repo_dataset = (
         Path(__file__).resolve().parents[3] / "models" / "spool-interpreter" / "datasets"
@@ -355,44 +446,47 @@ def evaluate_spool(
         rows = rows[:limit]
 
     target_device = _resolve_device(device)
-    tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    if tokenizer.pad_token_id is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = AutoTokenizer.from_pretrained(model_dir, use_fast=True)
     inference_dtype = (
         torch.float16 if target_device.type in ("mps", "cuda") else torch.float32
     )
-    model = AutoModelForCausalLM.from_pretrained(model_dir, dtype=inference_dtype).to(
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_dir, dtype=inference_dtype).to(
         target_device
     )
     model.eval()
 
-    layer_pass: dict[int, int] = {i: 0 for i in range(1, 7)}
+    layer_pass: dict[int, int] = {i: 0 for i in range(1, 9)}
     all_layers_pass = 0
     status_correct = 0
     cat_correct = 0
     cat_total = 0
     rc_correct = 0
     rc_total = 0
+    explanation_present = 0
+    explanation_expected = 0
+    docs_covered = 0
+    docs_expected = 0
     failures: list[dict] = []
     timings: list[float] = []
     per_category: dict[str, dict[str, int]] = {}
 
     with torch.inference_mode():
         for row in rows:
-            prompt_ids = render_inference_prompt(row["request"], prompt_spec, tokenizer)
-            if len(prompt_ids) > max_input_tokens:
-                prompt_ids = prompt_ids[-max_input_tokens:]
-            input_ids = torch.tensor([prompt_ids], dtype=torch.long, device=target_device)
-            attention_mask = torch.ones_like(input_ids)
+            source = TASK_PREFIX + row["request"]
+            enc = tokenizer(
+                source,
+                max_length=max_input_tokens,
+                truncation=True,
+                return_tensors="pt",
+            ).to(target_device)
 
             t0 = time.perf_counter()
             generated = model.generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_new_tokens=prompt_spec.get("max_new_tokens", 768),
+                input_ids=enc["input_ids"],
+                attention_mask=enc["attention_mask"],
+                max_new_tokens=512,
+                num_beams=1,
                 do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
             )
             if target_device.type == "mps":
                 torch.mps.synchronize()
@@ -400,9 +494,15 @@ def evaluate_spool(
                 torch.cuda.synchronize()
             timings.append((time.perf_counter() - t0) * 1000.0)
 
-            gen_text = tokenizer.decode(
-                generated[0, input_ids.shape[1]:], skip_special_tokens=True
-            ).strip()
+            gen_text = tokenizer.decode(generated[0], skip_special_tokens=True).strip()
+            # T5's SentencePiece tokenizer maps `{` and `}` to <unk>, which
+            # `skip_special_tokens=True` strips. The model only ever
+            # learned to emit the JSON *interior*; wrap it back before
+            # the validator parses.
+            if gen_text and not gen_text.startswith("{"):
+                gen_text = "{" + gen_text
+            if gen_text and not gen_text.endswith("}"):
+                gen_text = gen_text + "}"
 
             result = validate_spool_result(
                 gen_text,
@@ -410,7 +510,7 @@ def evaluate_spool(
                 contracts_path=contracts_path,
                 user_prompt=row["request"],
             )
-            for layer in range(1, 7):
+            for layer in range(1, 9):
                 if layer in result.passed_layers:
                     layer_pass[layer] += 1
             if result.ok:
@@ -440,6 +540,23 @@ def evaluate_spool(
                 if pred.get("returnCode") == gold_rc:
                     rc_correct += 1
 
+            # New v2 metrics
+            gold_status = gold.get("status")
+            if gold_status and gold_status != "completed":
+                explanation_expected += 1
+                if pred is not None:
+                    expl = pred.get("explanation")
+                    if isinstance(expl, str) and expl.strip():
+                        explanation_present += 1
+
+            gold_docs = gold.get("relatedDocs") or []
+            if gold_docs and pred is not None:
+                docs_expected += 1
+                pred_docs = set(pred.get("relatedDocs") or [])
+                # Coverage = at least one gold doc key recovered.
+                if any(d in pred_docs for d in gold_docs):
+                    docs_covered += 1
+
             if not result.ok and len(failures) < failures_to_keep:
                 failures.append({
                     "sample_id": row.get("sample_id"),
@@ -460,10 +577,18 @@ def evaluate_spool(
         "failure_category_validity_rate": layer_pass[4] / n,
         "field_shape_validity_rate": layer_pass[5] / n,
         "consistency_rate": layer_pass[6] / n,
+        "explanation_validity_rate": layer_pass[7] / n,
+        "related_docs_validity_rate": layer_pass[8] / n,
         "all_layers_pass_rate": all_layers_pass / n,
         "status_accuracy": status_correct / n,
         "failure_category_accuracy": cat_correct / cat_total if cat_total else 0.0,
         "return_code_accuracy": rc_correct / rc_total if rc_total else 0.0,
+        "explanation_present_rate": (
+            explanation_present / explanation_expected if explanation_expected else 0.0
+        ),
+        "related_docs_coverage_rate": (
+            docs_covered / docs_expected if docs_expected else 0.0
+        ),
     }
     per_class = {
         cat: {
@@ -494,7 +619,9 @@ def evaluate_spool(
         f"schema={metrics['schema_conformance_rate']:.3f} "
         f"status={metrics['status_accuracy']:.3f} "
         f"category={metrics['failure_category_accuracy']:.3f} "
-        f"rc={metrics['return_code_accuracy']:.3f}"
+        f"rc={metrics['return_code_accuracy']:.3f} "
+        f"expl={metrics['explanation_present_rate']:.3f} "
+        f"docs={metrics['related_docs_coverage_rate']:.3f}"
     )
     return report
 

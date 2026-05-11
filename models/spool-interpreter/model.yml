@@ -1,27 +1,25 @@
-# Spool Interpreter - LoRA-tuned Qwen3-1.7B that turns sanitized z/OS spool
-# output into a structured SpoolInterpretation JSON:
-# { summary, status, returnCode, rootCause, suggestedFix, confidence }.
+# Spool Interpreter v2 — flan-t5-base seq2seq that turns sanitised z/OS
+# spool output into a structured SpoolInterpretation JSON:
+# { summary, status, returnCode, rootCause, suggestedFix, explanation,
+#   relatedDocs, failureCategory, confidence }.
 #
 # Task: spool_interpretation
-# Runtime: candle (CandleGenerativeBackend in flow-studio's flow-model-runtime)
-# Spec:    docs/flow_inference_model_training_instructions.md (per FlowGraphGenerator template)
+# Architecture: candle_t5_seq2seq (encoder-decoder, full fine-tune)
+# Runtime: candle (T5Seq2SeqBackend in flow-studio's flow-model-runtime)
+# Spec:    training_instructions.md (this folder)
 #
-# Architecture: pure SFT on 3-message conversations (system/user/assistant).
-# Bumped from SmolLM2-360M to Qwen3-1.7B for cross-toolchain consistency
-# with FlowGraphGenerator + JCL Validator. Quality jumps materially on
-# the 12-category root-cause classification + structured JSON output.
-# Latency goes from <100 ms (SmolLM2) → ~1-2 s (Qwen3-1.7B) — acceptable
-# for post-job interpretation.
-#
-# Cross-platform target: Mac / Windows / Linux with 16 GB RAM minimum.
+# Replaces the v1 Qwen3-1.7B SFT path. Ships at ~600 MB fp16 (down from
+# ~3.4 GB) with <2 s p95 latency. Two output fields added in v2
+# (explanation + relatedDocs) per the original architecture spec.
 
 name: spool-interpreter
 model_id: spool-interpreter:v1
 task: spool_interpretation
+architecture: seq2seq
 runtime: candle
 version: v1
-description: "LoRA-tuned Qwen3-1.7B that interprets z/OS job spool output into a structured SpoolInterpretation JSON."
-base_model: Qwen/Qwen3-1.7B
+description: "flan-t5-base seq2seq that interprets z/OS job spool output into a structured SpoolInterpretation JSON."
+base_model: google/flan-t5-base
 
 data:
   seed: 7331
@@ -34,53 +32,48 @@ data:
   split_ratios: [0.8, 0.1, 0.1]
 
 training:
-  model_id: Qwen/Qwen3-1.7B
-  max_input_tokens: 4096
-  batch_size: 2
-  grad_accum: 8
-  learning_rate: 1.0e-4
-  epochs: 4
+  model_id: google/flan-t5-base
+  source_max_len: 1024
+  target_max_len: 512
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 3.0e-5
+  epochs: 6
   weight_decay: 0.01
-  warmup_ratio: 0.05
+  warmup_ratio: 0.06
   seed: 7331
   precision: bf16
   grad_checkpointing: false
   eval_steps: 9999
-  save_steps: 200
-  logging_steps: 20
+  save_steps: 250
+  logging_steps: 25
   max_steps: -1
-  lora:
-    enabled: true
-    r: 16
-    alpha: 32
-    dropout: 0.05
-    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  generation:
+    num_beams: 1
+    max_new_tokens: 512
 
 smoke:
-  base_model: Qwen/Qwen3-0.6B
-  max_input_tokens: 2048
-  batch_size: 1
-  grad_accum: 2
-  learning_rate: 5.0e-4
+  source_max_len: 512
+  target_max_len: 256
+  batch_size: 2
+  grad_accum: 1
+  learning_rate: 3.0e-5
   epochs: 1
   weight_decay: 0.0
   warmup_ratio: 0.0
   precision: bf16
   grad_checkpointing: false
-  eval_steps: 5
-  save_steps: 5
+  eval_steps: 9999
+  save_steps: 9999
   logging_steps: 2
-  max_steps: 6
-  lora:
-    enabled: true
-    r: 8
-    alpha: 16
-    dropout: 0.0
-    target_modules: [q_proj, k_proj, v_proj, o_proj]
+  max_steps: 8
+  generation:
+    num_beams: 1
+    max_new_tokens: 128
 
 packaging:
-  max_input_tokens: 4096
-  expected_latency_ms: 1500
+  max_input_tokens: 1024
+  expected_latency_ms: 2000
   weights_dtype: f16
   confidence_thresholds:
     high: 0.9

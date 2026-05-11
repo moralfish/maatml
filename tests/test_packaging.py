@@ -4,11 +4,9 @@ Two halves:
   1. .fm archive safety primitives — path traversal, oversize, manifest-only
      extraction. These don't depend on any specific model.
   2. End-to-end package_jcl + verify_package integration using a fake
-     Qwen-class checkpoint (tiny, on the fly). Confirms the manifest
-     contract + the generative-SFT verify path.
-
-The legacy multi-head BERT packaging tests were dropped when JCL Validator
-moved to generative SFT.
+     ModernBERT-class encoder + classifier-heads sidecar (tiny, on the fly).
+     Confirms the manifest contract for the v2 classifier path:
+     `architecture: candle_bert_classifier`.
 """
 from __future__ import annotations
 
@@ -19,8 +17,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 transformers = pytest.importorskip("transformers")
+safetensors_torch = pytest.importorskip("safetensors.torch")
 
-from transformers import AutoTokenizer, Qwen2Config, Qwen2ForCausalLM  # noqa: E402
+from transformers import AutoTokenizer  # noqa: E402
 
 from flow_ml.packaging.package_model import (  # noqa: E402
     package_jcl,
@@ -112,27 +111,45 @@ def test_verify_rejects_too_many_entries(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# End-to-end: package_jcl with a fake Qwen-class checkpoint
+# End-to-end: package_jcl with a fake ModernBERT classifier checkpoint
 # ---------------------------------------------------------------------------
 
 
-def _make_tiny_qwen_checkpoint(tmp_path: Path) -> Path:
-    """Write a tiny Qwen2-style causal LM + tokenizer to disk so package_jcl
-    has a real merged-safetensors checkpoint to package."""
-    cfg = Qwen2Config(
-        vocab_size=151_936,
+def _make_tiny_bert_classifier_checkpoint(tmp_path: Path) -> Path:
+    """Write a tiny BERT encoder + 4 classifier heads sidecar to disk so
+    package_jcl has a complete v2 classifier checkpoint to package."""
+    from transformers import BertConfig, BertModel
+
+    cfg = BertConfig(
+        vocab_size=128,
         hidden_size=32,
         num_hidden_layers=2,
         num_attention_heads=2,
-        num_key_value_heads=2,
         intermediate_size=64,
         max_position_embeddings=128,
     )
-    model = Qwen2ForCausalLM(cfg)
+    model = BertModel(cfg)
     ckpt = tmp_path / "ckpt"
     ckpt.mkdir()
-    model.save_pretrained(ckpt)
-    tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-0.6B")
+    model.save_pretrained(ckpt, safe_serialization=True)
+
+    # 4-head classifier sidecar: each head is a tiny nn.Linear off
+    # the [CLS] pooled representation. Mirrors what jcl_classifier.py
+    # writes during training.
+    head_state: dict[str, torch.Tensor] = {}
+    for name, dim in (
+        ("validity", 2),
+        ("error_code", 8),
+        ("severity", 3),
+        ("line", 64),
+    ):
+        head_state[f"heads.{name}.weight"] = torch.randn(dim, cfg.hidden_size)
+        head_state[f"heads.{name}.bias"] = torch.zeros(dim)
+    safetensors_torch.save_file(head_state, ckpt / "classifier_heads.safetensors")
+
+    # Stand in for the custom JCL tokenizer the trainer writes — a real
+    # tokenizer.json keeps the manifest sha256 check happy.
+    tok = AutoTokenizer.from_pretrained("bert-base-uncased")
     tok.save_pretrained(ckpt)
     return ckpt
 
@@ -141,7 +158,7 @@ def test_package_jcl_emits_jcl_validation_task(tmp_path: Path) -> None:
     """Smoke-test package_jcl with a tiny checkpoint. Confirms the manifest
     contract + that the JCL-specific schema/contracts files end up in the
     .fm archive."""
-    ckpt = _make_tiny_qwen_checkpoint(tmp_path)
+    ckpt = _make_tiny_bert_classifier_checkpoint(tmp_path)
     out = tmp_path / "models" / "jcl-test"
     repo_dataset = (
         Path(__file__).resolve().parents[1] / "models" / "jcl-validator" / "datasets"
@@ -162,8 +179,10 @@ def test_package_jcl_emits_jcl_validation_task(tmp_path: Path) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["task"] == "jcl_validation"
     assert manifest["model_id"] == "jcl-test:v1"
+    assert manifest["architecture"] == "candle_bert_classifier"
     for required in (
         "model.safetensors",
+        "classifier_heads.safetensors",
         "config.json",
         "tokenizer.json",
         "prompt_spec.json",

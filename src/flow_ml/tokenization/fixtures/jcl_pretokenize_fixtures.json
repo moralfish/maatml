@@ -1,0 +1,80 @@
+{
+  "_comment": "Normative fixtures for pre_tokenize_jcl. Both the Python impl in jcl_tokenizer.py and the Rust impl in flow-studio's BertClassifierBackend assert byte-identical output against these. Add a new entry when you find an edge case; both implementations stay locked. See COLUMN_RULES.md.",
+  "fixtures": [
+    {
+      "name": "simple_two_line_job",
+      "input": "//MYJOB    JOB  (ACCT),'TEST'\n//STEP1    EXEC PGM=IEFBR14\n",
+      "expected": "<COL1> //MYJOB    JOB  (ACCT),'TEST'\n<COL1> //STEP1    EXEC PGM=IEFBR14"
+    },
+    {
+      "name": "blank_lines_dropped",
+      "input": "//MYJOB    JOB  (ACCT)\n\n//STEP1    EXEC PGM=IEFBR14\n\n\n",
+      "expected": "<COL1> //MYJOB    JOB  (ACCT)\n<COL1> //STEP1    EXEC PGM=IEFBR14"
+    },
+    {
+      "name": "tabs_expand_to_four_spaces",
+      "input": "//JOB\tJOB (ACCT)\n",
+      "expected": "<COL1> //JOB   JOB (ACCT)"
+    },
+    {
+      "name": "columns_73_plus_stripped",
+      "input": "//STEP1    EXEC PGM=IEFBR14                                              00010000\n",
+      "expected": "<COL1> //STEP1    EXEC PGM=IEFBR14                                             "
+    },
+    {
+      "name": "continuation_marker_X",
+      "input": "//STEP1    EXEC PGM=IEBGENER,PARM=('FIRST',                            X\n//             'SECOND')\n",
+      "expected": "<COL1> //STEP1    EXEC PGM=IEBGENER,PARM=('FIRST',                            X <CONT>\n<COL1> //             'SECOND')"
+    },
+    {
+      "name": "continuation_marker_amp",
+      "input": "//SET PROC=NIGHTLY,                                                     &\n//    OPTS='-q'\n",
+      "expected": "<COL1> //SET PROC=NIGHTLY,                                                     \n<COL1> //    OPTS='-q'"
+    },
+    {
+      "name": "windows_line_endings",
+      "input": "//MYJOB JOB (ACCT)\r\n//STEP1 EXEC PGM=IEFBR14\r\n",
+      "expected": "<COL1> //MYJOB JOB (ACCT)\n<COL1> //STEP1 EXEC PGM=IEFBR14"
+    },
+    {
+      "name": "short_lines_pass_through",
+      "input": "//RC\n",
+      "expected": "<COL1> //RC"
+    },
+    {
+      "name": "comment_lines_preserved",
+      "input": "//* This is a comment\n//STEP1 EXEC PGM=IEFBR14\n",
+      "expected": "<COL1> //* This is a comment\n<COL1> //STEP1 EXEC PGM=IEFBR14"
+    },
+    {
+      "name": "leading_whitespace_only_dropped",
+      "input": "   \n//STEP1 EXEC PGM=IEFBR14\n",
+      "expected": "<COL1> //STEP1 EXEC PGM=IEFBR14"
+    },
+    {
+      "name": "exactly_72_cols_no_continuation",
+      "input": "//STEP1 EXEC PGM=IEFBR14,PARM='exactly seventy-two columns wide ok' \n",
+      "expected": "<COL1> //STEP1 EXEC PGM=IEFBR14,PARM='exactly seventy-two columns wide ok' "
+    },
+    {
+      "name": "dd_statement_with_dsn",
+      "input": "//SYSUT1   DD DSN=PROD.DAILY.LOAD,DISP=SHR\n",
+      "expected": "<COL1> //SYSUT1   DD DSN=PROD.DAILY.LOAD,DISP=SHR"
+    },
+    {
+      "name": "sysin_inline_data",
+      "input": "//SYSIN    DD *\n  SORT FIELDS=(1,8,CH,A)\n/*\n",
+      "expected": "<COL1> //SYSIN    DD *\n<COL1>   SORT FIELDS=(1,8,CH,A)\n<COL1> /*"
+    },
+    {
+      "name": "empty_input",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "name": "only_newlines",
+      "input": "\n\n\n",
+      "expected": ""
+    }
+  ]
+}

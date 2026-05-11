@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://flow.studio/schemas/spool-interpretation.json",
   "title": "SpoolInterpretation",
-  "description": "Canonical SpoolInterpretation emitted by the Spool Interpreter. Mirrors the SpoolInterpretation Pydantic type in flow_ml.data.schemas.",
+  "description": "Canonical SpoolInterpretation emitted by the Spool Interpreter. Mirrors the SpoolInterpretation Pydantic type in flow_ml.data.schemas. v2 adds `explanation` (2-4 sentence narrative) and `relatedDocs` (doc-key array).",
   "type": "object",
   "required": ["summary", "status", "rootCause", "suggestedFix", "confidence"],
   "additionalProperties": false,
@@ -15,6 +15,15 @@
     "returnCode": { "type": ["string", "null"] },
     "rootCause": { "type": "string", "minLength": 1 },
     "suggestedFix": { "type": "string", "minLength": 1 },
+    "explanation": {
+      "type": ["string", "null"],
+      "description": "2-4 sentence narrative walking through the chain of events leading to the outcome. Distinct from `summary` (1-sentence recap). Required when `status != 'completed'`."
+    },
+    "relatedDocs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Internal doc keys (not URLs) per failure category. Frontend maps keys to help links at render time."
+    },
     "failureCategory": {
       "type": ["string", "null"],
       "enum": [

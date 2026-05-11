@@ -17,6 +17,7 @@ console = Console()
 
 JCL_REQUIRED = (
     "model.safetensors",
+    "classifier_heads.safetensors",
     "config.json",
     "tokenizer.json",
     "prompt_spec.json",
@@ -186,6 +187,7 @@ def _build_manifest(
     confidence_thresholds: Optional[ConfidenceThresholds] = None,
     version: str = "v1",
     weights_dtype: str = "f32",
+    architecture: Optional[str] = None,
 ) -> ModelManifest:
     files = [
         "model.safetensors",
@@ -206,6 +208,7 @@ def _build_manifest(
         confidence_thresholds=confidence_thresholds or ConfidenceThresholds(),
         sha256=sha,
         weights_dtype=weights_dtype,
+        architecture=architecture,
     )
 
 
@@ -302,22 +305,28 @@ def package_jcl(
     prompt_spec_path: Optional[str | Path] = None,
     schema_path: Optional[str | Path] = None,
     contracts_path: Optional[str | Path] = None,
+    tokenizer_path: Optional[str | Path] = None,
     model_id: str = "jcl-validator:v1",
-    base_checkpoint: Optional[str] = "Qwen/Qwen3-1.7B",
-    max_input_tokens: int = 4096,
-    expected_latency_ms: int = 1500,
+    base_checkpoint: Optional[str] = "answerdotai/ModernBERT-base",
+    max_input_tokens: int = 2048,
+    expected_latency_ms: int = 500,
     confidence_thresholds: Optional[ConfidenceThresholds] = None,
     version: str = "v1",
     weights_dtype: str = "f16",
 ) -> PackageResult:
-    """Package a generative-SFT JCL Validator checkpoint for the Candle runtime.
+    """Package the v2 BERT multi-head JCL classifier for the Candle runtime.
 
-    Layout matches `package_flow_graph` plus the JCL-specific schema +
-    contracts payload files. The runtime's 6-layer JCL validator reads
-    them directly from the package.
+    Layout differs from the v1 generative path:
+      - `classifier_heads.safetensors` (validity / error_code / severity / line)
+        ships alongside `model.safetensors` (the ModernBERT encoder).
+      - `tokenizer.json` is the custom JCL tokenizer (column-aware
+        pre-tokenization + BPE). If `tokenizer_path` is provided, copies
+        it into the package; else expects the trainer to have written one.
+      - Manifest declares `architecture: candle_bert_classifier` so the
+        runtime routes to `BertClassifierBackend` rather than the
+        generative path.
 
-    `weights_dtype` defaults to `"f16"` for cross-platform 16 GB-RAM
-    targets — Qwen3-1.7B at fp16 packs to ~3.4 GB on disk.
+    `weights_dtype = "f16"` → ~150-200 MB on disk for ModernBERT-base.
     """
     src = Path(checkpoint_dir)
     dst = Path(out_dir)
@@ -357,12 +366,18 @@ def package_jcl(
             )
         shutil.copy2(contracts_path, contracts_dst)
 
+    tokenizer_dst = dst / "tokenizer.json"
+    if not tokenizer_dst.exists() and tokenizer_path is not None:
+        shutil.copy2(tokenizer_path, tokenizer_dst)
+
     present, missing = _check_required(dst, JCL_REQUIRED)
     if missing:
         raise FileNotFoundError(f"package_jcl: missing files in {dst}: {missing}")
 
-    _convert_weights_to_dtype(dst, weights_dtype)
-    _normalize_qwen_config(dst)
+    # Classifier weights are already small enough; the existing dtype
+    # converter only knows about causal LM models and would error on
+    # a BERT encoder. Skip the conversion for `f16` (the trainer saves
+    # bf16 weights which the runtime loads as fp16 directly).
 
     manifest = _build_manifest(
         model_id=model_id,
@@ -371,11 +386,17 @@ def package_jcl(
         pkg_dir=dst,
         max_input_tokens=max_input_tokens,
         expected_latency_ms=expected_latency_ms,
-        extra_files=["prompt_spec.json", "jcl_validation_schema.json", "node_contracts.json"],
+        extra_files=[
+            "classifier_heads.safetensors",
+            "prompt_spec.json",
+            "jcl_validation_schema.json",
+            "node_contracts.json",
+        ],
         prompt_spec_file="prompt_spec.json",
         confidence_thresholds=confidence_thresholds,
         version=version,
         weights_dtype=weights_dtype,
+        architecture="candle_bert_classifier",
     )
     manifest.write(dst / "manifest.json")
     fm_path = _write_fm_archive(dst, dst.parent / f"{dst.name}.fm")
@@ -393,14 +414,22 @@ def package_spool(
     schema_path: Optional[str | Path] = None,
     contracts_path: Optional[str | Path] = None,
     model_id: str = "spool-interpreter:v1",
-    base_checkpoint: Optional[str] = "Qwen/Qwen3-1.7B",
-    max_input_tokens: int = 4096,
-    expected_latency_ms: int = 1500,
+    base_checkpoint: Optional[str] = "google/flan-t5-base",
+    max_input_tokens: int = 1024,
+    expected_latency_ms: int = 2000,
     confidence_thresholds: Optional[ConfidenceThresholds] = None,
     version: str = "v1",
     weights_dtype: str = "f16",
 ) -> PackageResult:
-    """Package a generative-SFT Spool Interpreter checkpoint for the Candle runtime."""
+    """Package the v2 seq2seq Spool Interpreter for the Candle runtime.
+
+    Layout differs from the v1 generative path:
+      - `model.safetensors` is the flan-t5-base encoder+decoder merged.
+      - `tokenizer.json` is the SentencePiece (fast) tokenizer.
+      - Manifest declares `architecture: candle_t5_seq2seq` so the
+        runtime routes to `T5Seq2SeqBackend` rather than the generative
+        path.
+    """
     src = Path(checkpoint_dir)
     dst = Path(out_dir)
     if dst.exists():
@@ -443,8 +472,11 @@ def package_spool(
     if missing:
         raise FileNotFoundError(f"package_spool: missing files in {dst}: {missing}")
 
-    _convert_weights_to_dtype(dst, weights_dtype)
-    _normalize_qwen_config(dst)
+    # flan-t5-base seq2seq weights are ~250 MB fp32. The dtype conversion
+    # path is causal-LM-only (AutoModelForCausalLM); for T5 we re-save via
+    # AutoModelForSeq2SeqLM when the user asks for fp16.
+    if weights_dtype.lower() in ("f16", "fp16", "float16", "bf16", "bfloat16"):
+        _convert_t5_weights_to_dtype(dst, weights_dtype)
 
     manifest = _build_manifest(
         model_id=model_id,
@@ -458,6 +490,7 @@ def package_spool(
         confidence_thresholds=confidence_thresholds,
         version=version,
         weights_dtype=weights_dtype,
+        architecture="candle_t5_seq2seq",
     )
     manifest.write(dst / "manifest.json")
     fm_path = _write_fm_archive(dst, dst.parent / f"{dst.name}.fm")
@@ -465,6 +498,40 @@ def package_spool(
         f"[green]package spool[/]: {dst}  (dtype={weights_dtype}, fm: {fm_path})"
     )
     return PackageResult(pkg_dir=dst, manifest=manifest, files=present, fm_path=fm_path)
+
+
+def _convert_t5_weights_to_dtype(pkg_dir: Path, target_dtype: str) -> None:
+    """Re-save the seq2seq checkpoint at `target_dtype`.
+
+    The generic `_convert_weights_to_dtype` helper uses
+    `AutoModelForCausalLM.from_pretrained` and errors on a T5 encoder-
+    decoder. Mirror its behaviour for the seq2seq path so packaging
+    stays uniform.
+    """
+    import torch
+    from transformers import AutoModelForSeq2SeqLM
+
+    torch_dtype = {
+        "f16": torch.float16,
+        "fp16": torch.float16,
+        "float16": torch.float16,
+        "bf16": torch.bfloat16,
+        "bfloat16": torch.bfloat16,
+    }.get(target_dtype.lower())
+    if torch_dtype is None:
+        raise ValueError(
+            f"_convert_t5_weights_to_dtype: unsupported target_dtype "
+            f"{target_dtype!r}; expected f16 or bf16"
+        )
+
+    console.print(
+        f"[cyan]converting T5 weights to {target_dtype}[/]: {pkg_dir} ..."
+    )
+    model = AutoModelForSeq2SeqLM.from_pretrained(pkg_dir, dtype=torch_dtype)
+    model.save_pretrained(pkg_dir, safe_serialization=True)
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 
@@ -627,11 +694,53 @@ def verify_package(pkg_path: str | Path) -> VerifyResult:
 
     forward_ok = False
     try:
-        if manifest.task in (
+        # Dispatch by manifest.architecture (set in v2 packages). Legacy
+        # generative-SFT packages omit it; treat as AutoModelForCausalLM.
+        arch = getattr(manifest, "architecture", None) or "generative_sft"
+        if arch == "candle_bert_classifier":
+            from transformers import AutoModel, PreTrainedTokenizerFast
+            from safetensors.torch import load_file
+            import torch
+
+            tok = PreTrainedTokenizerFast(
+                tokenizer_file=str(pkg / "tokenizer.json"),
+                model_max_length=manifest.max_input_tokens,
+                pad_token="<PAD>",
+                unk_token="<UNK>",
+                cls_token="<CLS>",
+                sep_token="<SEP>",
+                mask_token="<MASK>",
+                additional_special_tokens=["<COL1>", "<CONT>"],
+            )
+            encoder = AutoModel.from_pretrained(pkg)
+            encoder.eval()
+            heads = load_file(pkg / "classifier_heads.safetensors")
+            enc = tok("hello", return_tensors="pt")
+            with torch.inference_mode():
+                out = encoder(**enc)
+                pooled = out.last_hidden_state[:, 0, :]
+                # Run the validity head as a smoke check.
+                _ = torch.nn.functional.linear(
+                    pooled, heads["heads.validity.weight"], heads["heads.validity.bias"]
+                )
+            forward_ok = True
+        elif arch == "candle_t5_seq2seq":
+            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            import torch
+
+            tok = AutoTokenizer.from_pretrained(pkg, use_fast=True)
+            model = AutoModelForSeq2SeqLM.from_pretrained(pkg)
+            model.eval()
+            enc = tok("interpret spool: hello", return_tensors="pt")
+            with torch.inference_mode():
+                model.generate(**enc, max_new_tokens=8)
+            forward_ok = True
+        elif manifest.task in (
             "jcl_validation",
             "spool_interpretation",
             "flow_graph_generation",
         ):
+            # Legacy generative path (FGG ships under this branch).
             from transformers import AutoModelForCausalLM, AutoTokenizer
             import torch
 

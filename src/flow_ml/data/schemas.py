@@ -87,7 +87,13 @@ class JclSample(BaseModel):
 
 
 class SpoolInterpretation(BaseModel):
-    """Runtime response shape for the Spool Interpreter."""
+    """Runtime response shape for the Spool Interpreter.
+
+    v2 adds `explanation` (2-4 sentence narrative, distinct from `summary`)
+    and `relatedDocs` (doc-key array per failure category). Both are
+    optional at the schema level — the validator (layers 7-8) enforces
+    `explanation` non-empty when `status != "completed"`.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -96,6 +102,8 @@ class SpoolInterpretation(BaseModel):
     returnCode: Optional[str] = None
     rootCause: str = Field(min_length=1)
     suggestedFix: str = Field(min_length=1)
+    explanation: Optional[str] = None
+    relatedDocs: list[str] = Field(default_factory=list)
     failureCategory: Optional[str] = None
     confidence: float = Field(ge=0.0, le=1.0)
 

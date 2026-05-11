@@ -7,8 +7,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .DS_Store
-.claude/settings.local.json
-
+.claude/
 # Packaging / build metadata
 *.egg-info/
 .eggs/

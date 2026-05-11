@@ -1,277 +1,292 @@
-# JCL Validator — Training Instructions
+# JCL Validator — Training Instructions (v2 classifier)
 
 ## 1. Purpose
 
-Local AI inference model for Flow that validates JCL documents and emits a structured `JclValidationResult` JSON object. The model never executes a job, never reads credentials, never submits anything — it only labels what it sees.
+Pre-submission validation of JCL syntax, parameter completeness, and common
+error patterns. Emits a structured `JclValidationResult` JSON the runtime
+renders directly. Replaces the v1 generative-SFT pipeline (Qwen3-1.7B +
+LoRA) with a multi-head BERT classifier per the original architecture spec.
 
-The output is consumed by Flow's pre-submit validation gate; downstream code refuses to submit when `valid: false`.
-
----
-
-## 2. Recommended Base Models
-
-Same ladder as the FlowGraphGenerator family:
-
-| Stage | Model | Purpose |
+| | v1 (retired) | v2 (this doc) |
 |---|---|---|
-| First experiment | Qwen3-1.7B | Validate dataset and pipeline quickly |
-| MVP local model | Qwen3-1.7B | Default local-inference target if metrics pass |
-| Balanced quality | Qwen3-4B-Instruct-2507 | Use only if 1.7B misses semantic-accuracy bars |
-| Code-flavoured benchmark | Qwen2.5-Coder-3B-Instruct | Comparison baseline |
-| Higher-quality benchmark | Qwen2.5-Coder-7B-Instruct | Optional only after MVP is stable |
+| Base | Qwen3-1.7B | ModernBERT-base (~150 MB) |
+| Method | LoRA SFT | Full fine-tune, multi-head |
+| Size | ~3.4 GB fp16 | ~150-200 MB fp16 |
+| Latency | ~1-2 s | <500 ms target |
+| Tokenizer | Qwen3 BPE | Custom JCL BPE with column-aware pre-tokenizer |
 
-**Starting point: Qwen3-1.7B.** Don't escalate until 500+ samples and the smaller base provably misses targets.
+## 2. Base model
 
----
+`answerdotai/ModernBERT-base` — encoder-only, 8K native context. The 8K
+context handles realistic JCL decks without truncation; the model is
+small enough that full fine-tune (no LoRA) fits on a developer laptop.
 
-## 3. Training Objective
+Smoke profile keeps the same base — there's no scale ladder for the
+classifier. Smoke just trims epochs + dataset.
 
-```
-Sanitized JCL document  ->  JclValidationResult JSON
-```
+## 3. Training objective
 
-The model learns to:
+Four classification heads sharing the BERT encoder:
 
-- Parse a JCL document and detect syntactic/semantic defects.
-- Emit a strict JSON object with `valid`, `errors[]`, and `confidence`.
-- Pinpoint the offending line (1-indexed) for each error.
-- Choose an `error_code` from the closed enum.
-- Suggest fixes when obvious; otherwise leave `suggestion` absent.
+| Head | Type | Output |
+|---|---|---|
+| `validity` | binary | `valid: bool` |
+| `error_code` | 8-class softmax | one of the codes in §5; `none` when valid |
+| `severity` | 3-class softmax | `error \| warning \| info`; `none` when valid |
+| `line_localization` | per-token classification | each token classified as `error_line` / `not_error_line`; runtime takes the first-error-line span |
 
-The model must NOT:
+Loss = weighted sum across heads. Default weights `{validity: 1.0,
+error_code: 1.0, severity: 0.5, line: 0.3}` — `validity` and `error_code`
+dominate; `severity` is easier (4 of 8 codes are always `error`) so it
+gets less weight; `line_localization` is the hardest and noisiest, so it
+gets the smallest weight to avoid drowning the other heads.
 
-- Execute or submit JCL.
-- Invent new error codes.
-- Return prose, markdown, or commentary outside the JSON.
-- Set `valid: true` while populating `errors`.
+The model produces logits per head; the runtime stitches them into the
+`JclValidationResult` JSON shape (see §4).
 
----
-
-## 4. Expected Output Format
-
-Required shape:
+## 4. Expected output format
 
 ```json
 {
   "valid": false,
   "errors": [
     {
-      "line": 7,
-      "column": 1,
+      "line": 1,
+      "column": 17,
       "severity": "error",
-      "code": "missing_dd",
-      "message": "DD statement missing required DSN parameter.",
-      "suggestion": "Add `DSN=PROJ.LOAD,DISP=SHR` after `//STEP01`."
+      "code": "invalid_job_card",
+      "message": "JOB card is malformed (account, class, or priority fields are missing or invalid).",
+      "suggestion": "Re-check the JOB statement: accounting field in parentheses, then optional CLASS/MSGCLASS/PRIORITY."
     }
   ],
-  "confidence": 0.94
+  "confidence": 0.93
 }
 ```
 
-Field rules:
+The classifier emits one error at most per pass (matching the multi-head
+shape — single primary code). For multi-error JCL the model still picks
+the dominant code; future iterations can chain inferences for additional
+errors.
 
-- `valid` (bool, required) — true iff `errors` is empty.
-- `errors` (array, required) — at most 5 entries; ordered from most to least severe.
-- `confidence` (number, required) — float in [0.0, 1.0].
+`message` and `suggestion` come from a deterministic templated phrasebook
+keyed by `code`, shipped in `node_contracts.json` as
+`error_message_templates`. The model doesn't generate text; it picks the
+code and the runtime fills the rest. Zero hallucination on suggestion text
+is the explicit design choice.
 
-Per-error fields:
+`confidence` is the validity-head softmax score for the chosen
+prediction. The frontend's confidence-band routing reads this against
+the node's thresholds.
 
-- `line` (int, required) — 1-indexed line in the input JCL.
-- `column` (int, optional) — 1-indexed column.
-- `severity` (string, required) — one of `error`, `warning`, `info`.
-- `code` (string, required) — one of the 8 enum values listed in §5.
-- `message` (string, required) — short, human-readable.
-- `suggestion` (string, optional) — actionable fix.
+## 5. Bounded vocabulary
 
-Return JSON only. No markdown fences. No commentary.
+From `models/jcl-validator/datasets/node_contracts.json`:
 
----
+- `severities`: `["error", "warning", "info", "none"]`
+- `error_codes`: 8 values — `missing_dd`, `invalid_job_card`,
+  `unresolved_symbolic_parameter`, `continuation_error`,
+  `invalid_exec_statement`, `invalid_dataset_reference_structure`,
+  `other`, `none`
+- `error_message_templates` (new in v2): per-code suggestion templates the
+  runtime uses to fill `message`+`suggestion` from the predicted code.
 
-## 5. Bounded Vocabulary
+## 6. Dataset format
 
-Allowed `severity` values:
-
-```text
-error
-warning
-info
-```
-
-Allowed `code` values (exhaustive):
-
-```text
-missing_dd
-invalid_job_card
-unresolved_symbolic_parameter
-continuation_error
-invalid_exec_statement
-invalid_dataset_reference_structure
-other
-none
-```
-
-`none` is reserved for `valid: true` results with `errors: []`.
-
-Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json).
-
----
-
-## 6. Dataset Format
-
-JSONL. Each row carries a hand-authored or Claude-generated training example:
+Same JSONL shape the v1 corpus used — no regeneration needed. Each row:
 
 ```json
 {
-  "sample_id": "seed-jcl-001",
+  "sample_id": "syn-missing_dd-001",
+  "source": "synthetic:template",
   "category": "missing_dd",
-  "source": "hand:starter",
-  "request": "<sanitized JCL document text>",
-  "expected_validation_result": { "valid": false, "errors": [...], "confidence": 0.92 }
+  "request": "<sanitized JCL deck, multi-line>",
+  "expected_validation_result": {
+    "valid": false,
+    "errors": [{"line": 2, "column": 1, "severity": "error", "code": "missing_dd",
+                "message": "...", "suggestion": "..."}],
+    "confidence": 0.93
+  },
+  "split": "train"
 }
 ```
 
-`category` lines up with the error codes plus `valid` (clean inputs).
+The classifier dataset class flattens this into per-head targets at load
+time — `validity` from `valid`, `error_code` from `errors[0].code`,
+`severity` from `errors[0].severity`, `line` token-level via the
+character-offset-to-token mapping. Sample-level fields stay in the JSONL
+for evaluation.
 
-Dataset split: 80% / 10% / 10% (train / val / test).
+## 7. Splits
 
----
+80 / 10 / 10 by sample-id hash (same as v1; deterministic across reruns).
 
-## 7. Dataset Categories
+## 8. Dataset size targets
 
-Balance across the 8 codes plus a `valid` clean-input bucket:
+| Stage | Samples |
+|---|---|
+| Smoke | 100-200 |
+| MVP | 1000+ (current corpus is 1003 — sufficient) |
+| Internal | 2000+ |
+| Stronger | 5000+ |
 
-- `valid` — clean JCL, expect `valid: true`, `errors: []`.
-- `missing_dd` — missing required DD statements.
-- `invalid_job_card` — malformed `// JOB` cards.
-- `unresolved_symbolic_parameter` — `&FOO` without a `// SET FOO=...`.
-- `continuation_error` — broken continuation columns.
-- `invalid_exec_statement` — malformed `// EXEC PGM=...`.
-- `invalid_dataset_reference_structure` — bad `DSN=` syntax.
-- `other` — defects that don't fit the above categories.
-- Multi-error cases (mix two or more codes in one document).
-- Edge cases: extremely long documents, near-valid edge cases, etc.
+The v1 retrain found the 1000-sample floor; v2 starts there and iterates
+if eval gates miss.
 
----
+## 9. System prompt
 
-## 8. Dataset Size Targets
+N/A — classifier doesn't take a system prompt. The model sees the raw
+sanitised JCL via the custom JCL tokenizer (§13). `prompt_spec.json`
+stays in the package for documentation purposes and so the manifest
+file list is uniform with the other two models.
 
-| Stage | Size |
-|---|---:|
-| Smoke test | 50–100 |
-| First usable | 500–1,000 |
-| Internal | 2,000–5,000 |
+## 10. Training method
 
-Bootstrap workflow: hand-author ~30 starter samples covering all categories → expand to 500–600 by hand-authoring (or any out-of-band tool you trust) → keep every row gated by the 6-layer `validate_jcl_result` check before merging → retrain.
+**Full fine-tune** — no LoRA. ModernBERT-base is small enough that full
+fine-tune of 150 MB params fits comfortably on a 16-32 GB Mac. The
+resulting safetensors merge straight into the package (no LoRA-adapter
+step). Cleaner downstream when we revisit ONNX export.
 
----
+## 11. Training config
 
-## 9. System Prompt
+```yaml
+training:
+  model_id: answerdotai/ModernBERT-base
+  max_input_tokens: 2048      # ModernBERT supports 8K; 2K covers realistic JCL
+  batch_size: 16
+  grad_accum: 1
+  learning_rate: 2.0e-5       # standard BERT fine-tune LR
+  epochs: 4
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  precision: bf16             # autocast; weights stay fp32
+  grad_checkpointing: false
+  eval_steps: 9999            # post-train eval only (MPS unified-memory tradeoff)
+  save_steps: 250
+  logging_steps: 25
+  head_loss_weights:
+    validity: 1.0
+    error_code: 1.0
+    severity: 0.5
+    line: 0.3
+```
 
-In [`datasets/prompt_spec.json`](datasets/prompt_spec.json) `system` field. Stays consistent across runs. Instructs the model to:
+Smoke overrides reduce to `epochs: 1, max_steps: 6, batch_size: 2`.
 
-- Return strict JSON only.
-- Use only the 8 allowed error codes.
-- Never invent codes or fields.
-- Cap at 5 errors per result.
-- Calibrate `confidence`.
+## 12. Training environment
 
----
+- Python 3.13, `transformers`, `safetensors`, `tokenizers`.
+- ModernBERT runs on `bert4rec`-style transformer attention; candle's
+  `models::bert` should load the merged safetensors without changes
+  (verify during the Phase 3 spike).
+- Apple Silicon (MPS) primary target, CPU fallback via
+  `PYTORCH_ENABLE_MPS_FALLBACK=1`.
 
-## 10. Training Method
+## 13. Custom JCL tokenizer
 
-Supervised fine-tuning with LoRA. Same shape as FlowGraphGenerator:
+`src/flow_ml/tokenization/jcl_tokenizer.py` — two stages:
 
-- Base + LoRA adapter → merged safetensors → Candle runtime.
-- 3-message conversations (system, user, assistant).
-- bf16 autocast on MPS/CUDA; weights stay fp32.
-- LoRA rank 16, alpha 32, dropout 0.05, attention-only target modules.
-- 4 epochs default; bump to 8–12 if loss plateaus high.
+1. **Pre-tokenizer (column-aware)**: see `COLUMN_RULES.md` for the
+   normative spec. Strips columns 73-80 (sequence numbers, ignored by
+   the JCL parser), emits a `<COL1>` special token at the start of each
+   line so the model can learn statement boundaries, preserves the
+   column-72 continuation marker as a `<CONT>` token.
+2. **BPE**: 30,000-vocab BPE trained on the synthetic corpus
+   (10,000+ samples via `build_jcl_seeds.py --target 10000`). Output:
+   `tokenizer.json` shipped in the package.
 
----
+The pre-tokenizer is invoked **both** at training time (`JclDataset`)
+and at inference time (`BertClassifierBackend` in flow-studio
+re-implements the column rules). A fixture test on ~20 hand-authored
+JCL strings keeps the two implementations in lock-step.
 
-## 11. Training Configuration
+## 14. Validation requirements
 
-| Setting | Value |
-|---|---:|
-| Epochs | 4 |
-| Learning rate | 1e-4 |
-| LoRA rank | 16 |
-| LoRA alpha | 32 |
-| LoRA dropout | 0.05 |
-| Max sequence length | 4096 |
-| Batch size | 2 |
-| Grad accumulation | 8 |
-| Precision | bf16 (autocast) |
+The existing 6-layer `flow_ml.validation.jcl_validator` JSON gate stays
+unchanged — the runtime produces JSON matching the v1 schema. Layers:
+JSON parse → schema → severity enum → code enum → field shape →
+consistency.
 
-Smoke profile uses Qwen3-0.6B for fast pipeline validation.
+## 15. Evaluation metrics
 
----
-
-## 12. Validation Requirements
-
-The 6-layer Python validator at [`src/flow_ml/validation/jcl_validator.py`](../../src/flow_ml/validation/jcl_validator.py) enforces:
-
-1. **JSON parse** — output is valid JSON.
-2. **JSON schema** — matches `jcl_validation_schema.json`.
-3. **Severity enum** — every error.severity is in {error, warning, info}.
-4. **Code enum** — every error.code is in the 8-value vocabulary.
-5. **Field shape** — line ≥ 1, message non-empty.
-6. **Consistency** — `valid: false` iff `errors` non-empty; `confidence` in [0, 1].
-
-Outputs that fail any layer are rejected at training time (during corpus generation) and counted at evaluation time.
-
----
-
-## 13. Evaluation Metrics
+Required gates (test split):
 
 | Metric | Target |
-|---|---:|
-| `json_parse_rate` | ≥ 0.95 |
-| `schema_conformance_rate` | ≥ 0.90 |
-| `severity_accuracy` | ≥ 0.85 |
-| `code_accuracy` | ≥ 0.85 |
-| `valid_flag_accuracy` | ≥ 0.95 |
-| `line_within_3_accuracy` | ≥ 0.70 |
+|---|---|
+| `json_parse_rate` | ≥0.99 |
+| `schema_conformance_rate` | ≥0.99 |
+| `valid_flag_accuracy` | ≥0.95 |
+| `code_accuracy` | ≥0.90 |
+| `severity_accuracy` | ≥0.90 |
+| `line_within_3_accuracy` | ≥0.70 |
+| `p95_latency_ms` | <500 |
 
-`line_within_3` allows ±3 lines on the predicted error line — perfect line-level localisation is harder than the model needs to nail; ±3 is the practical UI tolerance.
+`p95_latency_ms` is new in v2 — required to validate the <500 ms target.
 
----
+## 16. Test prompt set
 
-## 14. Test Prompt Set
+`models/jcl-validator/datasets/samples/test_prompt_set.jsonl` — fixed
+anchors that survive corpus regeneration. Eight benchmark JCL decks
+across the eight error codes plus two valid samples.
 
-Maintain a fixed `test_prompt_set.jsonl` reused after every training run. Include:
+## 17. Repair dataset
 
-- One clean `valid: true` JCL.
-- One sample per error code.
-- A multi-error sample.
-- A near-valid edge case (e.g. column 71 vs column 72 continuation).
+Not applicable — classifier doesn't have the generative model's failure
+mode of producing structurally-broken output. Repair-style data lives in
+the synthetic corpus directly (each error category has its own
+templates).
 
----
+## 18. Artifact requirements
 
-## 15. Artifact Requirements
+Package contents (per `package_jcl` in `packaging/package_model.py`):
 
-Final `.fm` archive contains:
-
-```text
-model.safetensors
-config.json
-tokenizer.json
-prompt_spec.json
-jcl_validation_schema.json
-node_contracts.json
-manifest.json
+```
+jcl-validator-v1/
+├── manifest.json                       # architecture: candle_bert_classifier
+├── model.safetensors                   # ModernBERT + 4 heads merged
+├── config.json                         # ModernBERT architecture
+├── tokenizer.json                      # custom JCL tokenizer
+├── prompt_spec.json                    # documentation
+├── jcl_validation_schema.json          # output JSON schema
+└── node_contracts.json                 # bounded vocab + message templates
 ```
 
-Merged safetensors (LoRA folded in) at fp16. Total package ~3.4 GB.
+Manifest `architecture` field: `candle_bert_classifier`.
 
----
+## 19. Versioning
 
-## 16. Versioning
+`v1` is the first classifier release (the v1 generative model is retired).
+Subsequent retrains bump `v1.1`, `v1.2`, etc. via `model.yml`.
 
-```text
-jcl-validator-1.7b-v0.1
-jcl-validator-1.7b-v0.2
-jcl-validator-4b-instruct-2507-v0.1
+## 20. First training milestone
+
+Success criteria for the first end-to-end run:
+- Training completes without OOM / NaN gradients.
+- `eval_loss` < 0.5 at end of training.
+- All eval gates in §15 met on the test split.
+- `.fm` package ≤200 MB.
+- Round-trip inference test in flow-studio's `BertClassifierBackend`
+  produces the same JSON shape the v1 SFT model emitted.
+
+## 21. Recommended sequence
+
+```bash
+# 1. Generate the BPE tokenizer training corpus (10k samples).
+.venv/bin/python scripts/build_jcl_seeds.py --target 10000 \
+    --out models/jcl-validator/datasets/samples/tokenizer_corpus.jsonl
+
+# 2. Train the custom JCL tokenizer (one-shot; commit the output).
+.venv/bin/python -m flow_ml.tokenization.jcl_tokenizer train \
+    --corpus models/jcl-validator/datasets/samples/tokenizer_corpus.jsonl \
+    --out models/jcl-validator/datasets/tokenizer.json
+
+# 3. Train the classifier.
+flow_ml prepare models/jcl-validator/
+flow_ml train models/jcl-validator/ --smoke  # ~30s sanity check
+flow_ml train models/jcl-validator/          # ~10 min on M5 Max
+
+# 4. Evaluate.
+flow_ml evaluate models/jcl-validator/
+
+# 5. Package + install into flow-studio.
+flow_ml package models/jcl-validator/ --version v1
 ```
-
-Each version records: base model, dataset version, training config, eval results, known limitations.

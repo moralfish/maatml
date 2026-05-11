@@ -527,6 +527,52 @@ CATEGORY_BUILDERS = {
 }
 
 
+def _enrich_v2_fields(
+    rng: random.Random,
+    category: str,
+    interp: dict,
+    related_docs_catalog: dict[str, list[str]],
+) -> None:
+    """Stamp v2-only fields (`explanation`, `relatedDocs`) onto an interp
+    record in place.
+
+    Narrative is composed deterministically from fields already present
+    on the interp so it stays faithful to the synthetic spool: a 2-3
+    sentence walkthrough that opens with status/step, recaps the root
+    cause, and closes with the operator-facing fix. This avoids needing
+    a separate template per category (13 builders + maintenance burden).
+    """
+    summary = interp.get("summary", "")
+    root = interp.get("rootCause", "")
+    fix = interp.get("suggestedFix", "")
+    status = interp.get("status", "completed")
+
+    if status == "completed":
+        interp["explanation"] = (
+            f"Execution completed under the expected return-code envelope. "
+            f"{summary} No remediation is required; downstream steps may "
+            f"proceed."
+        )
+    else:
+        # 2-3 sentence narrative: situation → cause → fix.
+        opener = rng.choice([
+            f"The job entered execution and progressed until the failure surfaced.",
+            f"Execution started normally and ran up to the point of failure.",
+            f"The step began processing and then halted on the condition described below.",
+        ])
+        interp["explanation"] = (
+            f"{opener} {root} {fix}"
+        )
+
+    pool = related_docs_catalog.get(category, [])
+    if not pool:
+        interp["relatedDocs"] = []
+    else:
+        # Pick 1-3 doc keys per sample for stable training signal.
+        k = min(len(pool), rng.randint(1, 3))
+        interp["relatedDocs"] = rng.sample(pool, k)
+
+
 # Quotas tuned so common production failures dominate, Smart Restart
 # subcategories get steady representation, and `completed` baselines are
 # heavy enough to teach the "no failureCategory needed" pattern.
@@ -573,6 +619,14 @@ def main(argv: list[str] | None = None) -> int:
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    contracts = json.loads(CONTRACTS_PATH.read_text(encoding="utf-8"))
+    related_docs_catalog = contracts.get("related_docs_catalog", {})
+    if not related_docs_catalog:
+        print(
+            "warning: related_docs_catalog not found in node_contracts.json; "
+            "relatedDocs will be empty for every sample"
+        )
+
     existing_rows: list[dict] = []
     if args.append and out_path.exists():
         for line in out_path.read_text(encoding="utf-8").splitlines():
@@ -611,6 +665,7 @@ def main(argv: list[str] | None = None) -> int:
             sid = f"syn-{category}-{_hash(category, idx, args.seed)}"
             if sid in seen_ids:
                 continue
+            _enrich_v2_fields(rng, category, interp, related_docs_catalog)
             sample = {
                 "sample_id": sid,
                 "source": "synthetic:template",

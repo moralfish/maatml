@@ -217,38 +217,157 @@ def build_simple(rng: random.Random) -> tuple[str, dict]:
 
 
 def build_conditional(rng: random.Random) -> tuple[str, dict]:
+    variant = rng.choice([
+        "log-log",
+        "action-log",
+        "ai-then-submit",
+        "shell-multi-step",
+    ])
+    if variant == "log-log":
+        cmd = _pick(rng, COMMANDS)
+        pass_msg = rng.choice(["build succeeded", "checks passed"])
+        fail_msg = rng.choice(["build failed", "checks rejected"])
+        nodes = [
+            _node_action_shell("run-task", "Run task", 0, cmd),
+            _node_utility_log("on-pass", "Log pass", 1, pass_msg),
+            _node_utility_log("on-fail", "Log fail", 1, fail_msg),
+        ]
+        edges = [
+            _edge("run-task", "on-pass", "pass"),
+            _edge("run-task", "on-fail", "fail"),
+        ]
+        request = (
+            f"run `{cmd}` then log {pass_msg!r} on success or {fail_msg!r} on failure"
+        )
+        return request, _graph("run-and-branch", "Run and branch", nodes, edges)
+    if variant == "action-log":
+        # On pass → run a follow-up action; on fail → just log.
+        cmd = _pick(rng, COMMANDS)
+        follow_up = _pick(rng, COMMANDS)
+        nodes = [
+            _node_action_shell("run-task", "Run task", 0, cmd),
+            _node_action_shell("follow-up", "Follow-up", 1, follow_up),
+            _node_utility_log("on-fail", "Log failure", 1, "task failed"),
+        ]
+        edges = [
+            _edge("run-task", "follow-up", "pass"),
+            _edge("run-task", "on-fail", "fail"),
+        ]
+        request = (
+            f"run `{cmd}`; if it succeeds, run `{follow_up}`; if it fails, log the failure"
+        )
+        return request, _graph("conditional-followup", "Conditional follow-up", nodes, edges)
+    if variant == "ai-then-submit":
+        dsn = _pick(rng, JCL_DSNS)
+        job = _pick(rng, JOB_NAMES)
+        nodes = [
+            _node_action_zowe("fetch-jcl", "Fetch JCL", 0, f"zowe files download ds {dsn}"),
+            _node_ai("validate", "Validate", 1, "jcl-validator"),
+            _node_action_zowe(
+                "submit",
+                f"Submit {job}",
+                2,
+                f"zowe jobs submit ds {dsn}",
+            ),
+            _node_utility_log("on-fail", "JCL rejected", 2, "JCL rejected — not submitting"),
+        ]
+        edges = [
+            _edge("fetch-jcl", "validate"),
+            _edge("validate", "submit", "pass"),
+            _edge("validate", "on-fail", "fail"),
+        ]
+        request = (
+            f"fetch {dsn}, validate with jcl-validator; submit the {job} job on pass, log a rejection on fail"
+        )
+        return request, _graph("ai-conditional", "AI-gated submission", nodes, edges)
+    # variant == "shell-multi-step"
     cmd = _pick(rng, COMMANDS)
-    pass_msg = rng.choice(["build succeeded", "checks passed"])
-    fail_msg = rng.choice(["build failed", "checks rejected"])
     nodes = [
         _node_action_shell("run-task", "Run task", 0, cmd),
-        _node_utility_log("on-pass", f"Log pass", 1, pass_msg),
-        _node_utility_log("on-fail", f"Log fail", 1, fail_msg),
+        _node_action_shell("notify-pass", "Notify pass", 1, "echo task passed"),
+        _node_utility_log("done", "Done", 2, "task complete"),
+        _node_utility_log("on-fail", "Log fail", 1, "task failed"),
     ]
     edges = [
-        _edge("run-task", "on-pass", "pass"),
+        _edge("run-task", "notify-pass", "pass"),
+        _edge("notify-pass", "done"),
         _edge("run-task", "on-fail", "fail"),
     ]
-    request = f"run `{cmd}` then log {pass_msg!r} on success or {fail_msg!r} on failure"
-    return request, _graph("run-and-branch", "Run and branch", nodes, edges)
+    request = (
+        f"run `{cmd}`; on success notify then mark done; on failure log the failure"
+    )
+    return request, _graph(
+        "conditional-multi-step", "Conditional multi-step", nodes, edges
+    )
 
 
 def build_parallel(rng: random.Random) -> tuple[str, dict]:
+    variant = rng.choice(["init-shell-shell-join", "shell-shell-join-noinit",
+                          "init-three-fanout", "init-shell-shell-noJoin"])
+    if variant == "init-shell-shell-join":
+        a, b = rng.sample(COMMANDS, 2)
+        nodes = [
+            _node_utility_set("init", "Init", 0, "RUN_ID", "batch-001"),
+            _node_action_shell("task-a", "Task A", 1, a),
+            _node_action_shell("task-b", "Task B", 2, b),
+            _node_utility_log("done", "Both finished", 3, "fan-in done"),
+        ]
+        edges = [
+            _edge("init", "task-a"),
+            _edge("init", "task-b"),
+            _edge("task-a", "done"),
+            _edge("task-b", "done"),
+        ]
+        request = f"run `{a}` and `{b}` in parallel after the init step, then log when both finish"
+        return request, _graph("parallel-fanout", "Parallel fan-out", nodes, edges)
+    if variant == "shell-shell-join-noinit":
+        a, b = rng.sample(COMMANDS, 2)
+        nodes = [
+            _node_action_shell("task-a", "Task A", 0, a),
+            _node_action_shell("task-b", "Task B", 1, b),
+            _node_utility_log("done", "Done", 2, "both finished"),
+        ]
+        # No explicit fan-out source: two roots both feed `done`. The
+        # executor treats roots-without-incoming-edges as concurrent
+        # starts, so this is a valid parallel pattern.
+        edges = [
+            _edge("task-a", "done"),
+            _edge("task-b", "done"),
+        ]
+        request = f"in parallel: run `{a}` and run `{b}`, then log when both are done"
+        return request, _graph("parallel-no-init", "Parallel no-init", nodes, edges)
+    if variant == "init-three-fanout":
+        a, b, c = rng.sample(COMMANDS, 3)
+        nodes = [
+            _node_utility_log("init", "Starting", 0, "fan-out starting"),
+            _node_action_shell("task-a", "Task A", 1, a),
+            _node_action_shell("task-b", "Task B", 2, b),
+            _node_action_shell("task-c", "Task C", 3, c),
+            _node_utility_log("done", "All finished", 4, "all three done"),
+        ]
+        edges = [
+            _edge("init", "task-a"),
+            _edge("init", "task-b"),
+            _edge("init", "task-c"),
+            _edge("task-a", "done"),
+            _edge("task-b", "done"),
+            _edge("task-c", "done"),
+        ]
+        request = f"after init, run these three commands in parallel: `{a}`, `{b}`, `{c}`, then log when all finish"
+        return request, _graph("parallel-three", "Three-way fan-out", nodes, edges)
+    # variant == "init-shell-shell-noJoin": two parallel terminal branches
     a, b = rng.sample(COMMANDS, 2)
     nodes = [
-        _node_utility_set("init", "Init", 0, "RUN_ID", "batch-001"),
-        _node_action_shell("task-a", f"Task A", 1, a),
-        _node_action_shell("task-b", f"Task B", 2, b),
-        _node_utility_log("done", "Both finished", 3, "fan-in done"),
+        _node_utility_set("init", "Init", 0, "RUN_ID", "batch-002"),
+        _node_action_shell("task-a", "Task A", 1, a),
+        _node_action_shell("task-b", "Task B", 2, b),
     ]
     edges = [
         _edge("init", "task-a"),
         _edge("init", "task-b"),
-        _edge("task-a", "done"),
-        _edge("task-b", "done"),
     ]
-    request = f"run `{a}` and `{b}` in parallel after the init step, then log when both finish"
-    return request, _graph("parallel-fanout", "Parallel fan-out", nodes, edges)
+    request = f"start two parallel tasks after init: `{a}` and `{b}` (no join needed, both terminate independently)"
+    return request, _graph("parallel-no-join", "Parallel terminal", nodes, edges)
 
 
 def build_jcl_validation(rng: random.Random) -> tuple[str, dict]:
@@ -450,29 +569,106 @@ def build_unsupported(rng: random.Random) -> tuple[str, dict]:
 
 def build_repair(rng: random.Random) -> tuple[str, dict]:
     variant = rng.choice([
-        ("missing-edge",
-         "fix this graph: it has a fetch step and a validate step but no edge between them",
-         [
-             _node_action_zowe("fetch-jcl", "Fetch JCL", 0, "zowe files download ds PROD.JCL(LOAD)"),
-             _node_ai("validate", "Validate", 1, "jcl-validator"),
-         ],
-         [_edge("fetch-jcl", "validate")]),
-        ("dangling-target",
-         "fix this graph: edge points to a node that does not exist",
-         [
-             _node_utility_set("init", "Init", 0, "RUN_ID", "x"),
-             _node_action_shell("task", "Task", 1, "echo done"),
-         ],
-         [_edge("init", "task")]),
-        ("forbidden-adapter",
-         "fix this graph: it currently uses ssh, replace it with a curated step",
-         [
-             _node_action_shell("run-task", "Run task", 0, "ssh build@host 'make release'"),
-         ],
-         []),
+        "missing-edge",
+        "dangling-target",
+        "forbidden-adapter",
+        "ai-type-confusion",
+        "utility-type-confusion",
+        "missing-ai-model",
     ])
-    _, request, nodes, edges = variant
-    return request, _graph("repaired", "Repaired", nodes, edges)
+    if variant == "missing-edge":
+        return (
+            "fix this graph: it has a fetch step and a validate step but no edge between them",
+            _graph(
+                "repaired",
+                "Repaired",
+                [
+                    _node_action_zowe(
+                        "fetch-jcl", "Fetch JCL", 0, "zowe files download ds PROD.JCL(LOAD)"
+                    ),
+                    _node_ai("validate", "Validate", 1, "jcl-validator"),
+                ],
+                [_edge("fetch-jcl", "validate")],
+            ),
+        )
+    if variant == "dangling-target":
+        return (
+            "fix this graph: edge points to a node that does not exist",
+            _graph(
+                "repaired",
+                "Repaired",
+                [
+                    _node_utility_set("init", "Init", 0, "RUN_ID", "x"),
+                    _node_action_shell("task", "Task", 1, "echo done"),
+                ],
+                [_edge("init", "task")],
+            ),
+        )
+    if variant == "forbidden-adapter":
+        return (
+            "fix this graph: it currently uses ssh, replace it with a curated step",
+            _graph(
+                "repaired",
+                "Repaired",
+                [_node_action_shell("run-task", "Run task", 0, "ssh build@host 'make release'")],
+                [],
+            ),
+        )
+    if variant == "ai-type-confusion":
+        # An `ai` node that was mistakenly populated with `action` fields
+        # (adapter / actionId / command). The corrected graph routes the
+        # shell work through a real `action` node and uses `ai` only when
+        # an AI model is actually invoked. Teaches the model the exact
+        # mistake observed in production: type confusion between ai and
+        # action node data.
+        cmd = _pick(rng, COMMANDS)
+        return (
+            f"fix this graph: an `ai` node has been given `adapter`/`actionId`/`command` "
+            f"fields that only belong on `action` nodes — restructure so the shell command "
+            f"`{cmd}` runs on an action node and the ai node is removed (no AI model needed)",
+            _graph(
+                "repaired",
+                "Repaired",
+                [_node_action_shell("run-task", "Run task", 0, cmd)],
+                [],
+            ),
+        )
+    if variant == "utility-type-confusion":
+        # A `utility` node carrying shell-action fields. Corrected to a
+        # plain shell action; utility nodes are only `sleep` / `log` /
+        # `set-variable`. Echoes the second failure mode from the same eval.
+        msg = rng.choice(["job complete", "step done", "deploy finished"])
+        return (
+            f"fix this graph: a utility node was used with `adapter` / `actionId` / `command` "
+            f"fields. utility nodes only support `sleep` / `log` / `set-variable`. "
+            f"Move the `echo {msg!r}` work to a shell action node, leave a utility log for status.",
+            _graph(
+                "repaired",
+                "Repaired",
+                [
+                    _node_action_shell("announce", "Announce", 0, f"echo {msg!r}"),
+                    _node_utility_log("status", "Status", 1, msg),
+                ],
+                [_edge("announce", "status")],
+            ),
+        )
+    # variant == "missing-ai-model"
+    return (
+        "fix this graph: an `ai` node is missing the required `modelId` field "
+        "(it had `prompt` only). Set modelId to a real local model — for JCL validation "
+        "use `jcl-validator`.",
+        _graph(
+            "repaired",
+            "Repaired",
+            [
+                _node_action_zowe(
+                    "fetch-jcl", "Fetch JCL", 0, "zowe files download ds PROD.JCL(LOAD)"
+                ),
+                _node_ai("validate", "Validate", 1, "jcl-validator"),
+            ],
+            [_edge("fetch-jcl", "validate")],
+        ),
+    )
 
 
 CATEGORY_BUILDERS = {
@@ -492,13 +688,15 @@ CATEGORY_BUILDERS = {
 }
 
 
-# Quotas tuned so safety/refusal categories are well-represented (the
-# 0.0 forbidden_rejection_rate from the prior FGG eval is the target);
-# the rest follow expected production frequency.
+# Quotas tuned for the v2 retrain. parallel / conditional / repair
+# bumped from {30, 45, 30} to {80, 80, 80} after the v1 model showed
+# semantic confusion on parallel + ai/action/utility type mixing —
+# more samples per shape + new template variants per builder fix the
+# generalisation gap. Safety/refusal categories stay well-represented.
 DEFAULT_QUOTAS: dict[str, int] = {
     "simple": 80,
-    "conditional": 45,
-    "parallel": 30,
+    "conditional": 80,
+    "parallel": 80,
     "jcl-validation": 45,
     "job-submission": 30,
     "spool-inspection": 30,
@@ -508,7 +706,7 @@ DEFAULT_QUOTAS: dict[str, int] = {
     "ambiguous": 35,
     "unsafe": 60,
     "unsupported": 35,
-    "repair": 30,
+    "repair": 80,
 }
 
 
