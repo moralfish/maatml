@@ -25,8 +25,8 @@
     "max": 1.0,
     "calibration_note": "0.9+ on clean valid samples; 0.7-0.9 on confident error detections; <0.7 when ambiguous."
   },
+  "error_message_templates_purpose": "The v2 classifier predicts a code from the bounded set but does not generate text. The runtime fills `message` + `suggestion` from these templates keyed by the predicted code. Zero hallucination on user-facing copy.",
   "error_message_templates": {
-    "_purpose": "The v2 classifier predicts a code from the bounded set but does not generate text. The runtime fills `message` + `suggestion` from these templates keyed by the predicted code. Zero hallucination on user-facing copy.",
     "missing_dd": {
       "message": "Required DD statement is missing for this step.",
       "suggestion": "Add the DD statement (e.g. `//SYSPRINT DD SYSOUT=*` or the dataset-specific DD) before the next EXEC."

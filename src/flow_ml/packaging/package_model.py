@@ -298,6 +298,65 @@ def _convert_weights_to_dtype(pkg_dir: Path, target_dtype: str) -> None:
         torch.cuda.empty_cache()
 
 
+def _rewrite_modernbert_config(config_path: Path) -> None:
+    """Translate HF ModernBERT config.json to candle-transformers' schema.
+
+    HF saves (subset): {
+        "norm_eps": 1e-05,
+        "rope_parameters": {
+            "full_attention": {"rope_theta": 160000.0, ...},
+            "sliding_attention": {"rope_theta": 10000.0, ...}
+        }
+    }
+
+    candle expects (subset): {
+        "layer_norm_eps": 1e-05,
+        "global_rope_theta": 160000.0,
+        "local_rope_theta": 10000.0
+    }
+
+    Rewrites in place; safe to run multiple times (idempotent).
+    """
+    import json as _json
+
+    cfg = _json.loads(config_path.read_text(encoding="utf-8"))
+
+    # norm_eps → layer_norm_eps
+    if "layer_norm_eps" not in cfg and "norm_eps" in cfg:
+        cfg["layer_norm_eps"] = cfg["norm_eps"]
+
+    # rope_parameters.{full,sliding}.rope_theta → {global,local}_rope_theta
+    rope = cfg.get("rope_parameters") or {}
+    if "global_rope_theta" not in cfg:
+        full = rope.get("full_attention") or {}
+        if isinstance(full, dict) and "rope_theta" in full:
+            cfg["global_rope_theta"] = float(full["rope_theta"])
+    if "local_rope_theta" not in cfg:
+        sliding = rope.get("sliding_attention") or {}
+        if isinstance(sliding, dict) and "rope_theta" in sliding:
+            cfg["local_rope_theta"] = float(sliding["rope_theta"])
+
+    config_path.write_text(_json.dumps(cfg, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _prefix_safetensors_keys(path: Path, prefix: str) -> None:
+    """Re-save `path` with every tensor key prefixed by `prefix`.
+
+    No-op if every existing key already starts with `prefix`. Mirrors what
+    candle's `ModernBert::load` expects (`model.embeddings...`,
+    `model.layers.<n>...`, `model.final_norm...`).
+    """
+    from safetensors.torch import load_file, save_file
+
+    state = load_file(str(path))
+    if not state:
+        return
+    if all(k.startswith(prefix) for k in state.keys()):
+        return  # already prefixed; idempotent
+    renamed = {f"{prefix}{k}": v for k, v in state.items()}
+    save_file(renamed, str(path))
+
+
 def package_jcl(
     checkpoint_dir: str | Path,
     out_dir: str | Path,
@@ -374,10 +433,16 @@ def package_jcl(
     if missing:
         raise FileNotFoundError(f"package_jcl: missing files in {dst}: {missing}")
 
-    # Classifier weights are already small enough; the existing dtype
-    # converter only knows about causal LM models and would error on
-    # a BERT encoder. Skip the conversion for `f16` (the trainer saves
-    # bf16 weights which the runtime loads as fp16 directly).
+    # Translate the HuggingFace ModernBERT config schema to the shape
+    # candle-transformers' `modernbert::Config` expects (flat
+    # `global_rope_theta`/`local_rope_theta` instead of nested
+    # `rope_parameters`, `layer_norm_eps` instead of `norm_eps`).
+    _rewrite_modernbert_config(dst / "config.json")
+
+    # Re-key model.safetensors so every tensor lives under `model.*` —
+    # candle's `ModernBert::load` uses `vb.pp("model.embeddings...")` etc.
+    # The HF `AutoModel.save_pretrained` writes them at the top level.
+    _prefix_safetensors_keys(dst / "model.safetensors", "model.")
 
     manifest = _build_manifest(
         model_id=model_id,
