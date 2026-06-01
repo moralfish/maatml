@@ -1,14 +1,14 @@
 """Model definition schema (`models/<name>/model.yml`).
 
 A single `model.yml` per model is the source of truth for everything in that
-model's lifecycle: data preparation, training, smoke training, evaluation,
-and packaging.  This module owns the schema and the loader.
+model's lifecycle: data preparation, training, smoke training, and
+evaluation.  This module owns the schema and the loader.
 
 The nested `data:`, `training:`, `smoke:`, and `packaging:` sections are
 intentionally typed as plain dicts so each pipeline stage (``prepare_jcl``,
 ``train_dsl``, etc.) can validate them against its existing Pydantic config
-class without forcing a single rigid super-schema for three very different
-models.
+class without forcing a single rigid super-schema for the three very
+different models.
 
 Layout:
 
@@ -25,8 +25,6 @@ Layout:
         prepared/{train,val,test}.jsonl
         checkpoints/<run-name>/
         eval/<report>.{json,md}
-        dist/<model_id>-<version>/
-        dist/<model_id>-<version>.fm
 """
 from __future__ import annotations
 
@@ -39,10 +37,11 @@ from .utils.io import read_yaml
 
 
 class PackagingSpec(BaseModel):
-    """Manifest fields that aren't derivable from `training:` or runtime introspection.
+    """Packaging knobs parsed from ``model.yml``'s ``packaging:`` section.
 
-    Mirrors the relevant subset of ``ModelManifest``; ``ConfidenceThresholds`` is
-    expressed here as a plain dict so the YAML stays light.
+    Retained for the future GGUF/safetensors export path; not consumed by the
+    current CLI (the model-packaging path was removed). ``confidence_thresholds``
+    is a plain dict so the YAML stays light.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -52,11 +51,8 @@ class PackagingSpec(BaseModel):
     confidence_thresholds: dict[str, float] = Field(
         default_factory=lambda: {"high": 0.9, "low": 0.6}
     )
-    # Half-precision packaging knob: defaults to `"f32"` for back-compat.
-    # Set to `"f16"` (recommended) or `"bf16"` for 7B+ bases. Only
-    # consumed by `package_dsl` today; `package_jcl` and `package_spool`
-    # ignore it because their bases are small enough that the F32 path
-    # ships fine.
+    # Half-precision export knob: `"f32"` (default) | `"f16"` | `"bf16"`.
+    # Recorded for the future GGUF/safetensors export path.
     weights_dtype: str = "f32"
 
 
@@ -66,13 +62,13 @@ class ModelDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     # Identity / runtime contract
-    name: str = Field(..., description="Folder name; e.g. 'dsl-generator'")
-    model_id: str = Field(..., description="What Flow Studio sees, e.g. 'dsl-generator:v1'")
+    name: str = Field(..., description="Folder name; e.g. 'flow-graph-generator'")
+    model_id: str = Field(..., description="What Flow Studio sees, e.g. 'flow-graph-generator:v1'")
     task: str = Field(
         ...,
         description=(
             "Pipeline dispatch key. One of: jcl_validation, spool_interpretation, "
-            "dsl_generation, agent_planning"
+            "flow_graph_generation"
         ),
     )
     runtime: str = "candle"
@@ -122,11 +118,6 @@ class ModelDefinition(BaseModel):
     def eval_dir(self) -> Path:
         """`models/<name>/output/eval/`."""
         return self.output_dir / "eval"
-
-    @property
-    def dist_dir(self) -> Path:
-        """`models/<name>/output/dist/` - packaged outputs (.fm + unpacked dir)."""
-        return self.output_dir / "dist"
 
     def merged_smoke(self) -> dict[str, Any]:
         """Return ``training`` overlaid with ``smoke`` overrides.

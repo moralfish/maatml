@@ -2,7 +2,7 @@
 
 ## Decisions made
 
-All four trainers use the **base model's tokenizer as-is** via `AutoTokenizer.from_pretrained(model_id)`. No custom vocabulary is added; no extra tokens are injected. This was evaluated against the alternative of adding task-specific special tokens and rejected because:
+The generative and seq2seq trainers use the **base model's tokenizer as-is** via `AutoTokenizer.from_pretrained(model_id)`. No custom vocabulary is added; no extra tokens are injected. This was evaluated against the alternative of adding task-specific special tokens and rejected because:
 
 - JCL and spool text fragments are handled well by the BERT / Qwen2 / SmolLM2 sub-word tokenizers with no measurable fragmentation penalty at the sequence lengths in use.
 - Adding tokens to a frozen (or LoRA-frozen) base would require embedding resize + random initialisation of the new rows, which introduces training instability without a clear quality benefit at these corpus sizes.
@@ -16,7 +16,7 @@ if tokenizer.pad_token_id is None:
     tokenizer.pad_token = tokenizer.eos_token
 ```
 
-This is done in all four trainer modules (`jcl_validator.py`, `spool_interpreter.py`, `dsl_generator.py`, `agent_planner.py`) and is safe because attention masks correctly exclude the padded positions from loss computation.
+This is done in the trainer modules (`jcl_classifier.py`, `spool_seq2seq.py`, `flow_graph_generator.py`) and is safe because attention masks correctly exclude the padded positions from loss computation.
 
 ## Generative models: prompt masking
 
@@ -26,9 +26,9 @@ For causal-LM trainers the loss is masked over the prompt tokens (labels set to 
 
 `sanitizer.py` runs at the **raw-text level** before any tokenization, during `flow_ml prepare`. By the time text reaches the tokenizer at training or inference time, PII and secrets have already been redacted to placeholder strings. The tokenizer therefore sees sanitized text only.
 
-## Tokenizer assets in the `.fm` archive
+## Tokenizer assets in the checkpoint
 
-`package_model.py` copies the tokenizer files verbatim from the checkpoint directory into the package output folder:
+Training writes the tokenizer files verbatim into the checkpoint directory:
 
 ```
 tokenizer.json
@@ -37,4 +37,4 @@ special_tokens_map.json    (when present)
 tokenizer.model            (SentencePiece; when present)
 ```
 
-The Candle runtime loads the tokenizer from these files at model load time. Versioning the tokenizer with the weights ensures the runtime always uses the exact tokenizer the model was trained with.
+Versioning the tokenizer with the weights ensures inference always uses the exact tokenizer the model was trained with.

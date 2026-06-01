@@ -1,124 +1,111 @@
 # flow-ml
 
-Training and packaging workspace for the four local Flow AI models. Sibling repo `../flow-studio` is the consumer (desktop app + Rust runtime).
+flow-ml is the **Flow Studio Model Hub** — the registry/distribution source for
+the local AI model artifacts Flow Studio runs, and the workspace that trains the
+task models. Sibling repo `../flow-studio` is the consumer (desktop app + hub
+client + the managed `llama-server` GGUF sidecar).
 
-## What this repo produces
+## What this repo does
 
-Four `.fm` model packages, loaded at runtime by `flow-model-runtime` (Rust, in flow-studio) via the Candle backend.
+Trains three task models, **each a different architecture**, dispatched by
+`model.yml::architecture`:
 
-| Model | Task | Base | Where |
+| Model | Task | Architecture | Base |
 |---|---|---|---|
-| jcl-validator | classify JCL syntax errors | distilbert-style multi-head | [models/jcl-validator/](models/jcl-validator/) |
-| spool-interpreter | summarise z/OS spool output as JSON | SmolLM2-360M-Instruct | [models/spool-interpreter/](models/spool-interpreter/) |
-| dsl-generator | English → Flow DSL (multi-turn tool-calling) | Qwen3-4B-Instruct-2507 | [models/dsl-generator/](models/dsl-generator/) |
-| agent-planner | Flow Studio workflow planning | Qwen3-4B-Instruct-2507 | [models/agent-planner/](models/agent-planner/) |
+| jcl-validator | classify JCL syntax errors | 4-head classifier | ModernBERT-base |
+| spool-interpreter | summarise z/OS spool output as JSON | seq2seq | flan-t5-base |
+| flow-graph-generator | NL request → Flow Graph JSON | generative (LoRA SFT) | Qwen3-1.7B |
 
-Each model folder is self-describing: `model.yml` (config), `datasets/` (seeds + prompt_spec + samples), `output/` (prepared splits + checkpoints + eval reports).
+Each model folder is self-describing: `model.yml` (config), `datasets/` (seeds +
+prompt_spec + schema + samples), `output/` (prepared splits + checkpoints + eval
+reports).
+
+> **Runtime + export.** Flow Studio's local runtime is the `llama-server` GGUF
+> sidecar; the in-process Candle task-model path has been removed (see
+> flow-studio `docs/architecture/model-runtime.md`, `model-hub.md`). As the Hub,
+> flow-ml will catalog `gguf` / `mlx` / `safetensors` artifacts — producing those
+> from the trained checkpoints is **future work**, not wired up here yet (E2).
 
 ## Workflow
 
 ```bash
-flow_ml prepare models/<name>/         # synth/load corpus → output/prepared/{train,val,test}.jsonl
-flow_ml train   models/<name>/ [--smoke]  # LoRA fine-tune → output/checkpoints/
-flow_ml evaluate models/<name>/        # → output/eval/{ckpt}.{json,md}
-flow_ml package models/<name>/ --version v1   # → output/packages/<name>-v1.fm
+flow_ml prepare  models/<name>/             # synth/load corpus → output/prepared/{train,val,test}.jsonl
+flow_ml train    models/<name>/ [--smoke]   # → output/checkpoints/
+flow_ml evaluate models/<name>/             # → output/eval/{ckpt}.{json,md}
 ```
 
-CLI dispatcher: [src/flow_ml/cli.py](src/flow_ml/cli.py). Each subcommand routes by `model.yml.task`.
+CLI dispatcher: [src/flow_ml/cli.py](src/flow_ml/cli.py). Each subcommand routes
+by `model.yml.task` **and** `model.yml.architecture`.
 
-## dsl-generator pivot (Phase 5, current)
+## Architecture dispatch
 
-dsl-generator was switched from a single-shot Qwen2.5-Coder-7B seq2seq model to **Qwen-Agent Nous-protocol multi-turn tool-calling on Qwen3-4B-Instruct-2507**. The pivot was driven by 16 GB Mac runnability (7B fp16 doesn't fit) and grounding via a single `lookup_action` tool.
+```
+task=jcl_validation       + architecture=classifier → training/jcl_classifier.py     (ModernBERT)
+task=spool_interpretation + architecture=seq2seq    → training/spool_seq2seq.py       (flan-t5)
+task=flow_graph_generation (generative, default)     → training/flow_graph_generator.py (Qwen3-1.7B LoRA)
+```
 
-Key facts:
-
-- **Training is multi-turn** — `messages` field on each prepared row carries `<tool_call>`/`<tool_response>` traces. ~60% multi-turn / ~40% single-turn mix; one-node flows always single-turn.
-- **Inference is single-shot** — runtime stays catalog-only (no tool loop). The `<tools>` block is omitted at inference; the model answers directly. Tracked by `unwanted_tool_call_rate` metric.
-- **System prompt unchanged** — the full ~900-line baked grammar in [datasets/prompt_spec.json](models/dsl-generator/datasets/prompt_spec.json) `system` field stays. The tool augments it, doesn't replace it.
-- **Vendored package**: [src/flow_agent/](src/flow_agent/) is a renamed, trimmed subset of [Qwen-Agent](https://github.com/QwenLM/Qwen-Agent) (Apache-2.0, see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)). Only the Nous prompt template + Message/FunctionCall schema + BaseTool registry. No LLM backends, no agents, no GUI.
-- **Single tool**: `lookup_action(adapter, query)` resolves intents to canonical adapter/action names. Catalog: [models/dsl-generator/datasets/action_catalog.json](models/dsl-generator/datasets/action_catalog.json), regenerated by [scripts/build-action-catalog.py](scripts/build-action-catalog.py).
+The v1 all-generative SFT path for JCL and spool was retired in favour of these
+smaller, task-specific architectures.
 
 ## Key files (load-bearing)
 
 ```
 src/flow_ml/
-├── cli.py                          # `flow_ml <cmd>` dispatcher
+├── cli.py                          # `flow_ml <cmd>` dispatcher (by task + architecture)
 ├── config.py                       # ModelDefinition (model.yml loader)
 ├── data/
-│   ├── pipeline.py                 # prepare_jcl/spool/dsl/agent
-│   ├── schemas.py                  # DslSample, JclSample, SpoolSample, AgentSample
-│   ├── agent_trace.py              # build_messages: (description, dsl) → multi-turn trace
+│   ├── pipeline.py                 # prepare_jcl / prepare_spool / prepare_flow_graph
+│   ├── schemas.py                  # sample types for the three tasks
 │   ├── sanitizer.py                # PII redaction for spool/jcl
-│   └── synthetic/                  # rule-based corpus generators
+│   └── synthetic/                  # rule-based JCL corpus generator
 ├── training/
-│   ├── dsl_generator.py            # build_chat_example, train_dsl, render_inference_prompt
-│   ├── agent_planner.py            # train_agent
-│   ├── spool_interpreter.py        # train_spool
-│   └── jcl_validator.py            # train_jcl + JclMultiHeadModel
-├── evaluation/runner.py            # evaluate_{jcl,spool,dsl,agent}
-└── packaging/package_model.py      # builds .fm archive
-
-src/flow_agent/                     # vendored Qwen-Agent subset (rename of qwen_agent)
-├── schema.py                       # Message, FunctionCall, ContentItem
-├── fncall_prompts/nous.py          # NousFnCallPrompt template + parser
-└── tools/{base.py, lookup_action.py}
+│   ├── jcl_classifier.py           # ModernBERT 4-head classifier
+│   ├── spool_seq2seq.py            # flan-t5 seq2seq
+│   ├── flow_graph_generator.py     # Qwen3-1.7B LoRA SFT
+│   └── sft_base.py                 # shared SFT skeleton
+├── validation/                     # per-task out-of-model validators (JCL 6 / FlowGraph 7 / Spool 8)
+├── evaluation/runner.py            # evaluate_{jcl,spool,flow_graph}
+└── tokenization/jcl_tokenizer.py   # column-aware JCL BPE tokenizer (+ COLUMN_RULES.md)
 ```
 
-## .fm package contract
+## Local runnability (16 GB target)
 
-The runtime in flow-studio reads:
+- JCL classifier (ModernBERT): small + fast to train and evaluate.
+- Spool interpreter (flan-t5): mid-size encoder-decoder.
+- Flow Graph Generator (Qwen3-1.7B): fits a 16 GB Mac for training/eval.
 
-| File | Purpose |
-|---|---|
-| `model.safetensors` | weights (fp16 by default for the bigger bases) |
-| `config.json` | transformer config |
-| `tokenizer.json` | HuggingFace tokenizer |
-| `prompt_spec.json` | system prompt + user_template + response_schema + stop tokens + `schema_version` |
-| `manifest.json` | model_id, task, weights_dtype, max_input_tokens, expected_latency_ms |
+## Cross-repo: flow-studio
 
-Path-traversal / symlink / >50 entries / >5 GB checks live in [src/flow_ml/packaging/package_model.py:97](src/flow_ml/packaging/package_model.py).
-
-`prompt_spec.json schema_version: "2"` is dsl-generator's current shape (adds `tools`, `lookup_action_contract`, `base_model`, `_provenance.catalog_sha`). The runtime ignores unknown fields, so v2 is forward-compatible without a flow-model-runtime release. Other models still ship v1.
-
-## Local runnability (16 GB Mac target)
-
-Bigger bases ship `weights_dtype: f16`:
-- Qwen3-4B fp16 → ~8 GB on disk, ~9-10 GB total runtime → fits 16 GB Mac with 2-3 GB headroom
-- Qwen2.5-Coder-7B fp16 → ~14 GB, swap-bound on 16 GB Macs (legacy, replaced)
-
-`packaging.max_input_tokens` controls runtime KV cache; keep at 1024 for inference even when training uses 2048.
-
-Q4_0 GGUF is deferred per [models/dsl-generator/model.yml](models/dsl-generator/model.yml) comment — blocked on Candle's per-call cache reset on `quantized_qwen2`.
+The DSL spec/grammar that feeds the Flow Graph Generator's prompt originates in
+flow-studio; flow-ml never writes back. There is no longer a packaged-model
+runtime contract between the repos (the Candle task-model path was removed); the Hub
+relationship is artifact distribution (GGUF/MLX/safetensors) via the catalog the
+flow-studio client reads — see flow-studio `docs/architecture/model-hub.md`.
 
 ## Conventions
 
-- **Sync from flow-studio**: spec markdown is one-way pulled by [scripts/sync-spec-from-flow-studio.sh](scripts/sync-spec-from-flow-studio.sh). It writes `prompt_spec.json._provenance.git_sha` from flow-studio's HEAD and re-runs `build-action-catalog.py`.
-- **Determinism**: every prepare/augment uses an explicit `seed` in `model.yml`. Two runs with the same seed must produce byte-identical splits.
-- **No mocks of the database/parser**: `evaluate_dsl()` uses the real `flow_dsl_py` PyO3 binding when present.
-- **Smoke profile** for fast pipeline validation: bases pinned to small Qwen3-0.6B (matches the chat template the new pipeline depends on). SmolLM2-135M was previously used but lacks `<|im_start|>` tokens.
-- **transformers 5.x**: chat-template returns can be quirky. Use `_render_then_tokenize` in [src/flow_ml/training/dsl_generator.py](src/flow_ml/training/dsl_generator.py) (render-to-text, then tokenize) rather than `apply_chat_template(tokenize=True)` directly.
+- **Determinism**: every prepare uses an explicit `seed` in `model.yml`; two runs
+  with the same seed produce byte-identical splits.
+- **Validator-gated corpora**: seed builders reject any row that fails the
+  per-task out-of-model validator before it lands in `seed_samples.jsonl`.
+- **Real validator at eval**: evaluators run the same per-task validator; the
+  `flow_dsl_py` PyO3 binding is used when present and degrades gracefully when not.
+- **Smoke profile**: tiny bases + a handful of steps for fast pipeline validation.
 
 ## Test surface
 
 ```bash
-.venv/bin/python -m pytest tests/   # 104 tests
+.venv/bin/python -m pytest tests/
 ```
 
-New in Phase 5:
-- [tests/test_flow_agent_nous.py](tests/test_flow_agent_nous.py) — Nous render+parse round-trip
-- [tests/test_lookup_action.py](tests/test_lookup_action.py) — tool resolution coverage
-- [tests/test_agent_trace.py](tests/test_agent_trace.py) — message-trace synthesis
-- [tests/test_dsl_loss_mask.py](tests/test_dsl_loss_mask.py) — assistant-only loss masking
-
-Pre-existing pipelines + packaging + sanitiser + schema tests still in place.
+`tests/`: `test_eval_report`, `test_flow_graph_pipeline`, `test_flow_graph_validator`,
+`test_jcl_tokenizer`, `test_pipeline`, `test_sanitizer`, `test_schemas`.
 
 ## Environment
 
 - Python 3.13+, venv at `.venv/`
-- Heavy ML deps under `pip install -e ".[ml]"` (torch, transformers≥5.0, peft, accelerate, etc.)
+- Heavy ML deps under `pip install -e ".[ml]"` (torch, transformers≥5.0, peft, accelerate, …)
 - Dev deps under `pip install -e ".[dev]"` (pytest, ruff, mypy)
-- `flow_dsl_py` PyO3 binding is optional; built from `flow-studio/crates/flow-dsl-py` via `maturin develop --release`. Eval gracefully degrades when missing.
-
-## Cross-repo: flow-studio
-
-Sibling at `flow-studio`. Sync direction is **flow-studio → flow-ml** for the spec; flow-ml never writes back.
+- `flow_dsl_py` PyO3 binding is optional; built from `flow-studio/crates/flow-dsl-py`
+  via `maturin develop --release`. Eval gracefully degrades when missing.

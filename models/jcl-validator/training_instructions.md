@@ -237,20 +237,12 @@ templates).
 
 ## 18. Artifact requirements
 
-Package contents (per `package_jcl` in `packaging/package_model.py`):
-
-```
-jcl-validator-v1/
-├── manifest.json                       # architecture: candle_bert_classifier
-├── model.safetensors                   # ModernBERT + 4 heads merged
-├── config.json                         # ModernBERT architecture
-├── tokenizer.json                      # custom JCL tokenizer
-├── prompt_spec.json                    # documentation
-├── jcl_validation_schema.json          # output JSON schema
-└── node_contracts.json                 # bounded vocab + message templates
-```
-
-Manifest `architecture` field: `candle_bert_classifier`.
+Training produces a checkpoint under `output/checkpoints/<run-name>/`:
+`model.safetensors` (ModernBERT + 4 heads), `config.json`, the custom
+`tokenizer.json`, plus the committed `jcl_validation_schema.json` and
+`node_contracts.json` (bounded vocab + message templates). Converting the
+checkpoint into a Hub artifact (GGUF / safetensors) is future work — the
+in-process Candle packaging path has been removed.
 
 ## 19. Versioning
 
@@ -263,9 +255,6 @@ Success criteria for the first end-to-end run:
 - Training completes without OOM / NaN gradients.
 - `eval_loss` < 0.5 at end of training.
 - All eval gates in §15 met on the test split.
-- `.fm` package ≤200 MB.
-- Round-trip inference test in flow-studio's `BertClassifierBackend`
-  produces the same JSON shape the v1 SFT model emitted.
 
 ## 21. Recommended sequence
 
@@ -286,7 +275,4 @@ flow_ml train models/jcl-validator/          # ~10 min on M5 Max
 
 # 4. Evaluate.
 flow_ml evaluate models/jcl-validator/
-
-# 5. Package + install into flow-studio.
-flow_ml package models/jcl-validator/ --version v1
 ```

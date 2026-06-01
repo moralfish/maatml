@@ -7,7 +7,7 @@ Authoritative spec: [`training_instructions.md`](training_instructions.md).
 ## Targets
 
 - **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
-- **Final artefact**: merged safetensors loaded by `flow-model-runtime` (Candle).
+- **Final artefact**: merged safetensors checkpoint (Hub export is future work).
 - **Disk footprint**: ~3.4 GB at fp16. Same envelope as FlowGraphGenerator.
 
 ## Output shape
@@ -58,7 +58,6 @@ flow_ml prepare  models/jcl-validator/
 flow_ml train    models/jcl-validator/ --smoke   # ~2 min on Qwen3-0.6B
 flow_ml train    models/jcl-validator/           # ~30-40 min on Qwen3-1.7B (M5 Max bf16)
 flow_ml evaluate models/jcl-validator/
-flow_ml package  models/jcl-validator/ --version v0.1
 ```
 
 Expand the seed corpus by hand-authoring rows in

@@ -7,8 +7,7 @@ the right pipeline based on ``model.yml``'s ``task`` field. Outputs land under
   flow_ml prepare  <model-dir>
   flow_ml train    <model-dir> [--smoke]
   flow_ml evaluate <model-dir> [--checkpoint X] [--split test]
-  flow_ml package  <model-dir> [--checkpoint X] [--version vN]
-  flow_ml verify   <fm-or-dir>
+  flow_ml plan     <model-dir>
 """
 from __future__ import annotations
 
@@ -160,87 +159,6 @@ def cmd_evaluate(
     console.print(f"[green]done[/] report={out_path}")
 
 
-@app.command("package")
-def cmd_package(
-    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
-    checkpoint: Optional[Path] = typer.Option(None, "--checkpoint"),
-    version: Optional[str] = typer.Option(None, "--version", help="Override version (default: model.yml `version`)"),
-) -> None:
-    """Package a checkpoint into <model-dir>/output/dist/<model_id>-<version>{,.fm}."""
-    md = load_model_def(model_dir)
-    ckpt = checkpoint if checkpoint else _latest_checkpoint(md)
-    ver = version or md.version
-    # `model_id` looks like 'dsl-generator:v1' - sanitize for filesystem use
-    safe_id = md.model_id.replace(":", "-")
-    dist_name = f"{safe_id}-{ver}" if not safe_id.endswith(f"-{ver}") else safe_id
-    dist_dir = md.dist_dir / dist_name
-    pkg_kwargs = dict(
-        model_id=md.model_id,
-        base_checkpoint=md.base_model,
-        max_input_tokens=md.packaging.max_input_tokens,
-        expected_latency_ms=md.packaging.expected_latency_ms,
-        version=ver,
-    )
-    prompt_spec = md.resolve(md.data["prompt_spec"]) if md.data.get("prompt_spec") else None
-    schema = md.resolve(md.data["schema"]) if md.data.get("schema") else None
-    contracts = md.resolve(md.data["contracts"]) if md.data.get("contracts") else None
-    if md.task == "jcl_validation":
-        from .packaging.package_model import package_jcl
-        result = package_jcl(
-            ckpt,
-            dist_dir,
-            prompt_spec_path=prompt_spec,
-            schema_path=schema,
-            contracts_path=contracts,
-            weights_dtype=md.packaging.weights_dtype,
-            **pkg_kwargs,
-        )
-    elif md.task == "spool_interpretation":
-        from .packaging.package_model import package_spool
-        result = package_spool(
-            ckpt,
-            dist_dir,
-            prompt_spec_path=prompt_spec,
-            schema_path=schema,
-            contracts_path=contracts,
-            weights_dtype=md.packaging.weights_dtype,
-            **pkg_kwargs,
-        )
-    elif md.task == "flow_graph_generation":
-        from .packaging.package_model import package_flow_graph
-        result = package_flow_graph(
-            ckpt,
-            dist_dir,
-            prompt_spec_path=prompt_spec,
-            schema_path=schema,
-            contracts_path=contracts,
-            weights_dtype=md.packaging.weights_dtype,
-            **pkg_kwargs,
-        )
-    else:
-        raise typer.BadParameter(f"Unknown task: {md.task}")
-    console.print(f"[green]packaged[/] dir={result.pkg_dir} fm={result.fm_path}")
-
-
-@app.command("verify")
-def cmd_verify(
-    pkg: Path = typer.Argument(..., exists=True, help="Either an unpacked package directory or a .fm archive"),
-) -> None:
-    """Reload the package via transformers and run a one-shot forward pass."""
-    from .packaging.package_model import verify_package
-    result = verify_package(pkg)
-    if result.ok:
-        console.print(f"[green]verify ok[/] pkg={pkg}")
-        return
-    console.print(f"[red]verify failed[/] pkg={pkg}")
-    for f, ok in result.checked_files.items():
-        marker = "OK" if ok else "BAD"
-        console.print(f"  [{marker}] {f}")
-    for issue in result.issues:
-        console.print(f"  - {issue}")
-    raise typer.Exit(code=1)
-
-
 @app.command("plan")
 def cmd_plan(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
@@ -252,7 +170,6 @@ def cmd_plan(
     console.print(f"2. flow_ml train {md.model_dir} --smoke")
     console.print(f"3. flow_ml train {md.model_dir}")
     console.print(f"4. flow_ml evaluate {md.model_dir}")
-    console.print(f"5. flow_ml package {md.model_dir} --version {md.version}")
 
 
 def main() -> None:

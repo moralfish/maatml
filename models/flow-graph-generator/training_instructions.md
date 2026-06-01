@@ -694,7 +694,7 @@ merged/qwen3_1_7b_flow/
 reports/eval_report.md
 ```
 
-The final runtime artifact should be safetensors-based, not GGUF, because the target runtime is Rust with Candle.
+The trained artifact is a merged safetensors checkpoint; converting it into a Hub artifact (GGUF / safetensors) is future work.
 
 ---
 
@@ -758,7 +758,7 @@ Follow this sequence:
 11. Train the internal Qwen3-1.7B model.
 12. Merge the LoRA adapter into the base model.
 13. Export merged safetensors.
-14. Hand the merged model folder to the Candle runtime.
+14. Export the merged safetensors checkpoint (Hub export is future work).
 15. Train Qwen3-4B-Instruct-2507 only if the 1.7B model misses quality targets.
 16. Compare against Qwen2.5-Coder-3B-Instruct as a code-specialized benchmark.
 17. Use Qwen2.5-Coder-7B-Instruct only as a higher-quality benchmark after the smaller models are evaluated.
@@ -788,7 +788,7 @@ LoRA or QLoRA supervised fine-tuning
 Export:
 
 ```text
-Merged safetensors model for Rust/Candle inference
+Merged safetensors checkpoint
 ```
 
 Move to Qwen3-4B-Instruct-2507 only if the 1.7B model fails to meet semantic accuracy, ambiguity handling, or safe refusal targets.

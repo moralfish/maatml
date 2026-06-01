@@ -3,7 +3,7 @@
 #
 # Task: flow_graph_generation
 # Runtime: candle (CandleGenerativeBackend in flow-studio's flow-model-runtime)
-# Spec:    docs/flow_inference_model_training_instructions.md
+# Spec:    training_instructions.md (this folder)
 #
 # Cross-platform target: Mac / Windows / Linux with 16 GB RAM minimum.
 # Qwen3-1.7B at fp16 packs to ~3.4 GB on disk and ~4-5 GB total runtime
@@ -51,8 +51,8 @@ data:
 #   - learning_rate 2e-4: doc-recommended for Qwen3-1.7B + LoRA r=16.
 #   - epochs 4: SFT on a structured-output task converges quickly; 4 is
 #     enough headroom to hit the safety-refusal bar without overfitting.
-#   - target_modules attention-only: matches agent-planner's 4B precedent
-#     and the doc's recommendation.
+#   - target_modules attention-only: the doc's recommendation for
+#     Qwen3-1.7B + LoRA r=16.
 training:
   model_id: Qwen/Qwen3-1.7B
   max_input_tokens: 4096

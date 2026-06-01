@@ -7,7 +7,7 @@ Authoritative spec: [`training_instructions.md`](training_instructions.md).
 ## Targets
 
 - **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
-- **Final artefact**: merged safetensors loaded by `flow-model-runtime` (Candle).
+- **Final artefact**: merged safetensors checkpoint (Hub export is future work).
 - **Disk footprint**: ~3.4 GB at fp16. Same envelope as FlowGraphGenerator + JCL Validator.
 
 ## Output shape
@@ -52,7 +52,6 @@ flow_ml prepare  models/spool-interpreter/
 flow_ml train    models/spool-interpreter/ --smoke
 flow_ml train    models/spool-interpreter/
 flow_ml evaluate models/spool-interpreter/
-flow_ml package  models/spool-interpreter/ --version v0.1
 ```
 
 Expand the seed corpus by hand-authoring rows in

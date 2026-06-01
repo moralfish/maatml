@@ -2,13 +2,13 @@
 
 LoRA-tuned `Qwen/Qwen3-1.7B` that converts natural-language workflow requests into Flow Graph JSON proposals matching `FlowGraphDto` in flow-studio. Pure SFT on 3-message conversations (system, user, assistant). No tool calling, no agent loop. The model emits proposals only — flow-studio validates and decides whether to execute.
 
-Authoritative spec: [`../../docs/flow_inference_model_training_instructions.md`](../../docs/flow_inference_model_training_instructions.md).
+Authoritative spec: [`training_instructions.md`](training_instructions.md).
 
 ## Targets
 
 - **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
-- **Final artefact**: merged safetensors loaded by `flow-model-runtime` (Candle backend in flow-studio).
-- **Disk footprint**: ~3.4 GB at fp16. Comfortably under the 5 GB `.fm` archive cap and the 16 GB RAM target on every supported OS.
+- **Final artefact**: merged safetensors checkpoint (Hub export is future work).
+- **Disk footprint**: ~3.4 GB at fp16. Comfortably under the 16 GB RAM target on every supported OS.
 
 ## Layout
 
@@ -32,7 +32,6 @@ models/flow-graph-generator/
 flow_ml prepare  models/flow-graph-generator/         # split seeds into train/val/test
 flow_ml train    models/flow-graph-generator/         # LoRA fine-tune on Qwen3-1.7B
 flow_ml evaluate models/flow-graph-generator/         # 7-layer validation + 8 metrics
-flow_ml package  models/flow-graph-generator/ --version v0.1
 ```
 
 ## Bounded vocabulary (v1)
@@ -80,7 +79,7 @@ Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.jso
 - Training configuration
 - Evaluation results against the 8 quality gates
 - Known limitations
-- Runtime compatibility notes (Candle + Mac/CUDA/CPU)
+- Runtime compatibility notes (Mac/CUDA/CPU)
 
 ## Schema sync
 

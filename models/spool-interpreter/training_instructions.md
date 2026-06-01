@@ -242,21 +242,13 @@ truncated / noisy spool fragments.
 
 ## 18. Artifact requirements
 
-Package contents (per `package_spool` in `packaging/package_model.py`):
-
-```
-spool-interpreter-v1/
-├── manifest.json                       # architecture: candle_t5_seq2seq
-├── model.safetensors                   # flan-t5-base encoder+decoder merged
-├── config.json                         # T5 architecture
-├── tokenizer.json                      # SentencePiece tokenizer (fast)
-├── spiece.model                        # SentencePiece model (if not embedded)
-├── prompt_spec.json                    # task marker + system message
-├── spool_interpretation_schema.json    # output JSON schema (v2 with new fields)
-└── node_contracts.json                 # bounded vocab + related-docs catalog
-```
-
-Manifest `architecture` field: `candle_t5_seq2seq`.
+Training produces a checkpoint under `output/checkpoints/<run-name>/`:
+`model.safetensors` (flan-t5-base encoder+decoder), `config.json`, the
+SentencePiece `tokenizer.json` (+ `spiece.model` if not embedded),
+`prompt_spec.json`, plus the committed `spool_interpretation_schema.json`
+(v2 fields) and `node_contracts.json`. Converting the checkpoint into a Hub
+artifact (GGUF / safetensors) is future work — the in-process Candle packaging
+path has been removed.
 
 ## 19. Versioning
 
@@ -269,9 +261,6 @@ Success criteria for the first end-to-end run:
 - Training completes without OOM / NaN gradients.
 - `eval_loss` < 1.0 at end of training.
 - All eval gates in §15 met on the test split.
-- `.fm` package ≤700 MB (fp16).
-- Round-trip inference test in flow-studio's `T5Seq2SeqBackend` produces
-  the same JSON shape the v1 SFT model emitted (with the two new fields).
 
 ## 21. Recommended sequence
 
@@ -287,7 +276,4 @@ flow_ml train models/spool-interpreter/          # ~30 min on M5 Max
 
 # 3. Evaluate.
 flow_ml evaluate models/spool-interpreter/
-
-# 4. Package + install into flow-studio.
-flow_ml package models/spool-interpreter/ --version v1
 ```

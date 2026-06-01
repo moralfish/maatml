@@ -1,6 +1,6 @@
 """Out-of-model 7-layer validator for FlowGraphGenerator output.
 
-Per docs/flow_inference_model_training_instructions.md §13:
+Per models/flow-graph-generator/training_instructions.md:
 
   1. JSON parse                     — text → dict
   2. JSON schema                    — dict matches FlowGraphDto JSON Schema
