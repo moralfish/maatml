@@ -24,75 +24,63 @@ def normalize_architecture(architecture: str) -> str:
 
 
 def _training_defaults(architecture: str) -> dict[str, Any]:
-    """Best-effort defaults from typed trainer configs."""
+    """Best-effort defaults mirrored from trainer configs (no ML imports)."""
     arch = normalize_architecture(architecture)
     if arch == "causal_sft":
-        from .training.sft_base import SFTTrainConfig
-
-        cfg = SFTTrainConfig()
         return {
-            "model_id": cfg.model_id,
-            "max_input_tokens": cfg.max_input_tokens,
-            "batch_size": cfg.batch_size,
-            "grad_accum": cfg.grad_accum,
-            "learning_rate": cfg.learning_rate,
-            "epochs": cfg.epochs,
-            "weight_decay": cfg.weight_decay,
-            "warmup_ratio": cfg.warmup_ratio,
-            "seed": cfg.seed,
-            "precision": cfg.precision,
-            "grad_checkpointing": cfg.grad_checkpointing,
-            "eval_steps": cfg.eval_steps,
-            "save_steps": cfg.save_steps,
-            "logging_steps": cfg.logging_steps,
-            "max_steps": cfg.max_steps,
+            "model_id": "Qwen/Qwen3-1.7B",
+            "max_input_tokens": 4096,
+            "batch_size": 2,
+            "grad_accum": 8,
+            "learning_rate": 1e-4,
+            "epochs": 4.0,
+            "weight_decay": 0.01,
+            "warmup_ratio": 0.05,
+            "seed": 7331,
+            "precision": "bf16",
+            "grad_checkpointing": False,
+            "eval_steps": 9999,
+            "save_steps": 200,
+            "logging_steps": 20,
+            "max_steps": -1,
         }
     if arch == "seq2seq":
-        from .training.spool_seq2seq import SpoolSeq2SeqConfig
-
-        seq_cfg = SpoolSeq2SeqConfig()
         return {
-            "model_id": seq_cfg.model_id,
-            "source_max_len": seq_cfg.source_max_len,
-            "target_max_len": seq_cfg.target_max_len,
-            "batch_size": seq_cfg.batch_size,
-            "grad_accum": seq_cfg.grad_accum,
-            "learning_rate": seq_cfg.learning_rate,
-            "epochs": seq_cfg.epochs,
-            "weight_decay": seq_cfg.weight_decay,
-            "warmup_ratio": seq_cfg.warmup_ratio,
-            "seed": seq_cfg.seed,
-            "precision": seq_cfg.precision,
-            "grad_checkpointing": seq_cfg.grad_checkpointing,
-            "eval_steps": seq_cfg.eval_steps,
-            "save_steps": seq_cfg.save_steps,
-            "logging_steps": seq_cfg.logging_steps,
-            "max_steps": seq_cfg.max_steps,
-            "generation": {
-                "num_beams": seq_cfg.generation.num_beams,
-                "max_new_tokens": seq_cfg.generation.max_new_tokens,
-            },
+            "model_id": "google/flan-t5-base",
+            "source_max_len": 1024,
+            "target_max_len": 512,
+            "batch_size": 8,
+            "grad_accum": 2,
+            "learning_rate": 3.0e-5,
+            "epochs": 6,
+            "weight_decay": 0.01,
+            "warmup_ratio": 0.06,
+            "seed": 1337,
+            "precision": "bf16",
+            "grad_checkpointing": False,
+            "eval_steps": 9999,
+            "save_steps": 250,
+            "logging_steps": 25,
+            "max_steps": -1,
+            "generation": {"num_beams": 1, "max_new_tokens": 512},
         }
     if arch == "multi_head_classifier":
-        from .training.jcl_classifier import JclClassifierConfig
-
-        clf_cfg = JclClassifierConfig()
         return {
-            "model_id": clf_cfg.model_id,
-            "max_input_tokens": clf_cfg.max_input_tokens,
-            "batch_size": clf_cfg.batch_size,
-            "grad_accum": clf_cfg.grad_accum,
-            "learning_rate": clf_cfg.learning_rate,
-            "epochs": clf_cfg.epochs,
-            "weight_decay": clf_cfg.weight_decay,
-            "warmup_ratio": clf_cfg.warmup_ratio,
-            "seed": clf_cfg.seed,
-            "precision": clf_cfg.precision,
-            "grad_checkpointing": clf_cfg.grad_checkpointing,
-            "eval_steps": clf_cfg.eval_steps,
-            "save_steps": clf_cfg.save_steps,
-            "logging_steps": clf_cfg.logging_steps,
-            "max_steps": clf_cfg.max_steps,
+            "model_id": "answerdotai/ModernBERT-base",
+            "max_input_tokens": 2048,
+            "batch_size": 16,
+            "grad_accum": 1,
+            "learning_rate": 2.0e-5,
+            "epochs": 4,
+            "weight_decay": 0.01,
+            "warmup_ratio": 0.06,
+            "seed": 1337,
+            "precision": "bf16",
+            "grad_checkpointing": False,
+            "eval_steps": 9999,
+            "save_steps": 250,
+            "logging_steps": 25,
+            "max_steps": -1,
         }
     return {
         "model_id": "CHANGE_ME",

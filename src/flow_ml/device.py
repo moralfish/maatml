@@ -3,14 +3,15 @@
 Apple Silicon / MPS has historically needed conservative settings (no mid-train
 eval, zero dataloader workers, no grad checkpointing, fp32 master weights).
 CUDA can run more aggressively; CPU sits in between.
+
+Torch is imported lazily so CPU-only installs (``pip install flow-ml`` without
+the ``[ml]`` extra) can still import this module for CLI plugins / validate.
 """
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Union
-
-import torch
+from typing import Any, Union
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class DeviceProfile:
 
     def empty_cache(self) -> None:
         """Release allocator caches when the backend supports it."""
+        torch = _torch()
         if self.name == "mps" and hasattr(torch, "mps"):
             try:
                 torch.mps.empty_cache()
@@ -62,8 +64,19 @@ _PROFILES: dict[str, DeviceProfile] = {
 }
 
 
-def resolve_device(device: str) -> torch.device:
+def _torch() -> Any:
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - exercised by wheel smoke
+        raise ImportError(
+            "torch is required for device resolution; install flow-ml[ml]"
+        ) from exc
+    return torch
+
+
+def resolve_device(device: str) -> Any:
     """Map ``auto|mps|cpu|cuda|<torch device str>`` to a ``torch.device``."""
+    torch = _torch()
     if device == "cpu":
         return torch.device("cpu")
     if device == "mps":
@@ -79,7 +92,7 @@ def resolve_device(device: str) -> torch.device:
     return torch.device(device)
 
 
-def get_profile(device: Union[torch.device, str]) -> DeviceProfile:
+def get_profile(device: Union[Any, str]) -> DeviceProfile:
     """Return the training profile for a device (or device type / ``auto``)."""
     if isinstance(device, str):
         if device in _PROFILES:

@@ -1,0 +1,12 @@
+title = "flow-ml"
+
+[allowlist]
+paths = [
+  '''(?i)\.venv''',
+  '''(?i)\.mypy_cache''',
+  '''(?i)\.git''',
+  '''(?i)dist/''',
+  '''(?i).*\.egg-info''',
+  '''(?i)__pycache__''',
+  '''(?i)build/''',
+]

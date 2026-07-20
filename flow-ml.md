@@ -72,5 +72,4 @@ src/flow_ml/
 .venv/bin/python -m pytest tests/
 ```
 
-See [README.md](README.md) for install and CLI details, and
-[docs/GO_PUBLIC.md](docs/GO_PUBLIC.md) for the public-release checklist.
+See [README.md](README.md) for install and CLI details.

@@ -81,10 +81,10 @@ New in v2:
 From `models/spool-interpreter/datasets/node_contracts.json`:
 
 - `status_values`: `["completed", "failed", "abended", "skipped", "running"]`
-- `failure_categories`: 12 values (dataset/allocation/permission/jcl-syntax/
-  utility-parameter/execution-abend/scheduler/other + 4 smart-restart variants)
-- `related_docs_catalog` (new in v2): per-category doc-key suggestions the
-  seed builder draws from.
+- `failure_categories`: 8 values (dataset/allocation/permission/jcl-syntax/
+  utility-parameter/execution-abend/scheduler/other)
+- `related_docs_catalog`: per-category doc-key suggestions the seed builder
+  draws from.
 
 `returnCode` is free-text (MVS codes like `S0C7`, `RC=08`) so it has no
 bounded enum.

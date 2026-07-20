@@ -29,3 +29,6 @@ models/*/datasets/samples/*.parquet
 .vscode/
 /.idea/
 /.codesight/
+
+# Maintainer-only (local) release checklist — do not publish
+docs/GO_PUBLIC.md

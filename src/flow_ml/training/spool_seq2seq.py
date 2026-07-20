@@ -17,7 +17,6 @@ from typing import Optional
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..device import get_profile, resolve_device
-from ..registry import register_trainer
 from ..utils.io import iter_jsonl
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 
@@ -282,7 +281,6 @@ def _train_loop(
     )
 
 
-@register_trainer("seq2seq")
 def train_spool_seq2seq(
     model_def: ModelDefinition,
     *,

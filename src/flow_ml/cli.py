@@ -239,6 +239,7 @@ def cmd_plan(
 def cmd_plugins() -> None:
     """List registered trainers, validators, metrics, formats, and predictors."""
     discover_plugins()
+    # Import submodule directly so listing plugins does not require torch.
     from .evaluation import predictors as _predictors  # noqa: F401
 
     for kind, entries in list_all_plugins().items():

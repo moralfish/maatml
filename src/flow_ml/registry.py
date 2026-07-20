@@ -193,9 +193,7 @@ def discover_plugins(*, force: bool = False) -> None:
         "flow_ml.contrib.jcl",
         "flow_ml.contrib.spool",
         "flow_ml.contrib",
-        "flow_ml.training.sft_base",
-        "flow_ml.training.jcl_classifier",
-        "flow_ml.training.spool_seq2seq",
+        "flow_ml.training.builtins",
         "flow_ml.data.pipeline",
         "flow_ml.evaluation.predictors",
     )

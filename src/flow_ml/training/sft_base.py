@@ -48,7 +48,6 @@ from transformers import (
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..device import get_profile, resolve_device
-from ..registry import register_trainer
 from ..utils.io import iter_jsonl, read_json
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 
@@ -311,7 +310,6 @@ def _maybe_attach_lora(model, lora: LoraSettings):
 # ---------------------------------------------------------------------------
 
 
-@register_trainer("causal_sft")
 def train_sft(
     model_def: ModelDefinition,
     *,

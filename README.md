@@ -126,7 +126,6 @@ tests/
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, PR expectations, DCO
 sign-off, and versioning policy. AI coding agents: [AGENTS.md](AGENTS.md).
-Public-release checklist: [docs/GO_PUBLIC.md](docs/GO_PUBLIC.md).
 
 Community: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · Security:
 [SECURITY.md](SECURITY.md) · Changes: [CHANGELOG.md](CHANGELOG.md)

@@ -23,7 +23,6 @@ from typing import Any, Optional
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..device import get_profile, resolve_device
-from ..registry import register_trainer
 from ..utils.io import iter_jsonl
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 
@@ -421,8 +420,6 @@ def _train_loop(
     )
 
 
-@register_trainer("multi_head_classifier")
-@register_trainer("classifier")
 def train_jcl_classifier(
     model_def: ModelDefinition,
     *,
