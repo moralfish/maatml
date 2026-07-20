@@ -1,14 +1,16 @@
 # Spool Interpreter
 
-LoRA-tuned `Qwen/Qwen3-1.7B` that reads sanitized z/OS spool output and emits a structured `SpoolInterpretation` JSON object. Pure SFT on 3-message conversations. Replaces the legacy SmolLM2-360M baseline — same task, much sharper categorisation and confidence calibration.
+flan-t5-base seq2seq model that reads sanitized z/OS spool output and emits a
+structured `SpoolInterpretation` JSON object. Full fine-tune (no LoRA).
 
-Authoritative spec: [`training_instructions.md`](training_instructions.md).
+Version: **0.1.0** (`model.yml`). Bump major for breaking output-schema changes,
+minor for retrain/data/config changes, patch for metadata-only edits.
 
 ## Targets
 
 - **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
-- **Final artefact**: merged safetensors checkpoint (Hub export is future work).
-- **Disk footprint**: ~3.4 GB at fp16. Same envelope as FlowGraphGenerator + JCL Validator.
+- **Final artefact**: safetensors checkpoint.
+- **Disk footprint**: ~600 MB at fp16.
 
 ## Output shape
 
@@ -19,30 +21,35 @@ Authoritative spec: [`training_instructions.md`](training_instructions.md).
   "returnCode": null,
   "rootCause": "Data exception (S0C7) reading numeric field with invalid packed-decimal data in INFILE record 17.",
   "suggestedFix": "Validate INFILE before submission; clean or reject record 17.",
+  "explanation": "STEP02 failed with S0C7 while reading INFILE. Record 17 contained invalid packed-decimal data in a numeric field.",
+  "relatedDocs": ["s0c7-data-exception"],
   "failureCategory": "execution_abend",
   "confidence": 0.91
 }
 ```
 
 `status` is one of: `completed`, `failed`, `abended`, `skipped`, `running`.
-`failureCategory` is one of 12 enum values (incl. 4 Smart/RESTART subcategories) or `null` on `status: completed`.
+`failureCategory` is one of 8 enum values (see `node_contracts.json`)
+or `null` on `status: completed`. `explanation` must be non-empty when
+`status != "completed"`; `relatedDocs` is a list of doc keys.
 
-Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json) and the JSON Schema at [`datasets/spool_interpretation_schema.json`](datasets/spool_interpretation_schema.json).
+Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json)
+and the JSON Schema at
+[`datasets/spool_interpretation_schema.json`](datasets/spool_interpretation_schema.json).
 
 ## Layout
 
 ```
 models/spool-interpreter/
 ├── README.md
-├── training_instructions.md
 ├── model.yml
 └── datasets/
     ├── prompt_spec.json
     ├── spool_interpretation_schema.json
     ├── node_contracts.json
     └── samples/
-        ├── seed_samples.jsonl       (39 hand-authored; expand by hand-authoring more rows)
-        └── test_prompt_set.jsonl    (8 fixed eval anchors)
+        ├── seed_samples.jsonl
+        └── test_prompt_set.jsonl
 ```
 
 ## Workflow
@@ -57,7 +64,8 @@ flow_ml evaluate models/spool-interpreter/
 Expand the seed corpus by hand-authoring rows in
 `datasets/samples/seed_samples.jsonl` (each row:
 `{sample_id, source, category, request, expected_interpretation, split?}`)
-and re-running `flow_ml prepare` before training.
+and re-running `flow_ml prepare` before training — or regenerate via
+`scripts/build_spool_seeds.py`.
 
 ## Quality gates
 
@@ -68,7 +76,5 @@ and re-running `flow_ml prepare` before training.
 | `status_accuracy` | ≥ 0.90 |
 | `failure_category_accuracy` | ≥ 0.80 |
 | `return_code_accuracy` | ≥ 0.85 (when present) |
-
-## Smart/RESTART knowledge sync
-
-The 4 Smart/RESTART subcategories (resource_unavailable, configuration, application_logic, input_syntax) come from `../flow-studio/docs/smart-restart/messages.md`. Re-sync via [`scripts/sync-smart-restart-knowledge.sh`](../../scripts/sync-smart-restart-knowledge.sh) when that source updates.
+| `explanation_present_rate` | ≥ 0.95 (when status ≠ completed) |
+| `related_docs_coverage_rate` | ≥ 0.90 |

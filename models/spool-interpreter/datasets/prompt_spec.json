@@ -1,15 +1,27 @@
 {
   "_provenance": {
-    "source": "Hand-authored. Mirrors the FlowGraphGenerator template; task-specific to spool interpretation. Smart/RESTART category knowledge synced from flow-studio/docs/smart-restart/messages.md by scripts/sync-smart-restart-knowledge.sh.",
+    "source": "Hand-authored spool-interpretation prompt and failure-category list.",
     "schema_version": "1"
   },
   "schema_version": "1",
   "base_model": "Qwen/Qwen3-1.7B",
-  "system": "You are SpoolInterpreter. Read the user-supplied z/OS spool output and emit a SpoolInterpretation JSON object. Return JSON only — no markdown, no commentary, no code fences.\n\nOutput shape:\n{ summary, status, returnCode?, rootCause, suggestedFix, failureCategory?, confidence }\n\nRules:\n- `status` is one of: completed, failed, abended, skipped, running.\n- `returnCode` is the literal z/OS return code as a 4-char string (e.g. \"0000\", \"0008\", \"012C\"), or null if the spool didn't print one.\n- `summary`, `rootCause`, `suggestedFix` are short, human-readable, non-empty strings.\n- `failureCategory` is one of: dataset_resolution_failure, allocation_failure, permission_or_security_failure, jcl_syntax_failure, utility_parameter_failure, execution_abend, scheduler_or_environment_issue, other, smart_restart_resource_unavailable, smart_restart_configuration, smart_restart_application_logic, smart_restart_input_syntax. Set to null on `status: completed` (no failure to categorise).\n- `confidence` is a float in [0.0, 1.0]. 0.9+ when the spool clearly indicates the cause; 0.7-0.9 on plausible reads; <0.7 when the spool is ambiguous or truncated.\n\nNever invent failure categories outside the list. Never explain the result outside the JSON.\n\nReturn JSON only.",
+  "system": "You are SpoolInterpreter. Read the user-supplied z/OS spool output and emit a SpoolInterpretation JSON object. Return JSON only — no markdown, no commentary, no code fences.\n\nOutput shape:\n{ summary, status, returnCode?, rootCause, suggestedFix, failureCategory?, confidence }\n\nRules:\n- `status` is one of: completed, failed, abended, skipped, running.\n- `returnCode` is the literal z/OS return code as a 4-char string (e.g. \"0000\", \"0008\", \"012C\"), or null if the spool didn't print one.\n- `summary`, `rootCause`, `suggestedFix` are short, human-readable, non-empty strings.\n- `failureCategory` is one of: dataset_resolution_failure, allocation_failure, permission_or_security_failure, jcl_syntax_failure, utility_parameter_failure, execution_abend, scheduler_or_environment_issue, other. Set to null on `status: completed` (no failure to categorise).\n- `confidence` is a float in [0.0, 1.0]. 0.9+ when the spool clearly indicates the cause; 0.7-0.9 on plausible reads; <0.7 when the spool is ambiguous or truncated.\n\nNever invent failure categories outside the list. Never explain the result outside the JSON.\n\nReturn JSON only.",
   "user_template": "<<USER_REQUEST>>",
-  "response_schema": { "$ref": "datasets/spool_interpretation_schema.json" },
-  "stop": ["<|im_end|>"],
+  "response_schema": {
+    "$ref": "datasets/spool_interpretation_schema.json"
+  },
+  "stop": [
+    "<|im_end|>"
+  ],
   "max_new_tokens": 768,
   "temperature": 0.0,
-  "json_keys_order": ["summary", "status", "returnCode", "rootCause", "suggestedFix", "failureCategory", "confidence"]
+  "json_keys_order": [
+    "summary",
+    "status",
+    "returnCode",
+    "rootCause",
+    "suggestedFix",
+    "failureCategory",
+    "confidence"
+  ]
 }

@@ -1,11 +1,9 @@
 # JCL column rules — normative spec for the custom pre-tokenizer
 
-This document is the spec **both** `flow_ml.tokenization.jcl_tokenizer`
-(Python, training-time) and flow-studio's
-`crates/flow-model-runtime/src/backends/bert_classifier.rs` (Rust,
-inference-time) must implement identically. A fixture-based round-trip
-test in the Rust backend asserts byte-identical output on ~20 hand-authored
-JCL strings.
+This document is the normative spec for `flow_ml.tokenization.jcl_tokenizer`
+(Python, training-time). Downstream inference runtimes that need column-aware
+JCL tokenization should match this behaviour. Fixture-based tests under
+`tokenization/fixtures/` lock the expected output on hand-authored JCL strings.
 
 ## Goal
 
@@ -84,9 +82,8 @@ last line is optional; the pre-tokenizer doesn't enforce.
 
 ### Rule 7: encoding
 
-Input is decoded as UTF-8 by both implementations. Non-UTF-8 bytes raise
-an error in Python (`UnicodeDecodeError`) and `InferenceError::Backend`
-in Rust. JCL is conventionally ASCII; non-ASCII content is treated as
+Input is decoded as UTF-8. Non-UTF-8 bytes raise `UnicodeDecodeError` in
+Python. JCL is conventionally ASCII; non-ASCII content is treated as
 suspicious and surfaced via the error path.
 
 ## Special tokens
@@ -100,9 +97,8 @@ suspicious and surfaced via the error path.
 | `<CLS>` | BERT CLS token | reserved |
 | `<SEP>` | BERT SEP token | reserved |
 
-Special tokens are added to the BPE vocab via the
-`tokenizers::AddedToken` API in Python; the Rust side enumerates them by
-the same names.
+Special tokens are added to the BPE vocab via the Hugging Face
+`tokenizers.AddedToken` API.
 
 ## Pseudocode
 
@@ -123,11 +119,9 @@ def pre_tokenize(text: str) -> str:
     return "\n".join(out_lines)
 ```
 
-The Rust impl mirrors this byte-for-byte.
-
 ## Fixture set
 
-`/Users/nedal/TECH/FLOW/flow-ml/src/flow_ml/tokenization/fixtures/jcl_pretokenize_fixtures.json`
-holds ~20 input/expected pairs. Both Python tests and the Rust backend's
-unit tests load this file and assert identical output. Adding a new edge
-case means appending one fixture; the implementations stay locked.
+`src/flow_ml/tokenization/fixtures/jcl_pretokenize_fixtures.json`
+holds ~20 input/expected pairs. Python tests load this file and assert
+identical output. Adding a new edge case means appending one fixture;
+downstream pre-tokenizers should match the same contract.

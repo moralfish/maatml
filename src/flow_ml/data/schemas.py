@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -32,14 +32,6 @@ class FailureCategory(str, Enum):
     execution_abend = "execution_abend"
     scheduler_or_environment_issue = "scheduler_or_environment_issue"
     other = "other"
-    # Smart/RESTART and Smart/RRSAF specific buckets. Sourced from
-    # `flow-studio/docs/smart-restart/messages.md`. Synced into the
-    # spool-interpreter `prompt_spec.json` `failure_categories` array via
-    # `flow-ml/scripts/sync-smart-restart-knowledge.sh`.
-    smart_restart_resource_unavailable = "smart_restart_resource_unavailable"
-    smart_restart_configuration = "smart_restart_configuration"
-    smart_restart_application_logic = "smart_restart_application_logic"
-    smart_restart_input_syntax = "smart_restart_input_syntax"
 
 
 class Split(str, Enum):
@@ -84,12 +76,13 @@ class JclSample(BaseModel):
     request: str
     expected_validation_result: JclValidationResult
     split: Split
+    family: Optional[str] = None
 
 
 class SpoolInterpretation(BaseModel):
     """Runtime response shape for the Spool Interpreter.
 
-    v2 adds `explanation` (2-4 sentence narrative, distinct from `summary`)
+    Includes `explanation` (2-4 sentence narrative, distinct from `summary`)
     and `relatedDocs` (doc-key array per failure category). Both are
     optional at the schema level — the validator (layers 7-8) enforces
     `explanation` non-empty when `status != "completed"`.
@@ -129,88 +122,4 @@ class SpoolSample(BaseModel):
     request: str
     expected_interpretation: SpoolInterpretation
     split: Split
-
-
-# ---------------------------------------------------------------------------
-# FlowGraphGenerator (mirrors flow-studio's apps/shared-types/src/graph.ts)
-# ---------------------------------------------------------------------------
-
-NodeKind = Literal["action", "ai", "cloud_ai", "utility"]
-EdgeOutcome = Literal["pass", "fail", "always"]
-
-
-class Position(BaseModel):
-    """react-flow node position. flow-studio re-lays out on import; the model
-    can use a simple grid (e.g. step k → x=k*200, y=100)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    x: float
-    y: float
-
-
-class FlowNodeDto(BaseModel):
-    """Mirror of `FlowNodeDto` in flow-studio/apps/shared-types/src/graph.ts.
-
-    `data` is polymorphic by `type`: action carries adapter+actionId+payload,
-    ai carries modelId, cloud_ai carries provider+modelId+prompt, utility
-    carries actionId. Validation of per-kind required fields lives in
-    `flow_ml.validation.flow_graph_validator` (layer 5).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1)
-    type: NodeKind
-    position: Position
-    data: dict[str, Any]
-
-
-class FlowEdgeDto(BaseModel):
-    """Mirror of `FlowEdgeDto` in flow-studio. `outcome` defaults to `always`
-    when omitted. Edge ids follow `e-<source>-<outcome>-<target>` by
-    convention but are free-form strings for the validator."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1)
-    source: str = Field(min_length=1)
-    target: str = Field(min_length=1)
-    label: Optional[str] = None
-    condition: Optional[str] = None
-    outcome: Optional[EdgeOutcome] = None
-
-
-class FlowGraphProposal(BaseModel):
-    """Runtime response shape: the JSON object FlowGraphGenerator emits.
-    Mirrors `FlowGraphDto` plus a `warnings` array for the safety / ambiguity
-    surface that flow-studio's TS type didn't carry but the spec requires.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str = Field(min_length=1)
-    name: str
-    version: str
-    nodes: list[FlowNodeDto] = Field(default_factory=list)
-    edges: list[FlowEdgeDto] = Field(default_factory=list)
-    warnings: list[str] = Field(default_factory=list)
-
-
-class FlowGraphSample(BaseModel):
-    """Training sample for FlowGraphGenerator.
-
-    `request` is the user's natural-language ask. `expected_graph` is the
-    gold FlowGraphProposal (validated against the same schema as runtime
-    output). `category` tracks the §7 taxonomy (simple, conditional,
-    parallel, jcl-validation, ..., unsafe, repair) for stratified eval.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    sample_id: str
-    source: str
-    category: str
-    request: str
-    expected_graph: FlowGraphProposal
-    split: Split
+    family: Optional[str] = None

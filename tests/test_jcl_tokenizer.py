@@ -1,8 +1,8 @@
 """Fixture-driven tests for the JCL pre-tokenizer.
 
-The same `jcl_pretokenize_fixtures.json` file is consumed by flow-studio's
-Rust `BertClassifierBackend` unit tests to assert byte-identical output
-between the Python (training) and Rust (inference) implementations.
+Uses `jcl_pretokenize_fixtures.json` as the normative expected output for
+`pre_tokenize_jcl`. Downstream inference pre-tokenizers should match these
+fixtures byte-for-byte.
 """
 from __future__ import annotations
 

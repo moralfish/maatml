@@ -1,19 +1,18 @@
-# JCL Validator — Training Instructions (v2 classifier)
+# JCL Validator — Training Instructions
 
 ## 1. Purpose
 
 Pre-submission validation of JCL syntax, parameter completeness, and common
-error patterns. Emits a structured `JclValidationResult` JSON the runtime
-renders directly. Replaces the v1 generative-SFT pipeline (Qwen3-1.7B +
-LoRA) with a multi-head BERT classifier per the original architecture spec.
+error patterns. Emits a structured `JclValidationResult` JSON for downstream
+consumers. Architecture: multi-head BERT classifier.
 
-| | v1 (retired) | v2 (this doc) |
-|---|---|---|
-| Base | Qwen3-1.7B | ModernBERT-base (~150 MB) |
-| Method | LoRA SFT | Full fine-tune, multi-head |
-| Size | ~3.4 GB fp16 | ~150-200 MB fp16 |
-| Latency | ~1-2 s | <500 ms target |
-| Tokenizer | Qwen3 BPE | Custom JCL BPE with column-aware pre-tokenizer |
+| | Current |
+|---|---|
+| Base | ModernBERT-base (~150 MB) |
+| Method | Full fine-tune, multi-head |
+| Size | ~150-200 MB fp16 |
+| Latency | <500 ms target |
+| Tokenizer | Custom JCL BPE with column-aware pre-tokenizer |
 
 ## 2. Base model
 
@@ -175,9 +174,8 @@ Smoke overrides reduce to `epochs: 1, max_steps: 6, batch_size: 2`.
 ## 12. Training environment
 
 - Python 3.13, `transformers`, `safetensors`, `tokenizers`.
-- ModernBERT runs on `bert4rec`-style transformer attention; candle's
-  `models::bert` should load the merged safetensors without changes
-  (verify during the Phase 3 spike).
+- ModernBERT runs on standard BERT-style transformer attention; the
+  saved safetensors checkpoint loads with Hugging Face `AutoModel`.
 - Apple Silicon (MPS) primary target, CPU fallback via
   `PYTORCH_ENABLE_MPS_FALLBACK=1`.
 
@@ -194,10 +192,9 @@ Smoke overrides reduce to `epochs: 1, max_steps: 6, batch_size: 2`.
    (10,000+ samples via `build_jcl_seeds.py --target 10000`). Output:
    `tokenizer.json` shipped in the package.
 
-The pre-tokenizer is invoked **both** at training time (`JclDataset`)
-and at inference time (`BertClassifierBackend` in flow-studio
-re-implements the column rules). A fixture test on ~20 hand-authored
-JCL strings keeps the two implementations in lock-step.
+The pre-tokenizer is invoked at training time (`JclDataset`) and should be
+mirrored at inference by any consumer that tokenizes JCL the same way. A
+fixture test on ~20 hand-authored JCL strings locks the expected output.
 
 ## 14. Validation requirements
 
@@ -240,15 +237,13 @@ templates).
 Training produces a checkpoint under `output/checkpoints/<run-name>/`:
 `model.safetensors` (ModernBERT + 4 heads), `config.json`, the custom
 `tokenizer.json`, plus the committed `jcl_validation_schema.json` and
-`node_contracts.json` (bounded vocab + message templates). Converting the
-checkpoint into a Hub artifact (GGUF / safetensors) is future work — the
-in-process Candle packaging path has been removed.
+`node_contracts.json` (bounded vocab + message templates). Packaging/export
+of Hub-ready artifacts from checkpoints is future work.
 
 ## 19. Versioning
 
-`v1` is the first classifier release (the v1 generative model is retired).
-Subsequent retrains bump `v1.1`, `v1.2`, etc. via `model.yml`.
-
+Bump `version` in `model.yml` (semver) on each retrain that changes behaviour
+or schema. Checkpoint run names use `name@version`.
 ## 20. First training milestone
 
 Success criteria for the first end-to-end run:

@@ -39,7 +39,8 @@ def test_prepare_jcl_writes_splits(tmp_path: Path) -> None:
     mdir = _make_model_folder(
         tmp_path,
         """name: foo
-model_id: foo:v1
+model_id: foo
+version: 0.1.0
 task: jcl_validation
 data:
   seed: 7
@@ -72,7 +73,8 @@ def test_prepare_spool_writes_splits(tmp_path: Path) -> None:
     mdir = _make_model_folder(
         tmp_path,
         """name: foo
-model_id: foo:v1
+model_id: foo
+version: 0.1.0
 task: spool_interpretation
 data:
   seed: 11
@@ -84,8 +86,8 @@ data:
     )
     md = load_model_def(mdir)
     # Count seeds dynamically: this corpus has grown over time as new
-    # categories were added (Smart/RESTART pack, etc.). Pinning to a
-    # constant breaks every time the seed file is extended.
+    # categories were added. Pinning to a constant breaks every time the
+    # seed file is extended.
     seed_count = sum(
         1
         for line in (mdir / "datasets/samples/seed_samples.jsonl").read_text().splitlines()

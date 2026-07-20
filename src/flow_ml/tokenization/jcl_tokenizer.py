@@ -1,7 +1,6 @@
-"""Custom JCL tokenizer for the v2 ModernBERT classifier.
+"""Custom JCL tokenizer for the ModernBERT classifier.
 
-Two stages — see `COLUMN_RULES.md` for the normative spec both this
-module and flow-studio's Rust `BertClassifierBackend` implement:
+Two stages — see `COLUMN_RULES.md` for the normative column-aware rules:
 
 1. `pre_tokenize_jcl(text)` — column-aware pre-tokenizer that strips
    columns 73+, emits `<COL1>` line-start markers, preserves continuation
@@ -133,7 +132,7 @@ def _cli(argv: list[str] | None = None) -> int:
         "--vocab-size", type=int, default=30_000, help="BPE vocab size (default 30000)."
     )
 
-    p_pre = sub.add_parser(
+    sub.add_parser(
         "pre-tokenize",
         help="Apply the column rules to a JCL string read from stdin.",
     )

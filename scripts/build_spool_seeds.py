@@ -1,6 +1,6 @@
 """Build the Spool Interpreter seed corpus deterministically.
 
-Produces a balanced corpus across the 13 categories defined in
+Produces a balanced corpus across the categories defined in
 `models/spool-interpreter/datasets/node_contracts.json`:
 
     completed
@@ -8,18 +8,15 @@ Produces a balanced corpus across the 13 categories defined in
     permission_or_security_failure    jcl_syntax_failure
     utility_parameter_failure         execution_abend
     scheduler_or_environment_issue    other
-    smart_restart_resource_unavailable    smart_restart_configuration
-    smart_restart_application_logic       smart_restart_input_syntax
 
 Each category has 2-4 spool message templates with parametric slots
 (dataset names, return codes, system codes, line numbers, …). Every
-generated sample is gated by the 6-layer `validate_spool_result` check
-before being written.
+generated sample is gated by the spool validator before being written.
 
 No API calls. Run anytime to regenerate or extend the corpus.
 
 Usage:
-    python scripts/build_spool_seeds.py             # default 500 samples
+    python scripts/build_spool_seeds.py             # default target
     python scripts/build_spool_seeds.py --target 800
     python scripts/build_spool_seeds.py --append    # keep existing rows
 """
@@ -29,7 +26,6 @@ import argparse
 import hashlib
 import json
 import random
-import re
 import sys
 from pathlib import Path
 
@@ -84,7 +80,7 @@ def _hash(*parts: object) -> str:
 
 def build_completed(rng: random.Random) -> tuple[str, dict]:
     job = _pick(rng, JOBNAMES)
-    jobid = _pick(rng, JOBIDS)
+    _pick(rng, JOBIDS)
     step = _pick(rng, STEPNAMES)
     rc = _pick(rng, RC_OK + RC_WARN)
     request = (
@@ -129,8 +125,8 @@ def build_dataset_resolution_failure(rng: random.Random) -> tuple[str, dict]:
             f"never created, or referenced under the wrong qualifier."
         ),
         "suggestedFix": (
-            f"Confirm the dataset name; if intentional, allocate it before "
-            f"this step or restore from backup."
+            "Confirm the dataset name; if intentional, allocate it before "
+            "this step or restore from backup."
         ),
         "failureCategory": "dataset_resolution_failure",
         "confidence": round(rng.uniform(0.88, 0.96), 2),
@@ -212,7 +208,7 @@ def build_permission_or_security_failure(rng: random.Random) -> tuple[str, dict]
 
 def build_jcl_syntax_failure(rng: random.Random) -> tuple[str, dict]:
     job = _pick(rng, JOBNAMES)
-    step = _pick(rng, STEPNAMES)
+    _pick(rng, STEPNAMES)
     rc = _pick(rng, ["000C", "0010", "0012"])
     bad_line = rng.randint(2, 8)
     variant = rng.choice(["unbalanced_paren", "unknown_keyword", "missing_pgm"])
@@ -403,113 +399,6 @@ def build_other(rng: random.Random) -> tuple[str, dict]:
     return request, interp
 
 
-# Smart Restart families — taken from flow-studio's Smart Restart taxonomy.
-
-
-def build_smart_restart_resource_unavailable(rng: random.Random) -> tuple[str, dict]:
-    job = _pick(rng, JOBNAMES)
-    step = _pick(rng, STEPNAMES)
-    rc = _pick(rng, RC_ERR)
-    res = rng.choice(["CICS region", "DB2 subsystem", "MQ queue manager", "external FTP server"])
-    request = (
-        f"$HASP373 {job}    STARTED\n"
-        f"SMART-RESTART  EVAL  STEP={step}\n"
-        f"SMART-RESTART  CATEGORY=resource_unavailable\n"
-        f"SMART-RESTART  DETAIL={res} not reachable; retry advised.\n"
-        f"IEF142I {job} {step}        - STEP WAS NOT EXECUTED - COND CODE {rc[-4:]}\n"
-        f"$HASP395 {job}    ENDED - RC={rc}\n"
-    )
-    interp = {
-        "summary": f"Smart Restart flagged step {step} as blocked by {res}.",
-        "status": "failed",
-        "returnCode": rc,
-        "rootCause": f"Required external resource ({res}) was unavailable at step start; not a code defect.",
-        "suggestedFix": f"Confirm {res} health, then resubmit; Smart Restart can re-drive the step automatically.",
-        "failureCategory": "smart_restart_resource_unavailable",
-        "confidence": round(rng.uniform(0.85, 0.93), 2),
-    }
-    return request, interp
-
-
-def build_smart_restart_configuration(rng: random.Random) -> tuple[str, dict]:
-    job = _pick(rng, JOBNAMES)
-    step = _pick(rng, STEPNAMES)
-    rc = _pick(rng, RC_ERR)
-    knob = rng.choice(["MAXCC", "DSN ALIAS", "STEPLIB PROTECT", "SYMBOLIC PARM"])
-    request = (
-        f"$HASP373 {job}    STARTED\n"
-        f"SMART-RESTART  EVAL  STEP={step}\n"
-        f"SMART-RESTART  CATEGORY=configuration\n"
-        f"SMART-RESTART  DETAIL={knob} setting in the deployed JCL contradicts the runtime catalog.\n"
-        f"IEF142I {job} {step}        - STEP WAS NOT EXECUTED - COND CODE {rc[-4:]}\n"
-        f"$HASP395 {job}    ENDED - RC={rc}\n"
-    )
-    interp = {
-        "summary": f"Smart Restart traced step {step} failure to a configuration mismatch ({knob}).",
-        "status": "failed",
-        "returnCode": rc,
-        "rootCause": f"The {knob} value baked into the JCL no longer matches the active catalog/runtime profile.",
-        "suggestedFix": f"Update the JCL or catalog so {knob} matches; redeploy and resubmit.",
-        "failureCategory": "smart_restart_configuration",
-        "confidence": round(rng.uniform(0.84, 0.93), 2),
-    }
-    return request, interp
-
-
-def build_smart_restart_application_logic(rng: random.Random) -> tuple[str, dict]:
-    job = _pick(rng, JOBNAMES)
-    step = _pick(rng, STEPNAMES)
-    rc = _pick(rng, RC_ERR)
-    detail = rng.choice([
-        "Cursor returned zero rows where the program asserts at least one.",
-        "COMPUTE result truncated past the receiving field's PIC clause.",
-        "Conditional branch reached an UNREACHABLE paragraph and EXIT'd with non-zero RC.",
-    ])
-    request = (
-        f"$HASP373 {job}    STARTED\n"
-        f"SMART-RESTART  EVAL  STEP={step}\n"
-        f"SMART-RESTART  CATEGORY=application_logic\n"
-        f"SMART-RESTART  DETAIL={detail}\n"
-        f"IEF142I {job} {step}        - STEP WAS EXECUTED - COND CODE {rc[-4:]}\n"
-        f"$HASP395 {job}    ENDED - RC={rc}\n"
-    )
-    interp = {
-        "summary": f"Smart Restart attributed step {step} failure to application logic.",
-        "status": "failed",
-        "returnCode": rc,
-        "rootCause": detail,
-        "suggestedFix": "Code change is required; Smart Restart will not auto-retry. Hand off to the application team.",
-        "failureCategory": "smart_restart_application_logic",
-        "confidence": round(rng.uniform(0.80, 0.91), 2),
-    }
-    return request, interp
-
-
-def build_smart_restart_input_syntax(rng: random.Random) -> tuple[str, dict]:
-    job = _pick(rng, JOBNAMES)
-    step = _pick(rng, STEPNAMES)
-    rc = _pick(rng, RC_ERR)
-    src = rng.choice(["control card", "SYSIN deck", "input file header", "PARM string"])
-    request = (
-        f"$HASP373 {job}    STARTED\n"
-        f"SMART-RESTART  EVAL  STEP={step}\n"
-        f"SMART-RESTART  CATEGORY=input_syntax\n"
-        f"SMART-RESTART  DETAIL={src} did not match the parser grammar; first divergent token highlighted.\n"
-        f"IEF142I {job} {step}        - STEP WAS EXECUTED - COND CODE {rc[-4:]}\n"
-        f"$HASP395 {job}    ENDED - RC={rc}\n"
-    )
-    interp = {
-        "summary": f"Smart Restart blamed step {step} on malformed {src}.",
-        "status": "failed",
-        "returnCode": rc,
-        "rootCause": f"The supplied {src} violates the program's expected grammar.",
-        "suggestedFix": f"Fix the {src}, validate against the spec, and resubmit.",
-        "failureCategory": "smart_restart_input_syntax",
-        "confidence": round(rng.uniform(0.82, 0.92), 2),
-    }
-    return request, interp
-
-
 CATEGORY_BUILDERS = {
     "completed": build_completed,
     "dataset_resolution_failure": build_dataset_resolution_failure,
@@ -520,21 +409,16 @@ CATEGORY_BUILDERS = {
     "execution_abend": build_execution_abend,
     "scheduler_or_environment_issue": build_scheduler_or_environment_issue,
     "other": build_other,
-    "smart_restart_resource_unavailable": build_smart_restart_resource_unavailable,
-    "smart_restart_configuration": build_smart_restart_configuration,
-    "smart_restart_application_logic": build_smart_restart_application_logic,
-    "smart_restart_input_syntax": build_smart_restart_input_syntax,
 }
 
 
-def _enrich_v2_fields(
+def _enrich_interp_fields(
     rng: random.Random,
     category: str,
     interp: dict,
     related_docs_catalog: dict[str, list[str]],
 ) -> None:
-    """Stamp v2-only fields (`explanation`, `relatedDocs`) onto an interp
-    record in place.
+    """Stamp `explanation` and `relatedDocs` onto an interp record in place.
 
     Narrative is composed deterministically from fields already present
     on the interp so it stays faithful to the synthetic spool: a 2-3
@@ -556,9 +440,9 @@ def _enrich_v2_fields(
     else:
         # 2-3 sentence narrative: situation → cause → fix.
         opener = rng.choice([
-            f"The job entered execution and progressed until the failure surfaced.",
-            f"Execution started normally and ran up to the point of failure.",
-            f"The step began processing and then halted on the condition described below.",
+            "The job entered execution and progressed until the failure surfaced.",
+            "Execution started normally and ran up to the point of failure.",
+            "The step began processing and then halted on the condition described below.",
         ])
         interp["explanation"] = (
             f"{opener} {root} {fix}"
@@ -573,9 +457,8 @@ def _enrich_v2_fields(
         interp["relatedDocs"] = rng.sample(pool, k)
 
 
-# Quotas tuned so common production failures dominate, Smart Restart
-# subcategories get steady representation, and `completed` baselines are
-# heavy enough to teach the "no failureCategory needed" pattern.
+# Quotas tuned so common production failures dominate and `completed`
+# baselines are heavy enough to teach the "no failureCategory needed" pattern.
 DEFAULT_QUOTAS: dict[str, int] = {
     "completed": 90,
     "dataset_resolution_failure": 50,
@@ -586,10 +469,6 @@ DEFAULT_QUOTAS: dict[str, int] = {
     "execution_abend": 50,
     "scheduler_or_environment_issue": 30,
     "other": 30,
-    "smart_restart_resource_unavailable": 30,
-    "smart_restart_configuration": 30,
-    "smart_restart_application_logic": 25,
-    "smart_restart_input_syntax": 25,
 }
 
 
@@ -665,10 +544,11 @@ def main(argv: list[str] | None = None) -> int:
             sid = f"syn-{category}-{_hash(category, idx, args.seed)}"
             if sid in seen_ids:
                 continue
-            _enrich_v2_fields(rng, category, interp, related_docs_catalog)
+            _enrich_interp_fields(rng, category, interp, related_docs_catalog)
             sample = {
                 "sample_id": sid,
                 "source": "synthetic:template",
+                "family": f"spool:{category}",
                 "category": category,
                 "request": request,
                 "expected_interpretation": interp,

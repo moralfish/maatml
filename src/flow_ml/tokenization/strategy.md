@@ -16,7 +16,7 @@ if tokenizer.pad_token_id is None:
     tokenizer.pad_token = tokenizer.eos_token
 ```
 
-This is done in the trainer modules (`jcl_classifier.py`, `spool_seq2seq.py`, `flow_graph_generator.py`) and is safe because attention masks correctly exclude the padded positions from loss computation.
+This is done in the trainer modules (`jcl_classifier.py`, `spool_seq2seq.py`) and is safe because attention masks correctly exclude the padded positions from loss computation.
 
 ## Generative models: prompt masking
 

@@ -1,14 +1,8 @@
-"""Spool Interpreter v2 — flan-t5-base seq2seq.
+"""Spool Interpreter — flan-t5-base seq2seq.
 
 Full fine-tune of `google/flan-t5-base` as an encoder-decoder. Input is
-the sanitised spool transcript prefixed with the `interpret spool:` task
-marker; target is the canonical `SpoolInterpretation` JSON serialised as
-text (the runtime parses it back via the 8-layer validator).
-
-No LoRA — flan-t5-base at ~250 M params fine-tunes comfortably on a
-16-32 GB Mac and the resulting weights merge straight into the package.
-
-Replaces the v1 generative-SFT thin wrapper at `training/spool_interpreter.py`.
+the sanitised spool transcript prefixed with the task marker; target is
+the canonical `SpoolInterpretation` JSON serialised as text.
 
 Public surface:
   - `SpoolSeq2SeqConfig` — typed config built from `model.yml::training`
@@ -21,8 +15,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from ..config import ModelDefinition
+from ..config import ModelDefinition, get_dataset_cfg
+from ..device import get_profile, resolve_device
+from ..registry import register_trainer
 from ..utils.io import iter_jsonl
+from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 
 
 @dataclass
@@ -87,35 +84,40 @@ class SpoolSeq2SeqResult:
 
 TASK_PREFIX = "interpret spool: "
 
+_DEFAULT_TARGET_KEYS = [
+    "summary",
+    "status",
+    "returnCode",
+    "rootCause",
+    "suggestedFix",
+    "explanation",
+    "relatedDocs",
+    "failureCategory",
+    "confidence",
+]
 
-def _serialise_target(interpretation: dict) -> str:
-    """Canonical compact-JSON serialisation of the SpoolInterpretation.
 
-    Stable key order keeps the model's target distribution narrow — every
-    sample has the same key sequence regardless of how the seed builder
-    emits its dict. The runtime's JSON parser is order-insensitive.
-    """
-    keys = [
-        "summary",
-        "status",
-        "returnCode",
-        "rootCause",
-        "suggestedFix",
-        "explanation",
-        "relatedDocs",
-        "failureCategory",
-        "confidence",
-    ]
+def _serialise_target(
+    interpretation: dict, *, key_order: Optional[list[str]] = None
+) -> str:
+    """Canonical compact-JSON serialisation of the SpoolInterpretation."""
+    keys = key_order or _DEFAULT_TARGET_KEYS
     ordered = {k: interpretation.get(k) for k in keys if k in interpretation}
     return json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
 
 
-def _build_dataset(rows: list[dict], tokenizer, source_max_len: int, target_max_len: int):
-    """Build a seq2seq dataset from the SFT JSONL.
-
-    Input string: `interpret spool: <request>`
-    Target string: canonical-serialised `expected_interpretation` JSON.
-    """
+def _build_dataset(
+    rows: list[dict],
+    tokenizer,
+    source_max_len: int,
+    target_max_len: int,
+    *,
+    source_prefix: str = TASK_PREFIX,
+    target_key_order: Optional[list[str]] = None,
+    request_field: str = "request",
+    target_field: str = "expected_interpretation",
+):
+    """Build a seq2seq dataset from prepared JSONL."""
     import torch
     from torch.utils.data import Dataset
 
@@ -128,11 +130,11 @@ def _build_dataset(rows: list[dict], tokenizer, source_max_len: int, target_max_
 
         def __getitem__(self, idx: int) -> dict:
             row = self.samples[idx]
-            request = row.get("request", "")
-            interp = row.get("expected_interpretation") or {}
+            request = row.get(request_field, "")
+            interp = row.get(target_field) or {}
 
-            source = TASK_PREFIX + request
-            target = _serialise_target(interp)
+            source = source_prefix + request
+            target = _serialise_target(interp, key_order=target_key_order)
 
             src = tokenizer(
                 source,
@@ -149,12 +151,8 @@ def _build_dataset(rows: list[dict], tokenizer, source_max_len: int, target_max_
                 return_tensors=None,
             )
 
-            # Pad tokens in `labels` must be masked to -100 so the
-            # cross-entropy loss ignores them. T5's pad_token_id is 0.
             pad_id = tokenizer.pad_token_id
-            labels = [
-                tid if tid != pad_id else -100 for tid in tgt["input_ids"]
-            ]
+            labels = [tid if tid != pad_id else -100 for tid in tgt["input_ids"]]
 
             return {
                 "input_ids": torch.tensor(src["input_ids"], dtype=torch.long),
@@ -171,8 +169,14 @@ def _train_loop(
     val_ds,
     out_dir: Path,
     tokenizer,
+    *,
+    profile,
+    embedding_strategy: Optional[str],
+    model_def: ModelDefinition,
+    dataset_dir: Path,
+    smoke: bool,
+    device_name: str,
 ) -> SpoolSeq2SeqResult:
-    import torch
     from transformers import (
         AutoModelForSeq2SeqLM,
         Seq2SeqTrainer,
@@ -184,8 +188,9 @@ def _train_loop(
     set_seed(cfg.seed)
 
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg.model_id)
-    # T5 generation cap: keep the model's generation_config in sync with
-    # the manifest so the runtime greedy decode matches what we trained.
+    ensure_tokenizer_model_contract(
+        model, tokenizer, embedding_strategy=embedding_strategy
+    )
     model.generation_config.max_new_tokens = cfg.generation.max_new_tokens
     model.generation_config.num_beams = cfg.generation.num_beams
 
@@ -198,6 +203,8 @@ def _train_loop(
 
     use_bf16 = cfg.precision == "bf16"
     use_fp16 = cfg.precision == "fp16"
+    use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
+    run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
 
     args = Seq2SeqTrainingArguments(
         output_dir=str(out_dir),
@@ -209,14 +216,16 @@ def _train_loop(
         weight_decay=cfg.weight_decay,
         warmup_steps=warmup_steps,
         logging_steps=cfg.logging_steps,
+        eval_strategy="steps" if run_eval else "no",
+        eval_steps=cfg.eval_steps if run_eval else None,
         save_strategy="steps",
         save_steps=cfg.save_steps,
         save_total_limit=2,
         seed=cfg.seed,
         bf16=use_bf16,
         fp16=use_fp16,
-        gradient_checkpointing=cfg.grad_checkpointing,
-        dataloader_num_workers=0,
+        gradient_checkpointing=use_grad_ckpt,
+        dataloader_num_workers=profile.dataloader_workers,
         report_to=[],
         optim="adamw_torch",
         max_steps=cfg.max_steps,
@@ -230,26 +239,37 @@ def _train_loop(
         tokenizer=tokenizer,
         model=model,
         label_pad_token_id=-100,
-        padding=False,  # already padded in __getitem__
+        padding=False,
     )
 
     trainer = Seq2SeqTrainer(
         model=model,
         args=args,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
+        eval_dataset=val_ds if run_eval else None,
         data_collator=collator,
         processing_class=tokenizer,
+        callbacks=[make_nan_guard_callback()],
     )
 
     train_output = trainer.train()
     eval_metrics: dict = {}
     if val_ds is not None:
+        profile.empty_cache()
         eval_metrics = trainer.evaluate(eval_dataset=val_ds) or {}
 
-    # Save the full encoder-decoder so the runtime can mmap it directly.
     model.save_pretrained(out_dir, safe_serialization=True)
     tokenizer.save_pretrained(out_dir)
+
+    write_run_metadata(
+        out_dir,
+        model_def,
+        {
+            "train": dataset_dir / "train.jsonl",
+            "val": dataset_dir / "val.jsonl",
+        },
+        extra={"smoke": smoke, "device": device_name, "profile": profile.name},
+    )
 
     return SpoolSeq2SeqResult(
         out_dir=out_dir,
@@ -262,6 +282,7 @@ def _train_loop(
     )
 
 
+@register_trainer("seq2seq")
 def train_spool_seq2seq(
     model_def: ModelDefinition,
     *,
@@ -272,7 +293,7 @@ def train_spool_seq2seq(
     device: str = "auto",
     seed: Optional[int] = None,
 ) -> SpoolSeq2SeqResult:
-    """Train the v2 Spool Interpreter seq2seq model from a `ModelDefinition`."""
+    """Train the Spool Interpreter seq2seq model from a `ModelDefinition`."""
     from transformers import AutoTokenizer
 
     training_dict = model_def.merged_smoke() if smoke else dict(model_def.training)
@@ -280,9 +301,15 @@ def train_spool_seq2seq(
     if seed is not None:
         cfg.seed = seed
 
+    ds_cfg = get_dataset_cfg(model_def)
+    source_prefix = ds_cfg.get("source_prefix", TASK_PREFIX)
+    target_key_order = ds_cfg.get("target_key_order") or _DEFAULT_TARGET_KEYS
+    request_field = ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
+    target_field = ds_cfg.get("target_field") or "expected_interpretation"
+
     dataset_dir = Path(dataset_dir) if dataset_dir else model_def.prepared_dir
     if out_dir is None:
-        run_name = "smoke" if smoke else model_def.model_id.replace(":", "-")
+        run_name = "smoke" if smoke else model_def.identity
         out_dir = model_def.checkpoints_dir / run_name
     else:
         out_dir = Path(out_dir)
@@ -298,17 +325,50 @@ def train_spool_seq2seq(
     if not train_rows:
         raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
 
+    target_device = resolve_device(device)
+    profile = get_profile(target_device)
+
     print(
         f"Spool seq2seq: model={cfg.model_id} train={len(train_rows)} "
         f"val={len(val_rows)} src_len={cfg.source_max_len} tgt_len={cfg.target_max_len} "
         f"epochs={cfg.epochs}"
     )
 
-    train_ds = _build_dataset(train_rows, tokenizer, cfg.source_max_len, cfg.target_max_len)
+    train_ds = _build_dataset(
+        train_rows,
+        tokenizer,
+        cfg.source_max_len,
+        cfg.target_max_len,
+        source_prefix=source_prefix,
+        target_key_order=list(target_key_order),
+        request_field=request_field,
+        target_field=target_field,
+    )
     val_ds = (
-        _build_dataset(val_rows, tokenizer, cfg.source_max_len, cfg.target_max_len)
+        _build_dataset(
+            val_rows,
+            tokenizer,
+            cfg.source_max_len,
+            cfg.target_max_len,
+            source_prefix=source_prefix,
+            target_key_order=list(target_key_order),
+            request_field=request_field,
+            target_field=target_field,
+        )
         if val_rows
         else None
     )
 
-    return _train_loop(cfg, train_ds, val_ds, out_dir, tokenizer)
+    return _train_loop(
+        cfg,
+        train_ds,
+        val_ds,
+        out_dir,
+        tokenizer,
+        profile=profile,
+        embedding_strategy=training_dict.get("embedding_strategy"),
+        model_def=model_def,
+        dataset_dir=dataset_dir,
+        smoke=smoke,
+        device_name=str(target_device),
+    )

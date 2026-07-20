@@ -1,7 +1,6 @@
-"""Shared SFT skeleton for flow-ml's three generative models.
+"""Shared SFT skeleton for causal LM fine-tuning.
 
-All three trainers (`flow_graph_generator`, `jcl_validator`, `spool_interpreter`)
-follow the same pattern:
+The causal-SFT trainers follow this pattern:
 
   - Qwen3-1.7B (or 0.6B for smoke) base + LoRA on attention projections
   - 3-message conversations: system + user + assistant
@@ -47,8 +46,11 @@ from transformers import (
     set_seed,
 )
 
-from ..config import ModelDefinition
+from ..config import ModelDefinition, get_dataset_cfg
+from ..device import get_profile, resolve_device
+from ..registry import register_trainer
 from ..utils.io import iter_jsonl, read_json
+from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 
 console = Console()
 
@@ -287,17 +289,8 @@ class SFTDataCollator:
 
 
 def _resolve_device(device: str) -> torch.device:
-    if device == "cpu":
-        return torch.device("cpu")
-    if device == "mps":
-        return torch.device("mps")
-    if device == "auto":
-        if torch.backends.mps.is_available():
-            return torch.device("mps")
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        return torch.device("cpu")
-    return torch.device(device)
+    """Backward-compatible alias for :func:`flow_ml.device.resolve_device`."""
+    return resolve_device(device)
 
 
 def _maybe_attach_lora(model, lora: LoraSettings):
@@ -318,13 +311,14 @@ def _maybe_attach_lora(model, lora: LoraSettings):
 # ---------------------------------------------------------------------------
 
 
+@register_trainer("causal_sft")
 def train_sft(
     model_def: ModelDefinition,
     *,
-    target_field: str,
+    target_field: Optional[str] = None,
     config_cls: Type[SFTTrainConfig] = SFTTrainConfig,
-    request_field: str = "request",
-    user_placeholder: str = "<<USER_REQUEST>>",
+    request_field: Optional[str] = None,
+    user_placeholder: Optional[str] = None,
     default_prompt_spec: Optional[Path] = None,
     smoke: bool = False,
     dataset_dir: Optional[Path] = None,
@@ -341,26 +335,39 @@ def train_sft(
     bf16 autocast is enabled on MPS/CUDA when `precision: bf16`. Weights
     are loaded at fp32 to give a stable master copy — loading at bf16 +
     autocast bf16 has produced NaN gradients on MPS in past runs.
+
+    ``target_field`` / ``request_field`` / ``user_placeholder`` default from
+    ``dataset:`` (or ``data:``) when not passed explicitly.
     """
-    training_dict = model_def.merged_smoke() if smoke else dict(model_def.training)
+    training_dict = dict(model_def.merged_smoke() if smoke else model_def.training)
+    embedding_strategy = training_dict.pop("embedding_strategy", None)
     cfg = config_cls(**training_dict)
     if seed is not None:
         cfg.seed = seed
     set_seed(cfg.seed)
 
+    ds_cfg = get_dataset_cfg(model_def)
+    target_field = target_field or ds_cfg.get("target_field") or "expected_output"
+    request_field = request_field or ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
+    user_placeholder = (
+        user_placeholder or ds_cfg.get("user_placeholder") or "<<USER_REQUEST>>"
+    )
+
     if prompt_spec_path is not None:
         spec_path = Path(prompt_spec_path)
-    elif "prompt_spec" in model_def.data:
-        spec_path = model_def.resolve(model_def.data["prompt_spec"])
+    elif "prompt_spec" in ds_cfg:
+        spec_path = model_def.resolve(ds_cfg["prompt_spec"])
     elif default_prompt_spec is not None:
         spec_path = default_prompt_spec
     else:
-        raise ValueError("no prompt_spec_path provided and model_def has no `data.prompt_spec`")
+        raise ValueError(
+            "no prompt_spec_path provided and model_def has no `dataset/data.prompt_spec`"
+        )
     prompt_spec = read_json(spec_path)
 
     dataset_dir = Path(dataset_dir) if dataset_dir else model_def.prepared_dir
     if out_dir is None:
-        run_name = "smoke" if smoke else model_def.model_id.replace(":", "-")
+        run_name = "smoke" if smoke else model_def.identity
         out_dir = model_def.checkpoints_dir / run_name
     else:
         out_dir = Path(out_dir)
@@ -383,15 +390,19 @@ def train_sft(
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    target_device = _resolve_device(device)
+    target_device = resolve_device(device)
+    profile = get_profile(target_device)
     use_bf16 = cfg.precision == "bf16" and target_device.type in ("cuda", "mps")
     use_fp16 = cfg.precision == "fp16" and target_device.type in ("cuda", "mps")
-    # Weights stay at fp32; autocast handles the bf16/fp16 forward pass.
+    # Weights stay at fp32 when profile says so; autocast handles bf16/fp16.
     model = AutoModelForCausalLM.from_pretrained(cfg.model_id)
+    ensure_tokenizer_model_contract(
+        model,
+        tokenizer,
+        embedding_strategy=embedding_strategy,
+    )
     # Pre-align the model's pad/bos/eos with the tokenizer's so the
     # Trainer doesn't emit a "Updated tokens: ..." warning on every run.
-    # Qwen3 tokenizers have no BOS — assign None unconditionally so the
-    # model config matches.
     model.config.pad_token_id = tokenizer.pad_token_id
     model.config.bos_token_id = tokenizer.bos_token_id
     model.config.eos_token_id = tokenizer.eos_token_id
@@ -417,9 +428,10 @@ def train_sft(
         if cfg.max_steps < 0
         else cfg.max_steps
     )
+    use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
     run_eval_during_training = (
         val_ds is not None
-        and target_device.type != "mps"
+        and profile.allow_mid_train_eval
         and cfg.eval_steps < total_steps
     )
 
@@ -445,8 +457,8 @@ def train_sft(
         seed=cfg.seed,
         bf16=use_bf16,
         fp16=use_fp16,
-        gradient_checkpointing=cfg.grad_checkpointing,
-        dataloader_num_workers=0,
+        gradient_checkpointing=use_grad_ckpt,
+        dataloader_num_workers=profile.dataloader_workers,
         report_to=[],
         optim="adamw_torch",
         max_steps=cfg.max_steps,
@@ -461,14 +473,14 @@ def train_sft(
         eval_dataset=val_ds if run_eval_during_training else None,
         data_collator=collator,
         processing_class=tokenizer,
+        callbacks=[make_nan_guard_callback()],
     )
 
     train_output = trainer.train()
 
     eval_metrics: dict[str, Any] = {}
     if val_ds is not None:
-        if target_device.type == "mps":
-            torch.mps.empty_cache()
+        profile.empty_cache()
         eval_metrics = trainer.evaluate(eval_dataset=val_ds) or {}
 
     if hasattr(model, "merge_and_unload"):
@@ -478,6 +490,16 @@ def train_sft(
         model.save_pretrained(out_dir)
     tokenizer.save_pretrained(out_dir)
     shutil.copy2(spec_path, out_dir / "prompt_spec.json")
+
+    write_run_metadata(
+        out_dir,
+        model_def,
+        {
+            "train": dataset_dir / "train.jsonl",
+            "val": dataset_dir / "val.jsonl",
+        },
+        extra={"smoke": smoke, "device": str(target_device), "profile": profile.name},
+    )
 
     return SFTTrainResult(
         out_dir=out_dir,

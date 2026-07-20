@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://flow.studio/schemas/jcl-validation-result.json",
+  "$id": "https://github.com/moralfish/flow-ml/schemas/jcl-validation-result.json",
   "title": "JclValidationResult",
   "description": "Canonical JCL validation result emitted by the JCL Validator. Mirrors the JclValidationResult Pydantic type in flow_ml.data.schemas.",
   "type": "object",

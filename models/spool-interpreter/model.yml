@@ -1,23 +1,16 @@
-# Spool Interpreter v2 — flan-t5-base seq2seq that turns sanitised z/OS
+# Spool Interpreter — flan-t5-base seq2seq that turns sanitised z/OS
 # spool output into a structured SpoolInterpretation JSON:
 # { summary, status, returnCode, rootCause, suggestedFix, explanation,
 #   relatedDocs, failureCategory, confidence }.
 #
 # Task: spool_interpretation
-# Architecture: candle_t5_seq2seq (encoder-decoder, full fine-tune)
-# Runtime: candle (T5Seq2SeqBackend in flow-studio's flow-model-runtime)
-# Spec:    training_instructions.md (this folder)
-#
-# Replaces the v1 Qwen3-1.7B SFT path. Ships at ~600 MB fp16 (down from
-# ~3.4 GB) with <2 s p95 latency. Two output fields added in v2
-# (explanation + relatedDocs) per the original architecture spec.
+# Architecture: seq2seq (encoder-decoder, full fine-tune)
 
 name: spool-interpreter
-model_id: spool-interpreter:v1
+model_id: spool-interpreter
 task: spool_interpretation
 architecture: seq2seq
-runtime: candle
-version: v1
+version: 0.1.0
 description: "flan-t5-base seq2seq that interprets z/OS job spool output into a structured SpoolInterpretation JSON."
 base_model: google/flan-t5-base
 
@@ -30,6 +23,18 @@ data:
   benchmark_samples: datasets/samples/test_prompt_set.jsonl
   raw_field: request
   split_ratios: [0.8, 0.1, 0.1]
+
+dataset:
+  format: jsonl_seed
+  target_field: expected_interpretation
+  request_field: request
+  group_by: family
+  sanitize: [spool]
+
+evaluation:
+  validator: spool
+  metrics: spool
+  predictor: seq2seq
 
 training:
   model_id: google/flan-t5-base

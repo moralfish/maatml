@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TicketTriage",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["priority", "category", "team", "summary"],
+  "properties": {
+    "priority": {
+      "type": "string",
+      "enum": ["p1", "p2", "p3", "p4"]
+    },
+    "category": {
+      "type": "string",
+      "enum": ["billing", "access", "bug", "how_to", "other"]
+    },
+    "team": {
+      "type": "string",
+      "enum": ["payments", "identity", "platform", "docs", "general"]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

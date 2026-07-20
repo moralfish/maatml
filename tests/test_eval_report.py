@@ -40,13 +40,15 @@ def test_per_class_prf_handles_unseen_labels() -> None:
 def test_report_round_trip(tmp_path: Path) -> None:
     r = Report(
         model_id="m",
+        name="m",
+        version="0.1.0",
         task="jcl_validation",
         dataset="d",
         n=4,
         metrics={"seq_accuracy": 0.75},
         per_class={"missing_dd": {"precision": 1.0, "recall": 0.5, "f1": 0.66, "support": 2.0}},
         latency_ms=LatencyStats(p50=10.0, p95=15.0, mean=12.0, n=4),
-        structure_validity=None,
+        extras={"note": "x"},
     )
     path = tmp_path / "report.json"
     r.write(path)
@@ -55,11 +57,23 @@ def test_report_round_trip(tmp_path: Path) -> None:
 
 
 def test_baseline_delta_subtraction(tmp_path: Path) -> None:
-    base = Report(model_id="m1", task="jcl_validation", dataset="d", n=10, metrics={"seq_accuracy": 0.5, "category_accuracy": 0.4})
+    base = Report(
+        model_id="m1",
+        task="jcl_validation",
+        dataset="d",
+        n=10,
+        metrics={"seq_accuracy": 0.5, "category_accuracy": 0.4},
+    )
     base_path = tmp_path / "base.json"
     base.write(base_path)
-    delta = _baseline_delta({"seq_accuracy": 0.7, "category_accuracy": 0.5, "new_metric": 0.9}, base_path)
-    assert delta == {"seq_accuracy": pytest_approx(0.2), "category_accuracy": pytest_approx(0.1)}
+    delta = _baseline_delta(
+        {"seq_accuracy": 0.7, "category_accuracy": 0.5, "new_metric": 0.9},
+        base_path,
+    )
+    assert delta == {
+        "seq_accuracy": pytest_approx(0.2),
+        "category_accuracy": pytest_approx(0.1),
+    }
 
 
 def test_markdown_summary_writes_file(tmp_path: Path) -> None:
@@ -70,7 +84,6 @@ def test_markdown_summary_writes_file(tmp_path: Path) -> None:
         n=5,
         metrics={"json_validity": 0.8, "category_accuracy": 0.6},
         latency_ms=LatencyStats(p50=100.0, p95=200.0, mean=120.0, n=5),
-        structure_validity=0.8,
     )
     path = tmp_path / "report.md"
     write_markdown_summary(r, path)

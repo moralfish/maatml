@@ -25,3 +25,7 @@ models/*/datasets/samples/*.parquet
 
 # Built archives
 *.fm
+
+.vscode/
+/.idea/
+/.codesight/

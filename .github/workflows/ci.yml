@@ -2,23 +2,75 @@ name: ci
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, flow-init]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install -e .[dev]
-      - name: Validate scaffold
-        run: python scripts/validate_repo.py
-      - name: Test
-        run: pytest
+          pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check src tests scripts
+      - name: Mypy
+        run: mypy src/flow_ml --ignore-missing-imports
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Pytest
+        run: pytest tests/ -q
+      - name: Validate model scaffolds
+        run: |
+          python scripts/validate_repo.py
+          flow_ml validate models/jcl-validator
+          flow_ml validate models/spool-interpreter
+          flow_ml validate examples/support-ticket-triage
+
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - name: Install wheel only (no editable) and exercise CLI
+        run: |
+          python -m pip install dist/*.whl
+          # Dev test deps are not required for the standalone invariant —
+          # the wheel itself must provide the CLI + package data.
+          flow_ml --help
+          flow_ml plugins
+          TMPDIR="$(mktemp -d)"
+          flow_ml scaffold "$TMPDIR/my-model" --architecture causal_sft --name my-model
+          flow_ml validate "$TMPDIR/my-model"
+          test -f "$TMPDIR/my-model/model.yml"
+          test -f "$TMPDIR/my-model/README.md"
+          test -f "$TMPDIR/my-model/datasets/samples/seed_samples.jsonl"
+          # Package data must be present in the installed wheel.
+          python -c "from importlib.resources import files; p = files('flow_ml.data').joinpath('sanitization.yaml'); assert p.is_file(), p"

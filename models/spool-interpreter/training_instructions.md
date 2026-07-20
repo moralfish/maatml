@@ -1,10 +1,9 @@
-# Spool Interpreter — Training Instructions (v2 seq2seq)
+# Spool Interpreter — Training Instructions
 
 ## 1. Purpose
 
 Post-execution interpretation of z/OS job spool output. Takes sanitised JES2
-spool transcripts and emits a structured `SpoolInterpretation` JSON the
-runtime renders directly:
+spool transcripts and emits a structured `SpoolInterpretation` JSON:
 
 ```json
 {
@@ -20,24 +19,22 @@ runtime renders directly:
 }
 ```
 
-Replaces the v1 generative-SFT pipeline (Qwen3-1.7B + LoRA) with a
-flan-t5-base encoder-decoder per the original architecture spec.
+Architecture: flan-t5-base encoder-decoder (seq2seq).
 
-| | v1 (retired) | v2 (this doc) |
-|---|---|---|
-| Base | Qwen3-1.7B | flan-t5-base (~250 MB fp32 / ~600 MB after fine-tune) |
-| Method | LoRA SFT | Full fine-tune seq2seq |
-| Size | ~3.4 GB fp16 | ~600 MB fp16 target |
-| Input cap | 4096 tokens | 1024 tokens (T5 native; chunking deferred) |
-| Latency | ~1-2 s | <2 s target |
-| Output schema | 6 fields | 8 fields (`explanation` + `relatedDocs` added) |
+| | Current |
+|---|---|
+| Base | flan-t5-base (~250 MB fp32 / ~600 MB after fine-tune) |
+| Method | Full fine-tune seq2seq |
+| Size | ~600 MB fp16 target |
+| Input cap | 1024 tokens (T5 native; chunking deferred) |
+| Latency | <2 s target |
+| Output schema | 8 fields (includes `explanation` + `relatedDocs`) |
 
 ## 2. Base model
 
 `google/flan-t5-base` — encoder-decoder, ~250M params. Instruction-tuned
 upstream which helps the structured-output task converge faster than vanilla
-t5-base. fp16 packaging targets ~600 MB on disk; INT8 deferred per the
-all-Candle runtime decision (Candle ships T5 in `candle-transformers::models::t5`).
+t5-base. fp16 packaging targets ~600 MB on disk; INT8 quantization is deferred.
 
 Smoke profile keeps the same base — no scale ladder for seq2seq. Smoke
 trims epochs + dataset.
@@ -183,8 +180,6 @@ Smoke overrides reduce to `epochs: 1, max_steps: 8, batch_size: 2`.
 - flan-t5 lives in `transformers.T5ForConditionalGeneration`; weights load
   cleanly under MPS via `device_map="mps"` with the standard fp32 →
   bf16 autocast.
-- Candle runtime side uses `candle-transformers::models::t5` for both
-  encoder and decoder.
 
 ## 13. Tokenizer
 
@@ -246,14 +241,13 @@ Training produces a checkpoint under `output/checkpoints/<run-name>/`:
 `model.safetensors` (flan-t5-base encoder+decoder), `config.json`, the
 SentencePiece `tokenizer.json` (+ `spiece.model` if not embedded),
 `prompt_spec.json`, plus the committed `spool_interpretation_schema.json`
-(v2 fields) and `node_contracts.json`. Converting the checkpoint into a Hub
-artifact (GGUF / safetensors) is future work — the in-process Candle packaging
-path has been removed.
+and `node_contracts.json`. Packaging/export of Hub-ready artifacts from
+checkpoints is future work.
 
 ## 19. Versioning
 
-`v1` is the first seq2seq release (the v1 generative model is retired).
-Subsequent retrains bump `v1.1`, `v1.2`, etc. via `model.yml`.
+Bump `version` in `model.yml` (semver) on each retrain that changes behaviour
+or schema. Checkpoint run names use `name@version`.
 
 ## 20. First training milestone
 

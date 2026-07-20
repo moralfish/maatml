@@ -1,6 +1,6 @@
 """Out-of-model validator for JCL Validator output.
 
-Six layers, mirroring the FlowGraph validator's design:
+Six layers:
 
   1. JSON parse                       — text → dict
   2. JSON schema                      — matches `JclValidationResult` JSON Schema
@@ -10,65 +10,29 @@ Six layers, mirroring the FlowGraph validator's design:
   6. Consistency                      — `valid: false` ⟺ `errors` non-empty;
                                        `confidence` ∈ [0, 1]
 
-Uses the same `FlowGraphValidationResult`/`FlowGraphValidationError` shape
-as the FlowGraph validator so callers (per-task evaluator, future seed-row
-gating) can treat all three task validators uniformly.
+Returns a gate result so callers (per-task evaluator, seed-row gating) can
+treat task validators uniformly.
 """
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import jsonschema
 
+from .base import (
+    ValidationError,
+    ValidationResult,
+    _load_json,
+    strip_fences as strip_model_fences,
+)
 
-_FENCE_RX = re.compile(r"^```(?:json)?\s*\n(.*)\n```\s*$", re.DOTALL)
-_THINK_BLOCK_RX = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+# Backward-compatible aliases.
+JclValidationError = ValidationError
+JclValidationResultGate = ValidationResult
 
-
-@dataclass
-class JclValidationError:
-    layer: int
-    code: str
-    message: str
-    location: Optional[str] = None
-
-
-@dataclass
-class JclValidationResultGate:
-    """Outcome of running the 6 validator layers on one model output.
-    Distinct name from the gold-output Pydantic `JclValidationResult`
-    in `flow_ml.data.schemas` — this is the *gate* result.
-    """
-
-    raw_output: str
-    parsed: Optional[dict[str, Any]] = None
-    errors: list[JclValidationError] = field(default_factory=list)
-    passed_layers: set[int] = field(default_factory=set)
-
-    @property
-    def ok(self) -> bool:
-        return self.passed_layers == {1, 2, 3, 4, 5, 6}
-
-
-def _strip_fences(text: str) -> str:
-    """Strip Qwen3 `<think>...</think>` reasoning blocks and ```json fences
-    before layer-1 JSON parse. Mirrors the FlowGraph validator's behaviour
-    so all three tasks normalise the same wrappers uniformly.
-    """
-    text = text.strip()
-    text = _THINK_BLOCK_RX.sub("", text).strip()
-    fence = _FENCE_RX.match(text)
-    if fence:
-        return fence.group(1).strip()
-    return text
-
-
-def _load_json(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+_JCL_LAYERS = frozenset({1, 2, 3, 4, 5, 6})
 
 
 def validate_jcl_result(
@@ -78,15 +42,20 @@ def validate_jcl_result(
     contracts_path: str | Path,
     user_prompt: Optional[str] = None,
     strip_fences: bool = True,
-) -> JclValidationResultGate:
+) -> ValidationResult:
     """Run all 6 layers against a model output. `user_prompt` is unused
-    today (kept for API symmetry with the FlowGraph validator) — JCL
+    today (kept for API symmetry with other task validators) — JCL
     has no prompt-side safety classifier."""
+    del user_prompt  # API symmetry
     schema = _load_json(schema_path)
     contracts = _load_json(contracts_path)
-    result = JclValidationResultGate(raw_output=raw_output)
+    result = ValidationResult(
+        raw_output=raw_output,
+        required_layers=set(_JCL_LAYERS),
+        n_layers=6,
+    )
 
-    text = _strip_fences(raw_output) if strip_fences else raw_output.strip()
+    text = strip_model_fences(raw_output) if strip_fences else raw_output.strip()
 
     # Layer 1
     try:
@@ -94,7 +63,7 @@ def validate_jcl_result(
         result.passed_layers.add(1)
     except json.JSONDecodeError as exc:
         result.errors.append(
-            JclValidationError(layer=1, code="invalid_json", message=str(exc))
+            ValidationError(layer=1, code="invalid_json", message=str(exc))
         )
         return result
 
@@ -104,7 +73,7 @@ def validate_jcl_result(
         result.passed_layers.add(2)
     except jsonschema.exceptions.ValidationError as exc:
         result.errors.append(
-            JclValidationError(
+            ValidationError(
                 layer=2,
                 code="schema_error",
                 message=exc.message,
@@ -125,7 +94,7 @@ def validate_jcl_result(
         sev = e.get("severity")
         if sev not in severities:
             result.errors.append(
-                JclValidationError(
+                ValidationError(
                     layer=3,
                     code="invalid_severity",
                     message=f"severity {sev!r} is not one of {sorted(severities)}",
@@ -142,7 +111,7 @@ def validate_jcl_result(
         code = e.get("code")
         if code not in codes:
             result.errors.append(
-                JclValidationError(
+                ValidationError(
                     layer=4,
                     code="invalid_error_code",
                     message=f"code {code!r} is not one of {sorted(codes)}",
@@ -157,7 +126,7 @@ def validate_jcl_result(
     layer5_ok = True
     if len(errors) > max_errors:
         result.errors.append(
-            JclValidationError(
+            ValidationError(
                 layer=5,
                 code="too_many_errors",
                 message=f"errors[] has {len(errors)} entries; max is {max_errors}",
@@ -169,7 +138,7 @@ def validate_jcl_result(
         line = e.get("line")
         if not isinstance(line, int) or line < 1:
             result.errors.append(
-                JclValidationError(
+                ValidationError(
                     layer=5,
                     code="invalid_line",
                     message=f"line must be int >= 1; got {line!r}",
@@ -179,7 +148,7 @@ def validate_jcl_result(
             layer5_ok = False
         if not e.get("message"):
             result.errors.append(
-                JclValidationError(
+                ValidationError(
                     layer=5,
                     code="empty_message",
                     message="error.message must be a non-empty string",
@@ -194,7 +163,7 @@ def validate_jcl_result(
     layer6_ok = True
     if not isinstance(valid_flag, bool):
         result.errors.append(
-            JclValidationError(
+            ValidationError(
                 layer=6,
                 code="missing_valid",
                 message=f"`valid` must be a boolean; got {type(valid_flag).__name__}",
@@ -202,9 +171,8 @@ def validate_jcl_result(
         )
         layer6_ok = False
     elif bool(errors) == valid_flag:
-        # valid=true with errors is inconsistent; valid=false with no errors is too
         result.errors.append(
-            JclValidationError(
+            ValidationError(
                 layer=6,
                 code="valid_errors_inconsistent",
                 message=(
@@ -216,7 +184,7 @@ def validate_jcl_result(
         layer6_ok = False
     if not isinstance(confidence, (int, float)) or not (0.0 <= float(confidence) <= 1.0):
         result.errors.append(
-            JclValidationError(
+            ValidationError(
                 layer=6,
                 code="invalid_confidence",
                 message=f"confidence must be float in [0,1]; got {confidence!r}",

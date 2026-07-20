@@ -1,6 +1,6 @@
 {
   "_provenance": {
-    "source": "Hand-authored. Mirrors the FlowGraphGenerator template; task-specific to JCL validation.",
+    "source": "Hand-authored. Task-specific to JCL validation.",
     "schema_version": "1"
   },
   "schema_version": "1",

@@ -1,55 +1,37 @@
-"""Data preparation: synthesize / load corpora, split into train/val/test JSONLs.
+"""Data preparation: load seed corpora, split into train/val/test JSONLs.
 
-All three `prepare_*` functions take a `ModelDefinition` (loaded from
-`models/<name>/model.yml`) and write splits into the model's
-`output/prepared/` folder by default.
+The generic ``prepare`` entry point reads knobs from ``dataset:`` (falling
+back to ``data:``), optionally sanitizes by tag, splits by group key
+(``family`` → ``source`` → ``sample_id``), pins benchmarks to test, and
+writes splits + a dataset card.
 
-The data section of `model.yml` carries everything that used to live in the
-old `configs/<name>/data.yaml` files:
-
-  data:
-    seed: 7331
-    schema: datasets/schema.json          # optional; informational
-    prompt_spec: datasets/prompt_spec.json # optional; informational
-    seed_samples: datasets/samples/seed_samples.jsonl  # spool / dsl
-    template_dir: datasets/templates       # jcl
-    raw_field: description | raw_spool
-    split_ratios: [0.6, 0.2, 0.2]
-    augment:                               # dsl only (rule-based)
-      target_count: 1500
-      seed: 42
-      out: datasets/samples/augmented_samples.jsonl
-    n_per_class: { ... }                   # jcl only (synthetic generation)
-    n_valid: 2000                          # jcl only
-
-All paths inside `data:` are resolved relative to the model folder.
+``prepare_jcl`` / ``prepare_spool`` remain as thin wrappers for the CLI.
 """
 from __future__ import annotations
 
-from collections import Counter
+import warnings
+from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from rich.console import Console
 
-from ..config import ModelDefinition
+from ..config import ModelDefinition, get_dataset_cfg
+from ..registry import register_format
 from .sanitizer import sanitize_jcl, sanitize_spool
-from .schemas import (
-    FlowGraphProposal,
-    FlowGraphSample,
-    JclSample,
-    JclValidationResult,
-    SpoolInterpretation,
-    SpoolSample,
-    Split,
-)
+from .schemas import Split
 from ..utils.io import iter_jsonl, stable_hash, write_jsonl
 
 console = Console()
 
+_SANITIZERS: dict[str, Callable[[str], str]] = {
+    "jcl": sanitize_jcl,
+    "spool": sanitize_spool,
+}
 
-def _split_from_hash(sample_id: str, ratios: tuple[float, float, float]) -> Split:
-    digest = stable_hash(sample_id)
+
+def _split_from_hash(key: str, ratios: tuple[float, float, float]) -> Split:
+    digest = stable_hash(key)
     bucket = int(digest[:12], 16) / float(1 << 48)
     train_r, val_r, _ = ratios
     if bucket < train_r:
@@ -57,6 +39,40 @@ def _split_from_hash(sample_id: str, ratios: tuple[float, float, float]) -> Spli
     if bucket < train_r + val_r:
         return Split.val
     return Split.test
+
+
+_warned_group_fallback: set[str] = set()
+
+
+def _group_key(row: dict) -> str:
+    """Stable group key for leakage-safe splitting.
+
+    Preference: ``family`` → ``source`` → ``sample_id``. Falling back past
+    ``family`` emits a one-shot warning so operators notice missing family tags.
+    """
+    family = row.get("family")
+    if isinstance(family, str) and family.strip():
+        return f"family:{family.strip()}"
+    source = row.get("source")
+    if isinstance(source, str) and source.strip():
+        key = f"source:{source.strip()}"
+        if key not in _warned_group_fallback:
+            _warned_group_fallback.add(key)
+            warnings.warn(
+                f"samples with source={source!r} have no family; splitting by source "
+                f"(re-run seed builders to stamp family)",
+                stacklevel=3,
+            )
+        return key
+    sid = str(row.get("sample_id") or "")
+    key = f"sample_id:{sid}"
+    if "sample_id" not in _warned_group_fallback:
+        _warned_group_fallback.add("sample_id")
+        warnings.warn(
+            "samples missing family/source; splitting by sample_id",
+            stacklevel=3,
+        )
+    return key
 
 
 def _write_split(rows: list[dict], out_dir: Path, split: Split) -> Path:
@@ -83,87 +99,119 @@ def _write_dataset_card(
     return path
 
 
-def _resolve_ratios(data_cfg: dict) -> tuple[float, float, float]:
-    ratios = tuple(data_cfg.get("split_ratios", [0.8, 0.1, 0.1]))
+def _resolve_ratios(cfg: dict) -> tuple[float, float, float]:
+    ratios = tuple(cfg.get("split_ratios", [0.8, 0.1, 0.1]))
     if len(ratios) != 3 or abs(sum(ratios) - 1.0) > 1e-6:
         raise ValueError(f"split_ratios must sum to 1.0; got {ratios}")
     return ratios  # type: ignore[return-value]
 
 
-def prepare_jcl(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
-    """Build train/val/test splits for JCL Validator (generative SFT).
+def _apply_sanitize(row: dict, sanitize_tags: list[str], request_field: str) -> dict:
+    if not sanitize_tags:
+        return row
+    out = dict(row)
+    text = out.get(request_field)
+    if not isinstance(text, str):
+        return out
+    for tag in sanitize_tags:
+        fn = _SANITIZERS.get(tag)
+        if fn is None:
+            raise ValueError(
+                f"Unknown sanitize tag {tag!r}; known: {sorted(_SANITIZERS)}"
+            )
+        text = fn(text)
+    out[request_field] = text
+    return out
 
-    Hand-authored samples in `seed_samples.jsonl`. Each row carries
-    `{sample_id, source, category, request, expected_validation_result}` where
-    `request` is sanitized JCL text and `expected_validation_result` is the
-    gold `JclValidationResult` JSON. Splits 80/10/10 by hash.
 
-    The legacy classifier-corpus generator from `synthetic/jcl_generator.py`
-    is no longer wired into prepare; it lives on as a developer tool for
-    seeding hand-authored few-shot pools when needed.
+def _assign_group_splits(
+    rows: list[dict], ratios: tuple[float, float, float]
+) -> dict[Split, list[dict]]:
+    """Hash each group once; every member inherits that split."""
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        groups[_group_key(row)].append(row)
+
+    by_split: dict[Split, list[dict]] = {
+        Split.train: [],
+        Split.val: [],
+        Split.test: [],
+    }
+    for gkey, members in groups.items():
+        split = _split_from_hash(gkey, ratios)
+        for row in members:
+            tagged = dict(row)
+            tagged["split"] = split.value
+            by_split[split].append(tagged)
+    return by_split
+
+
+@register_format("jsonl_seed")
+def prepare(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
+    """Generic JSONL-seed prepare: sanitize → group-split → write card.
+
+    Reads ``seed_samples`` / ``benchmark_samples`` / ``split_ratios`` /
+    ``sanitize`` / ``request_field`` from ``get_dataset_cfg(model_def)``.
     """
-    cfg = model_def.data
+    cfg = get_dataset_cfg(model_def)
     out = Path(out_dir) if out_dir else model_def.prepared_dir
     out.mkdir(parents=True, exist_ok=True)
     ratios = _resolve_ratios(cfg)
 
     if "seed_samples" not in cfg:
-        raise ValueError("model.yml `data:` must declare `seed_samples`")
+        raise ValueError("model.yml `dataset:`/`data:` must declare `seed_samples`")
 
-    by_split: dict[Split, list[dict]] = {Split.train: [], Split.val: [], Split.test: []}
-    category_counts: Counter[str] = Counter()
-    source_counts: Counter[str] = Counter()
+    request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
+    sanitize_tags = list(cfg.get("sanitize") or [])
 
     seed_path = model_def.resolve(cfg["seed_samples"])
+    seed_rows: list[dict] = []
     for raw in iter_jsonl(seed_path):
-        sanitized = sanitize_jcl(raw["request"])
-        split = _split_from_hash(raw["sample_id"], ratios)
-        sample = JclSample(
-            sample_id=raw["sample_id"],
-            source=raw["source"],
-            category=raw["category"],
-            request=sanitized,
-            expected_validation_result=JclValidationResult.model_validate(
-                raw["expected_validation_result"]
-            ),
-            split=split,
-        )
-        by_split[split].append(sample.model_dump(mode="json"))
-        category_counts[sample.category] += 1
-        source_counts[sample.source] += 1
+        seed_rows.append(_apply_sanitize(raw, sanitize_tags, request_field))
+
+    by_split = _assign_group_splits(seed_rows, ratios)
+
+    category_counts: Counter[str] = Counter()
+    source_counts: Counter[str] = Counter()
+    family_counts: Counter[str] = Counter()
+    for rows in by_split.values():
+        for row in rows:
+            category_counts[str(row.get("category") or "unknown")] += 1
+            source_counts[str(row.get("source") or "unknown")] += 1
+            if row.get("family"):
+                family_counts[str(row["family"])] += 1
 
     benchmark_path = cfg.get("benchmark_samples")
     if benchmark_path:
         bench = model_def.resolve(benchmark_path)
         for raw in iter_jsonl(bench):
-            if "expected_validation_result" not in raw:
-                continue
-            sanitized = sanitize_jcl(raw["request"])
-            sample = JclSample(
-                sample_id=raw["sample_id"],
-                source=raw["source"],
-                category=raw["category"],
-                request=sanitized,
-                expected_validation_result=JclValidationResult.model_validate(
-                    raw["expected_validation_result"]
-                ),
-                split=Split.test,
-            )
-            by_split[Split.test].append(sample.model_dump(mode="json"))
-            category_counts[sample.category] += 1
-            source_counts[sample.source] += 1
+            row = _apply_sanitize(raw, sanitize_tags, request_field)
+            row = dict(row)
+            row["split"] = Split.test.value
+            by_split[Split.test].append(row)
+            category_counts[str(row.get("category") or "unknown")] += 1
+            source_counts[str(row.get("source") or "unknown")] += 1
+            if row.get("family"):
+                family_counts[str(row["family"])] += 1
 
-    paths = {split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()}
+    paths = {
+        split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()
+    }
     split_counts = {split.value: len(rows) for split, rows in by_split.items()}
     card = _write_dataset_card(
         out,
-        title=f"{model_def.model_id} dataset",
+        title=f"{model_def.identity} dataset",
         counts=dict(category_counts),
         split_counts=split_counts,
         extra_lines=[
             f"Seed source: {seed_path}",
-            f"Benchmark source: {model_def.resolve(benchmark_path) if benchmark_path else 'none'}",
+            (
+                f"Benchmark source: "
+                f"{model_def.resolve(benchmark_path) if benchmark_path else 'none'}"
+            ),
             f"Sources: {dict(source_counts)}",
+            f"Families: {dict(family_counts) if family_counts else '{}'}",
+            f"Sanitize: {sanitize_tags or 'none'}",
         ],
     )
 
@@ -173,193 +221,41 @@ def prepare_jcl(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> d
         "card": str(card),
         "category_counts": dict(category_counts),
         "source_counts": dict(source_counts),
+        "family_counts": dict(family_counts),
         "split_counts": split_counts,
     }
     console.print(
-        f"[green]JCL prepare complete[/]: {summary['split_counts']} "
+        f"[green]prepare complete[/] ({model_def.identity}): {summary['split_counts']} "
         f"(categories: {len(category_counts)})"
     )
     return summary
+
+
+def _ensure_sanitize(model_def: ModelDefinition, tag: str) -> None:
+    """Inject a sanitize tag into dataset overlay if missing."""
+    cfg = get_dataset_cfg(model_def)
+    tags = list(cfg.get("sanitize") or [])
+    if tag in tags:
+        return
+    overlay = dict(model_def.dataset or {})
+    new_tags = list(overlay.get("sanitize") or tags)
+    if tag not in new_tags:
+        new_tags.append(tag)
+    overlay["sanitize"] = new_tags
+    object.__setattr__(model_def, "dataset", overlay)
+
+
+def prepare_jcl(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
+    """JCL prepare — ensures ``sanitize: [jcl]`` then delegates to ``prepare``."""
+    _ensure_sanitize(model_def, "jcl")
+    return prepare(model_def, out_dir=out_dir)
 
 
 def prepare_spool(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
-    """Build train/val/test splits for the Spool Interpreter (generative SFT).
-
-    Hand-authored + Claude-generated samples in `seed_samples.jsonl`. Each
-    row carries `{sample_id, source, category, request, expected_interpretation}`
-    where `request` is sanitized spool text and `expected_interpretation` is
-    the gold `SpoolInterpretation` JSON. Splits 80/10/10 by hash.
-    """
-    cfg = model_def.data
-    out = Path(out_dir) if out_dir else model_def.prepared_dir
-    out.mkdir(parents=True, exist_ok=True)
-    ratios = _resolve_ratios(cfg)
-
-    if "seed_samples" not in cfg:
-        raise ValueError("model.yml `data:` must declare `seed_samples`")
-
-    by_split: dict[Split, list[dict]] = {Split.train: [], Split.val: [], Split.test: []}
-    category_counts: Counter[str] = Counter()
-    source_counts: Counter[str] = Counter()
-
-    seed_path = model_def.resolve(cfg["seed_samples"])
-    for raw in iter_jsonl(seed_path):
-        sanitized = sanitize_spool(raw["request"])
-        split = _split_from_hash(raw["sample_id"], ratios)
-        sample = SpoolSample(
-            sample_id=raw["sample_id"],
-            source=raw["source"],
-            category=raw["category"],
-            request=sanitized,
-            expected_interpretation=SpoolInterpretation.model_validate(
-                raw["expected_interpretation"]
-            ),
-            split=split,
-        )
-        by_split[split].append(sample.model_dump(mode="json"))
-        category_counts[sample.category] += 1
-        source_counts[sample.source] += 1
-
-    benchmark_path = cfg.get("benchmark_samples")
-    if benchmark_path:
-        bench = model_def.resolve(benchmark_path)
-        for raw in iter_jsonl(bench):
-            if "expected_interpretation" not in raw:
-                continue
-            sanitized = sanitize_spool(raw["request"])
-            sample = SpoolSample(
-                sample_id=raw["sample_id"],
-                source=raw["source"],
-                category=raw["category"],
-                request=sanitized,
-                expected_interpretation=SpoolInterpretation.model_validate(
-                    raw["expected_interpretation"]
-                ),
-                split=Split.test,
-            )
-            by_split[Split.test].append(sample.model_dump(mode="json"))
-            category_counts[sample.category] += 1
-            source_counts[sample.source] += 1
-
-    paths = {split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()}
-    split_counts = {split.value: len(rows) for split, rows in by_split.items()}
-    card = _write_dataset_card(
-        out,
-        title=f"{model_def.model_id} dataset",
-        counts=dict(category_counts),
-        split_counts=split_counts,
-        extra_lines=[
-            f"Seed source: {seed_path}",
-            f"Benchmark source: {model_def.resolve(benchmark_path) if benchmark_path else 'none'}",
-            f"Sources: {dict(source_counts)}",
-        ],
-    )
-
-    summary = {
-        "out_dir": str(out),
-        "splits": paths,
-        "card": str(card),
-        "category_counts": dict(category_counts),
-        "source_counts": dict(source_counts),
-        "split_counts": split_counts,
-    }
-    console.print(
-        f"[green]Spool prepare complete[/]: {summary['split_counts']} "
-        f"(categories: {len(category_counts)})"
-    )
-    return summary
-
-
-def prepare_flow_graph(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
-    """Build train/val/test splits for FlowGraphGenerator.
-
-    Hand-authored + Claude-converted samples in `seed_samples.jsonl`. Each row
-    has `{sample_id, source, category, request, expected_graph}`. Optional
-    `benchmark_samples` (the 8 doc-canonical eval prompts) are always routed
-    to the test split so the regression set stays fixed across retrains.
-
-    No augmentation step — pure SFT, the safety categories require carefully
-    designed gold graphs that augmentation can't synthesise.
-    """
-    cfg = model_def.data
-    out = Path(out_dir) if out_dir else model_def.prepared_dir
-    out.mkdir(parents=True, exist_ok=True)
-    ratios = _resolve_ratios(cfg)
-
-    if "seed_samples" not in cfg:
-        raise ValueError("model.yml `data:` must declare `seed_samples`")
-
-    by_split: dict[Split, list[dict]] = {Split.train: [], Split.val: [], Split.test: []}
-    category_counts: Counter[str] = Counter()
-    source_counts: Counter[str] = Counter()
-
-    seed_path = model_def.resolve(cfg["seed_samples"])
-    for raw in iter_jsonl(seed_path):
-        split = _split_from_hash(raw["sample_id"], ratios)
-        sample = FlowGraphSample(
-            sample_id=raw["sample_id"],
-            source=raw["source"],
-            category=raw["category"],
-            request=raw["request"],
-            expected_graph=FlowGraphProposal.model_validate(raw["expected_graph"]),
-            split=split,
-        )
-        by_split[split].append(sample.model_dump(mode="json"))
-        category_counts[sample.category] += 1
-        source_counts[sample.source] += 1
-
-    benchmark_path = cfg.get("benchmark_samples")
-    if benchmark_path:
-        bench = model_def.resolve(benchmark_path)
-        for raw in iter_jsonl(bench):
-            # Benchmark prompts ship without gold graphs; eval scores against
-            # the validator + expected_behavior text, not against a target.
-            # Only include if the benchmark file carries `expected_graph`.
-            if "expected_graph" not in raw:
-                continue
-            sample = FlowGraphSample(
-                sample_id=raw["sample_id"],
-                source=raw["source"],
-                category=raw["category"],
-                request=raw["request"],
-                expected_graph=FlowGraphProposal.model_validate(raw["expected_graph"]),
-                split=Split.test,
-            )
-            by_split[Split.test].append(sample.model_dump(mode="json"))
-            category_counts[sample.category] += 1
-            source_counts[sample.source] += 1
-
-    paths = {split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()}
-    split_counts = {split.value: len(rows) for split, rows in by_split.items()}
-    card = _write_dataset_card(
-        out,
-        title=f"{model_def.model_id} dataset",
-        counts=dict(category_counts),
-        split_counts=split_counts,
-        extra_lines=[
-            f"Seed source: {seed_path}",
-            f"Benchmark source: {model_def.resolve(benchmark_path) if benchmark_path else 'none'}",
-            f"Sources: {dict(source_counts)}",
-        ],
-    )
-
-    summary = {
-        "out_dir": str(out),
-        "splits": paths,
-        "card": str(card),
-        "category_counts": dict(category_counts),
-        "source_counts": dict(source_counts),
-        "split_counts": split_counts,
-    }
-    console.print(
-        f"[green]FlowGraph prepare complete[/]: {summary['split_counts']} "
-        f"(categories: {len(category_counts)})"
-    )
-    return summary
+    """Spool prepare — ensures ``sanitize: [spool]`` then delegates to ``prepare``."""
+    _ensure_sanitize(model_def, "spool")
+    return prepare(model_def, out_dir=out_dir)
 
 
 def prepare_dataset() -> None:
-    console.print(
-        "Use prepare_jcl(model_def, out_dir), prepare_spool(model_def, out_dir), "
-        "prepare_dsl(model_def, out_dir), or prepare_agent(model_def, out_dir)"
-    )
+    console.print("Use prepare(model_def, out_dir) / prepare_jcl / prepare_spool")

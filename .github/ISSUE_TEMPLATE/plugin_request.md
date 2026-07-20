@@ -1,0 +1,35 @@
+---
+name: Plugin / task request
+about: Propose a new task model or plugin for flow-ml
+title: "[plugin] "
+labels: ["plugin"]
+assignees: []
+---
+
+## Task name
+
+Proposed folder name under `models/` (e.g. `my-task`).
+
+## Problem / use case
+
+What does this model do, and who needs it?
+
+## Architecture sketch
+
+Preferred architecture if known (`classifier`, `seq2seq`, `generative`, other):
+
+Base model ideas (optional):
+
+## Input / output contract
+
+- Input:
+- Output schema (fields / enums):
+- Validator layers needed (if any):
+
+## Data plan
+
+Where seed / training data would come from (synthetic builder, public corpus, etc.).
+
+## Additional context
+
+Related issues, prior art, or willingness to contribute an implementation.

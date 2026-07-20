@@ -1,47 +1,44 @@
 """Model definition schema (`models/<name>/model.yml`).
 
-A single `model.yml` per model is the source of truth for everything in that
-model's lifecycle: data preparation, training, smoke training, and
-evaluation.  This module owns the schema and the loader.
+A single `model.yml` per model is the source of truth for that model's
+lifecycle: data preparation, training, smoke training, and evaluation.
+This module owns the schema and the loader.
 
-The nested `data:`, `training:`, `smoke:`, and `packaging:` sections are
-intentionally typed as plain dicts so each pipeline stage (``prepare_jcl``,
-``train_dsl``, etc.) can validate them against its existing Pydantic config
-class without forcing a single rigid super-schema for the three very
-different models.
-
-Layout:
-
-    models/<name>/
-      model.yml
-      README.md
-      datasets/
-        schema.json
-        prompt_spec.json        (optional)
-        samples/
-          seed_samples.jsonl    (tracked)
-          augmented_*.jsonl     (gitignored, generated)
-      output/                   (gitignored content)
-        prepared/{train,val,test}.jsonl
-        checkpoints/<run-name>/
-        eval/<report>.{json,md}
+Nested `data:` / `dataset:`, `training:`, `smoke:`, `evaluation:`, and
+`packaging:` sections are plain dicts so each pipeline stage can validate
+them against its own typed config without a rigid super-schema.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .utils.io import read_yaml
 
+_SEMVER_RX = re.compile(r"^\d+\.\d+\.\d+$")
+
+# Path-like keys commonly declared under data:/dataset:/evaluation:.
+_PATH_KEYS = frozenset(
+    {
+        "schema",
+        "prompt_spec",
+        "seed_samples",
+        "benchmark_samples",
+        "contracts",
+        "tokenizer",
+        "template_dir",
+    }
+)
+
 
 class PackagingSpec(BaseModel):
-    """Packaging knobs parsed from ``model.yml``'s ``packaging:`` section.
+    """Packaging knobs from ``model.yml``'s ``packaging:`` section.
 
     Retained for the future GGUF/safetensors export path; not consumed by the
-    current CLI (the model-packaging path was removed). ``confidence_thresholds``
-    is a plain dict so the YAML stays light.
+    current CLI. ``confidence_thresholds`` is a plain dict so the YAML stays light.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -52,7 +49,6 @@ class PackagingSpec(BaseModel):
         default_factory=lambda: {"high": 0.9, "low": 0.6}
     )
     # Half-precision export knob: `"f32"` (default) | `"f16"` | `"bf16"`.
-    # Recorded for the future GGUF/safetensors export path.
     weights_dtype: str = "f32"
 
 
@@ -61,38 +57,48 @@ class ModelDefinition(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    # Identity / runtime contract
-    name: str = Field(..., description="Folder name; e.g. 'flow-graph-generator'")
-    model_id: str = Field(..., description="What Flow Studio sees, e.g. 'flow-graph-generator:v1'")
-    task: str = Field(
-        ...,
-        description=(
-            "Pipeline dispatch key. One of: jcl_validation, spool_interpretation, "
-            "flow_graph_generation"
-        ),
-    )
-    runtime: str = "candle"
-    # Architecture dispatch hint for the CLI's `train` subcommand. Allowed:
-    # `generative` (default — Qwen3+LoRA SFT path used by Flow Graph
-    # Generator), `classifier` (ModernBERT multi-head for JCL Validator
-    # v2), `seq2seq` (T5/BART encoder-decoder for Spool Interpreter v2).
-    # Loader uses this to route to the right trainer module.
-    architecture: str = "generative"
-    version: str = "v1"
+    name: str = Field(..., description="Folder name; e.g. 'jcl-validator'")
+    model_id: str = Field(..., description="Stable model identifier; e.g. 'jcl-validator'")
+    # Free-form metadata; trainers dispatch primarily on ``architecture``.
+    task: str = ""
+    runtime: Optional[str] = None
+    # Architecture dispatch key for the train registry / CLI.
+    # Built-ins: causal_sft, seq2seq, multi_head_classifier (and legacy
+    # aliases classifier / generative still accepted by the transitional CLI).
+    architecture: str = "causal_sft"
+    version: str = "0.1.0"
     description: str = ""
     base_model: Optional[str] = None
 
-    # The three nested sections are dicts so each pipeline stage validates them
-    # against its existing typed config (JclTrainConfig, SpoolTrainConfig, ...).
+    # Nested sections — dicts so each stage typechecks its own subset.
     data: dict[str, Any] = Field(default_factory=dict)
+    # Preferred over ``data:`` going forward; empty falls back to ``data:``.
+    dataset: dict[str, Any] = Field(default_factory=dict)
     training: dict[str, Any] = Field(default_factory=dict)
     smoke: dict[str, Any] = Field(default_factory=dict)
+    evaluation: dict[str, Any] = Field(default_factory=dict)
     packaging: PackagingSpec = Field(default_factory=PackagingSpec)
+    plugins: list[str] = Field(default_factory=list)
+    extensions: dict[str, Any] = Field(default_factory=dict)
 
     # ----- Filled in by load_model_def, not present in YAML -----
     model_dir: Path = Field(default_factory=Path, exclude=True)
 
+    @field_validator("version")
+    @classmethod
+    def _check_semver(cls, v: str) -> str:
+        if not _SEMVER_RX.match(v):
+            raise ValueError(
+                f"version must match semver MAJOR.MINOR.PATCH (e.g. '0.1.0'); got {v!r}"
+            )
+        return v
+
     # --- helpers ---------------------------------------------------------
+
+    @property
+    def identity(self) -> str:
+        """``name@version`` — used as default checkpoint run name."""
+        return f"{self.name}@{self.version}"
 
     def resolve(self, rel: str | Path) -> Path:
         """Resolve a YAML-declared path relative to the model folder."""
@@ -101,12 +107,12 @@ class ModelDefinition(BaseModel):
 
     @property
     def output_dir(self) -> Path:
-        """`models/<name>/output/` - root of all generated artifacts."""
+        """`models/<name>/output/` — root of all generated artifacts."""
         return self.model_dir / "output"
 
     @property
     def prepared_dir(self) -> Path:
-        """`models/<name>/output/prepared/` - train/val/test JSONL splits."""
+        """`models/<name>/output/prepared/` — train/val/test JSONL splits."""
         return self.output_dir / "prepared"
 
     @property
@@ -133,6 +139,55 @@ class ModelDefinition(BaseModel):
             merged.pop("base_model", None)
         return merged
 
+    def validate_paths(self) -> None:
+        """Raise ``FileNotFoundError`` if declared path fields are missing.
+
+        Checks path-like keys under ``dataset:``, ``data:``, and ``evaluation:``
+        (and ``data.sources`` / ``data.template_dir`` when present).
+        """
+        missing: list[str] = []
+        sections = (
+            ("dataset", self.dataset),
+            ("data", self.data),
+            ("evaluation", self.evaluation),
+        )
+        for section_name, section in sections:
+            if not isinstance(section, dict):
+                continue
+            for key, val in section.items():
+                if key not in _PATH_KEYS:
+                    continue
+                if not isinstance(val, str):
+                    continue
+                path = self.resolve(val)
+                if not path.exists():
+                    missing.append(f"{section_name}.{key}={val!r} -> {path}")
+            for source in section.get("sources") or []:
+                if isinstance(source, str):
+                    path = self.resolve(source)
+                    if not path.exists():
+                        missing.append(f"{section_name}.sources:{source!r} -> {path}")
+        if missing:
+            raise FileNotFoundError(
+                "ModelDefinition path check failed for "
+                f"{self.identity}:\n  - " + "\n  - ".join(missing)
+            )
+
+
+# Backward-compat alias (prefer ModelDefinition).
+ModelSpec = ModelDefinition
+
+
+def get_dataset_cfg(md: ModelDefinition) -> dict[str, Any]:
+    """Return dataset knobs with ``data:`` fallback for migration.
+
+    Keys present in ``dataset:`` win; missing keys are filled from ``data:``.
+    Target-field / request-field / sanitize / seed paths may live in either.
+    """
+    merged = dict(md.data or {})
+    merged.update(md.dataset or {})
+    return merged
+
 
 def load_model_def(model_dir: str | Path) -> ModelDefinition:
     """Read `<model_dir>/model.yml` and return a populated ModelDefinition.
@@ -157,4 +212,11 @@ def load_model_def(model_dir: str | Path) -> ModelDefinition:
     # Pydantic doesn't see `model_dir` from the YAML (it's not in the file);
     # set it post-construction.
     object.__setattr__(md, "model_dir", model_dir)
+
+    # Load any folder-local / module plugins declared in model.yml.
+    if md.plugins:
+        from .registry import load_model_plugins
+
+        load_model_plugins(model_dir, md.plugins)
+
     return md

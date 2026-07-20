@@ -1,5 +1,5 @@
 {
-  "_comment": "Normative fixtures for pre_tokenize_jcl. Both the Python impl in jcl_tokenizer.py and the Rust impl in flow-studio's BertClassifierBackend assert byte-identical output against these. Add a new entry when you find an edge case; both implementations stay locked. See COLUMN_RULES.md.",
+  "_comment": "Normative fixtures for pre_tokenize_jcl. The Python impl in jcl_tokenizer.py (and any downstream inference pre-tokenizer) should match these byte-for-byte. Add a new entry when you find an edge case. See COLUMN_RULES.md.",
   "fixtures": [
     {
       "name": "simple_two_line_job",

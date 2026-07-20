@@ -1,6 +1,6 @@
 {
   "_provenance": {
-    "source": "Hand-authored. Bounded vocabulary for SpoolInterpretation. failure_category mirrors FailureCategory enum in flow_ml/data/schemas.py (12 values incl. Smart/RESTART subcategories synced from flow-studio/docs/smart-restart/messages.md).",
+    "source": "Hand-authored. Bounded vocabulary for SpoolInterpretation. failure_category mirrors FailureCategory in flow_ml.data.schemas.",
     "schema_version": "2"
   },
   "statuses": ["completed", "failed", "abended", "skipped", "running"],
@@ -12,11 +12,7 @@
     "utility_parameter_failure",
     "execution_abend",
     "scheduler_or_environment_issue",
-    "other",
-    "smart_restart_resource_unavailable",
-    "smart_restart_configuration",
-    "smart_restart_application_logic",
-    "smart_restart_input_syntax"
+    "other"
   ],
   "return_code": {
     "format": "string-of-4-hex-or-decimal-digits-or-null",
@@ -32,7 +28,7 @@
   "explanation": {
     "required_when": "status != 'completed'",
     "sentence_target": "2-4 sentences walking through the chain of events; distinct from `summary` (1-sentence recap).",
-    "rationale": "Added in v2 — the original spec calls for narrative reasoning so operators can audit the model's interpretation."
+    "rationale": "Narrative reasoning so operators can audit the model's interpretation."
   },
   "related_docs_catalog": {
     "_note": "Doc keys (not URLs) the runtime maps to actual help links at render time. Seed builder draws from these per failure category.",
@@ -43,10 +39,6 @@
     "utility_parameter_failure": ["sort-control-statement", "iebcopy-options", "idcams-define-syntax"],
     "execution_abend": ["abend-s0c7", "abend-s0c4", "cobol-data-exception", "numproc-options", "iee041i-recovery"],
     "scheduler_or_environment_issue": ["jes2-spool-full", "initiator-class-missing", "system-trigger-suspended"],
-    "other": ["spool-interpretation-overview"],
-    "smart_restart_resource_unavailable": ["smart-restart-resource-wait", "tape-mount-pending", "enqueue-conflict"],
-    "smart_restart_configuration": ["smart-restart-config-error", "control-cards-missing"],
-    "smart_restart_application_logic": ["smart-restart-app-logic", "program-flow-error"],
-    "smart_restart_input_syntax": ["smart-restart-input-syntax", "control-card-syntax"]
+    "other": ["spool-interpretation-overview"]
   }
 }

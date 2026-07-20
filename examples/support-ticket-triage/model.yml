@@ -1,0 +1,63 @@
+# Support ticket triage — causal LoRA SFT example.
+#
+# Takes a raw customer support ticket and emits structured triage JSON:
+# { priority, category, team, summary }.
+# Smoke-friendly Qwen3-0.6B; swap base_model for real runs.
+
+name: support-ticket-triage
+model_id: support-ticket-triage
+task: support_ticket_triage
+architecture: causal_sft
+version: 0.1.0
+description: "LoRA SFT example: triage a support ticket into priority/category/team/summary JSON."
+base_model: Qwen/Qwen3-0.6B
+
+dataset:
+  format: jsonl_seed
+  seed: 7
+  schema: datasets/schema.json
+  prompt_spec: datasets/prompt_spec.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  request_field: request
+  target_field: expected_output
+  user_placeholder: "<<USER_REQUEST>>"
+  group_by: family
+  split_ratios: [0.5, 0.25, 0.25]
+  sanitize: []
+
+evaluation:
+  predictor: causal_sft
+  metrics: []
+
+training:
+  model_id: Qwen/Qwen3-0.6B
+  max_input_tokens: 512
+  batch_size: 1
+  grad_accum: 1
+  learning_rate: 1.0e-4
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  seed: 7
+  precision: bf16
+  grad_checkpointing: false
+  eval_steps: 9999
+  save_steps: 50
+  logging_steps: 1
+  max_steps: 4
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    target_modules: [q_proj, v_proj]
+
+smoke:
+  max_steps: 2
+  epochs: 1
+  batch_size: 1
+
+packaging:
+  max_input_tokens: 512
+  expected_latency_ms: 2000
+  weights_dtype: f16

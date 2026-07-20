@@ -43,12 +43,11 @@ CONTRACTS_PATH = DATASETS / "node_contracts.json"
 SEEDS_PATH = DATASETS / "samples" / "seed_samples.jsonl"
 
 
-# Category quotas for a ~1000-sample corpus. Sized after v1+v2 evals
-# showed mode collapse — with 30-45 samples per minor error code the
-# generative SFT model couldn't differentiate codes autoregressively
-# (token-level mode collapse to invalid_job_card / none). 100+ samples
-# per error code is the practical floor for fine-grained generative
-# classification; valid stays moderate at 200 so we don't bias the
+# Category quotas for a ~1000-sample corpus. Sized so each error code has
+# enough support to avoid mode collapse — with too few samples per minor
+# code, classifiers / generators collapse to a dominant label. 100+
+# samples per error code is a practical floor; valid stays moderate at
+# 200 so we don't bias the
 # model back toward false-clean predictions.
 DEFAULT_QUOTAS: dict[str, int] = {
     "valid": 200,
@@ -94,6 +93,7 @@ def _build_valid_sample(
     return {
         "sample_id": sample_id,
         "source": f"synthetic:{template_id}",
+        "family": template_id,
         "category": "valid",
         "request": rendered,
         "expected_validation_result": {
@@ -136,6 +136,7 @@ def _build_error_sample(
     return {
         "sample_id": sample_id,
         "source": f"synthetic:{template_id}",
+        "family": template_id,
         "category": category.value,
         "request": request,
         "expected_validation_result": {

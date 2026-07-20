@@ -5,11 +5,22 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "flow-ml"
 version = "0.1.0"
-description = "Training and packaging workspace for Flow AI models"
+description = "A plugin-based training and fine-tuning framework for task-specific language models"
 readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
 authors = [
   { name = "Nedal Elghamry" }
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 dependencies = [
   "pydantic>=2.7",
@@ -24,11 +35,16 @@ dependencies = [
 # `pip install -e .`.  Equivalent to `python -m flow_ml.cli <cmd>`.
 flow_ml = "flow_ml.cli:main"
 
+[project.entry-points."flow_ml.plugins"]
+jcl = "flow_ml.contrib.jcl"
+spool = "flow_ml.contrib.spool"
+
 [project.optional-dependencies]
 dev = [
   "pytest>=8.2",
   "ruff>=0.5",
-  "mypy>=1.10"
+  "mypy>=1.10",
+  "types-PyYAML>=6.0",
 ]
 ml = [
   "torch>=2.3",
@@ -44,6 +60,17 @@ ml = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+flow_ml = [
+  "data/*.yaml",
+  "data/*.yml",
+  "tokenization/fixtures/*",
+  "contrib/**/*",
+]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["**/__pycache__/*", "**/*.py[cod]"]
 
 [tool.ruff]
 line-length = 100

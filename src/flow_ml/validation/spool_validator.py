@@ -1,6 +1,6 @@
 """Out-of-model validator for Spool Interpreter output.
 
-Eight layers, mirroring the JCL + FlowGraph validators:
+Eight layers, mirroring the JCL validator:
 
   1. JSON parse                      — text → dict
   2. JSON schema                     — matches `SpoolInterpretation` JSON Schema
@@ -18,53 +18,23 @@ Layers 7-8 are new in v2 with the seq2seq rebuild.
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import jsonschema
 
+from .base import (
+    ValidationError,
+    ValidationResult,
+    _load_json,
+    strip_fences as strip_model_fences,
+)
 
-_FENCE_RX = re.compile(r"^```(?:json)?\s*\n(.*)\n```\s*$", re.DOTALL)
-_THINK_BLOCK_RX = re.compile(r"<think>.*?</think>\s*", re.DOTALL | re.IGNORECASE)
+# Backward-compatible aliases.
+SpoolValidationError = ValidationError
+SpoolValidationResultGate = ValidationResult
 
-
-@dataclass
-class SpoolValidationError:
-    layer: int
-    code: str
-    message: str
-    location: Optional[str] = None
-
-
-@dataclass
-class SpoolValidationResultGate:
-    raw_output: str
-    parsed: Optional[dict[str, Any]] = None
-    errors: list[SpoolValidationError] = field(default_factory=list)
-    passed_layers: set[int] = field(default_factory=set)
-
-    @property
-    def ok(self) -> bool:
-        return self.passed_layers == {1, 2, 3, 4, 5, 6, 7, 8}
-
-
-def _strip_fences(text: str) -> str:
-    """Strip Qwen3 `<think>...</think>` reasoning blocks and ```json fences
-    before layer-1 JSON parse. Mirrors the FlowGraph validator's behaviour
-    so all three tasks normalise the same wrappers uniformly.
-    """
-    text = text.strip()
-    text = _THINK_BLOCK_RX.sub("", text).strip()
-    fence = _FENCE_RX.match(text)
-    if fence:
-        return fence.group(1).strip()
-    return text
-
-
-def _load_json(path: str | Path) -> dict[str, Any]:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+_SPOOL_LAYERS = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
 
 
 def validate_spool_result(
@@ -74,12 +44,17 @@ def validate_spool_result(
     contracts_path: str | Path,
     user_prompt: Optional[str] = None,
     strip_fences: bool = True,
-) -> SpoolValidationResultGate:
+) -> ValidationResult:
+    del user_prompt  # API symmetry
     schema = _load_json(schema_path)
     contracts = _load_json(contracts_path)
-    result = SpoolValidationResultGate(raw_output=raw_output)
+    result = ValidationResult(
+        raw_output=raw_output,
+        required_layers=set(_SPOOL_LAYERS),
+        n_layers=8,
+    )
 
-    text = _strip_fences(raw_output) if strip_fences else raw_output.strip()
+    text = strip_model_fences(raw_output) if strip_fences else raw_output.strip()
 
     # Layer 1
     try:
@@ -87,7 +62,7 @@ def validate_spool_result(
         result.passed_layers.add(1)
     except json.JSONDecodeError as exc:
         result.errors.append(
-            SpoolValidationError(layer=1, code="invalid_json", message=str(exc))
+            ValidationError(layer=1, code="invalid_json", message=str(exc))
         )
         return result
 
@@ -97,7 +72,7 @@ def validate_spool_result(
         result.passed_layers.add(2)
     except jsonschema.exceptions.ValidationError as exc:
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=2,
                 code="schema_error",
                 message=exc.message,
@@ -122,7 +97,7 @@ def validate_spool_result(
         result.passed_layers.add(3)
     else:
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=3,
                 code="invalid_status",
                 message=f"status {status!r} is not one of {sorted(statuses)}",
@@ -135,7 +110,7 @@ def validate_spool_result(
         result.passed_layers.add(4)
     else:
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=4,
                 code="invalid_failure_category",
                 message=(
@@ -153,7 +128,7 @@ def validate_spool_result(
         v = field_map.get(fname)
         if not isinstance(v, str) or not v.strip():
             result.errors.append(
-                SpoolValidationError(
+                ValidationError(
                     layer=5,
                     code="empty_required_field",
                     message=f"{fname} must be a non-empty string",
@@ -163,7 +138,7 @@ def validate_spool_result(
             layer5_ok = False
     if return_code is not None and not isinstance(return_code, str):
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=5,
                 code="invalid_return_code_type",
                 message=f"returnCode must be string or null; got {type(return_code).__name__}",
@@ -178,7 +153,7 @@ def validate_spool_result(
     layer6_ok = True
     if status == "completed" and failure_category not in (None, "other"):
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=6,
                 code="completed_with_failure_category",
                 message=(
@@ -190,7 +165,7 @@ def validate_spool_result(
         layer6_ok = False
     if not isinstance(confidence, (int, float)) or not (0.0 <= float(confidence) <= 1.0):
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=6,
                 code="invalid_confidence",
                 message=f"confidence must be float in [0,1]; got {confidence!r}",
@@ -203,13 +178,11 @@ def validate_spool_result(
     # Layer 7 — explanation present when status != "completed"
     explanation = result.parsed.get("explanation")
     if status == "completed":
-        # explanation is optional on success; treat anything that's not
-        # a non-string-or-null as failure.
         if explanation is None or (isinstance(explanation, str)):
             result.passed_layers.add(7)
         else:
             result.errors.append(
-                SpoolValidationError(
+                ValidationError(
                     layer=7,
                     code="invalid_explanation_type",
                     message=f"explanation must be string or null; got {type(explanation).__name__}",
@@ -221,7 +194,7 @@ def validate_spool_result(
             result.passed_layers.add(7)
         else:
             result.errors.append(
-                SpoolValidationError(
+                ValidationError(
                     layer=7,
                     code="missing_explanation",
                     message=(
@@ -235,7 +208,7 @@ def validate_spool_result(
     related_docs = result.parsed.get("relatedDocs", [])
     if not isinstance(related_docs, list):
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=8,
                 code="invalid_related_docs_type",
                 message=f"relatedDocs must be a list; got {type(related_docs).__name__}",
@@ -244,7 +217,7 @@ def validate_spool_result(
         )
     elif any(not isinstance(d, str) or not d.strip() for d in related_docs):
         result.errors.append(
-            SpoolValidationError(
+            ValidationError(
                 layer=8,
                 code="invalid_related_docs_item",
                 message="relatedDocs entries must be non-empty strings",

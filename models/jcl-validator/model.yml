@@ -1,25 +1,20 @@
-# JCL Validator v2 — ModernBERT-base multi-head classifier with custom
+# JCL Validator — ModernBERT-base multi-head classifier with custom
 # column-aware JCL tokenizer.
 #
 # Architecture: 4-head sequence classifier (validity / error_code /
 # severity / line_localization). Full fine-tune, no LoRA. Output is a
-# structured `JclValidationResult` JSON the runtime emits directly from
-# the head logits (no generative decoding).
+# structured `JclValidationResult` JSON built from head logits (no
+# generative decoding).
 #
-# Replaces the v1 generative SFT pipeline (Qwen3-1.7B + LoRA, retired).
 # Goals: <500 ms latency, ~150-200 MB on-disk, custom tokenizer that
 # preserves JCL column-sensitive grammar (columns 1-2 = `//`, columns
 # 73-80 = ignored sequence numbers, column 72 = continuation marker).
-#
-# Loaded in flow-studio via `BertClassifierBackend`. Manifest's
-# `architecture: candle_bert_classifier` selects the dispatch arm.
 
 name: jcl-validator
-model_id: jcl-validator:v1
+model_id: jcl-validator
 task: jcl_validation
-runtime: candle
 architecture: classifier
-version: v1
+version: 0.1.0
 description: "ModernBERT-base multi-head classifier with custom JCL tokenizer; emits JclValidationResult JSON."
 base_model: answerdotai/ModernBERT-base
 
@@ -33,9 +28,20 @@ data:
   raw_field: request
   split_ratios: [0.8, 0.1, 0.1]
   # The custom JCL tokenizer is trained separately (one-shot) on a
-  # 10k-sample corpus, then committed alongside the model. See
-  # `training_instructions.md` §21 for the build sequence.
+  # 10k-sample corpus, then committed alongside the model.
   tokenizer: datasets/tokenizer.json
+
+dataset:
+  format: jsonl_seed
+  target_field: expected_validation_result
+  request_field: request
+  group_by: family
+  sanitize: [jcl]
+
+evaluation:
+  validator: jcl
+  metrics: jcl
+  predictor: classifier
 
 training:
   model_id: answerdotai/ModernBERT-base
@@ -53,11 +59,11 @@ training:
   weight_decay: 0.01
   warmup_ratio: 0.06
   seed: 1337
-  # bf16 autocast on MPS/CUDA, fp32 weights for master copy. ModernBERT
-  # is small enough that we don't need the FGG-style fp32-everything
-  # workaround.
+  # bf16 autocast on MPS/CUDA, fp32 weights for master copy.
   precision: bf16
   grad_checkpointing: false
+  # Custom JCL BPE vocab differs from ModernBERT; resize embeddings to match.
+  embedding_strategy: resize
   eval_steps: 9999
   save_steps: 250
   logging_steps: 25
@@ -82,6 +88,7 @@ smoke:
   warmup_ratio: 0.0
   precision: bf16
   grad_checkpointing: false
+  embedding_strategy: resize
   eval_steps: 5
   save_steps: 5
   logging_steps: 2

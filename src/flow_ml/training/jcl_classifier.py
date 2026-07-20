@@ -1,4 +1,4 @@
-"""JCL Validator v2 — ModernBERT-base multi-head classifier.
+"""JCL Validator — ModernBERT-base multi-head classifier.
 
 Full fine-tune of `answerdotai/ModernBERT-base` with four classification
 heads (validity / error_code / severity / line_localization). Loss is a
@@ -11,8 +11,6 @@ The custom JCL tokenizer (column-aware pre-tokenizer + BPE, see
 `datasets/tokenizer.json` declared in `model.yml`. Pre-tokenization is
 applied per-sample before encoding.
 
-Replaces the v1 generative-SFT thin wrapper at `training/jcl_validator.py`.
-
 Public surface:
   - `JclClassifierConfig` — typed config built from `model.yml::training`
   - `train_jcl_classifier(model_def, ...)` — entry point invoked by the CLI
@@ -21,16 +19,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
+from ..config import ModelDefinition, get_dataset_cfg
+from ..device import get_profile, resolve_device
+from ..registry import register_trainer
+from ..utils.io import iter_jsonl
+from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 
 
-from ..config import ModelDefinition
-from ..utils.io import iter_jsonl, read_json
-
-
-# Error code ↔ index. Order is the canonical training-time index assignment;
-# the runtime mirrors it byte-for-byte.
-ERROR_CODES = [
+# Default error code ↔ index. Order is the canonical training-time index
+# assignment; override via ``training.heads.error_codes`` / ``severities``.
+DEFAULT_ERROR_CODES = [
     "missing_dd",
     "invalid_job_card",
     "unresolved_symbolic_parameter",
@@ -40,7 +40,18 @@ ERROR_CODES = [
     "other",
     "none",
 ]
-SEVERITIES = ["error", "warning", "info", "none"]
+DEFAULT_SEVERITIES = ["error", "warning", "info", "none"]
+
+# Module-level aliases kept for evaluator imports.
+ERROR_CODES = list(DEFAULT_ERROR_CODES)
+SEVERITIES = list(DEFAULT_SEVERITIES)
+
+
+def _resolve_heads(training_dict: dict) -> tuple[list[str], list[str]]:
+    heads = training_dict.get("heads") or {}
+    codes = list(heads.get("error_codes") or DEFAULT_ERROR_CODES)
+    sevs = list(heads.get("severities") or DEFAULT_SEVERITIES)
+    return codes, sevs
 
 
 @dataclass
@@ -105,19 +116,22 @@ class JclClassifierResult:
     train_runtime: float
 
 
-def _classifier_head_module(hidden_size: int):
-    """Construct the 4-head classifier module on top of a BERT encoder.
-    Kept inside a function so the heavyweight torch import is deferred.
-    """
+def _classifier_head_module(
+    hidden_size: int, error_codes: list[str], severities: list[str]
+):
+    """Construct the 4-head classifier module on top of a BERT encoder."""
     import torch
     from torch import nn
+
+    n_codes = len(error_codes)
+    n_sevs = len(severities)
 
     class JclClassifierHeads(nn.Module):
         def __init__(self, hidden: int) -> None:
             super().__init__()
             self.validity = nn.Linear(hidden, 2)
-            self.error_code = nn.Linear(hidden, len(ERROR_CODES))
-            self.severity = nn.Linear(hidden, len(SEVERITIES))
+            self.error_code = nn.Linear(hidden, n_codes)
+            self.severity = nn.Linear(hidden, n_sevs)
             self.line = nn.Linear(hidden, 2)  # per-token binary
 
         def forward(
@@ -133,20 +147,21 @@ def _classifier_head_module(hidden_size: int):
     return JclClassifierHeads(hidden_size)
 
 
-def _build_dataset(rows: list[dict], tokenizer, max_length: int):
-    """Flatten the v1 SFT JSONL into per-head classifier targets.
-
-    Each row's `expected_validation_result` is decomposed into:
-      - validity: int (0 = invalid, 1 = valid)
-      - error_code: int (index into ERROR_CODES)
-      - severity: int (index into SEVERITIES)
-      - line: list[int] — token-level binary mask, 1 on tokens whose
-        character-offset overlaps the gold `errors[0].line`'s line span.
-    """
+def _build_dataset(
+    rows: list[dict],
+    tokenizer,
+    max_length: int,
+    error_codes: list[str],
+    severities: list[str],
+):
+    """Flatten prepared JSONL rows into per-head classifier targets."""
     from torch.utils.data import Dataset
     import torch
 
     from ..tokenization import pre_tokenize_jcl
+
+    none_code = error_codes.index("none") if "none" in error_codes else 0
+    none_sev = severities.index("none") if "none" in severities else 0
 
     class _JclDataset(Dataset):
         def __init__(self, samples: list[dict]) -> None:
@@ -167,15 +182,10 @@ def _build_dataset(rows: list[dict], tokenizer, max_length: int):
             sev = primary.get("severity", "none")
             err_line = int(primary.get("line") or 0)
 
-            code_idx = ERROR_CODES.index(code) if code in ERROR_CODES else ERROR_CODES.index("none")
-            sev_idx = (
-                SEVERITIES.index(sev) if sev in SEVERITIES else SEVERITIES.index("none")
-            )
+            code_idx = error_codes.index(code) if code in error_codes else none_code
+            sev_idx = severities.index(sev) if sev in severities else none_sev
 
-            # Pre-tokenize JCL with the column rules before BPE encoding.
             pre = pre_tokenize_jcl(jcl)
-
-            # Encode with offsets so we can mark the error-line tokens.
             enc = tokenizer(
                 pre,
                 max_length=max_length,
@@ -189,23 +199,18 @@ def _build_dataset(rows: list[dict], tokenizer, max_length: int):
             attention_mask = enc["attention_mask"]
             offsets = enc.get("offset_mapping") or [(0, 0)] * len(input_ids)
 
-            # Build line-classification labels: tokens whose offset falls on
-            # the error-line get label=1, else 0. Padding gets -100 (ignored).
             line_labels = [-100] * len(input_ids)
             if err_line > 0:
-                # Compute the character span of `err_line` (1-based) in `pre`.
                 start_char = _line_start_offset(pre, err_line)
                 end_char = _line_start_offset(pre, err_line + 1)
                 for i, (s, e) in enumerate(offsets):
                     if attention_mask[i] == 0:
                         continue
                     if s == e == 0:
-                        # Special token (CLS/SEP/PAD); don't supervise.
                         line_labels[i] = -100
                         continue
                     line_labels[i] = 1 if (s >= start_char and s < end_char) else 0
             else:
-                # Valid sample (no error line). All non-special tokens get 0.
                 for i, (s, e) in enumerate(offsets):
                     if attention_mask[i] == 0 or s == e == 0:
                         continue
@@ -224,11 +229,7 @@ def _build_dataset(rows: list[dict], tokenizer, max_length: int):
 
 
 def _line_start_offset(text: str, line_no: int) -> int:
-    """1-based line number → character offset of that line's start.
-
-    `line_no` past the end returns `len(text)` so callers can use it as an
-    exclusive upper bound when slicing the previous line.
-    """
+    """1-based line number → character offset of that line's start."""
     if line_no <= 1:
         return 0
     count = 0
@@ -246,12 +247,17 @@ def _train_loop(
     val_ds,
     out_dir: Path,
     tokenizer,
+    *,
+    error_codes: list[str],
+    severities: list[str],
+    profile,
+    embedding_strategy: Optional[str],
+    model_def: ModelDefinition,
+    dataset_dir: Path,
+    smoke: bool,
+    device_name: str,
 ) -> JclClassifierResult:
-    """Inner training loop. Custom because the multi-head loss doesn't fit
-    `transformers.Trainer`'s single-loss assumption — we subclass it and
-    override `compute_loss`.
-    """
-    import torch
+    """Inner training loop with multi-head loss via Trainer.compute_loss override."""
     from torch import nn
     from transformers import (
         AutoModel,
@@ -263,15 +269,17 @@ def _train_loop(
     set_seed(cfg.seed)
 
     encoder = AutoModel.from_pretrained(cfg.model_id)
+    ensure_tokenizer_model_contract(
+        encoder, tokenizer, embedding_strategy=embedding_strategy
+    )
     hidden = encoder.config.hidden_size
-    heads = _classifier_head_module(hidden)
+    heads = _classifier_head_module(hidden, error_codes, severities)
 
     class JclMultiHead(nn.Module):
         def __init__(self) -> None:
             super().__init__()
             self.encoder = encoder
             self.heads = heads
-            # cross-entropy with -100 ignore for line labels handles padding.
             self.ce = nn.CrossEntropyLoss()
             self.ce_line = nn.CrossEntropyLoss(ignore_index=-100)
 
@@ -286,8 +294,6 @@ def _train_loop(
         ):
             out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
             seq = out.last_hidden_state
-            # Pool via CLS for classification heads. ModernBERT puts the
-            # CLS token at index 0 by template-processor convention.
             pooled = seq[:, 0, :]
             heads_out = self.heads(seq, pooled)
             loss = None
@@ -296,7 +302,6 @@ def _train_loop(
                 lv = self.ce(heads_out["validity_logits"], validity_label)
                 lc = self.ce(heads_out["error_code_logits"], error_code_label)
                 ls = self.ce(heads_out["severity_logits"], severity_label)
-                # line_logits shape: (B, T, 2) → flatten to (B*T, 2)
                 ll = self.ce_line(
                     heads_out["line_logits"].view(-1, 2),
                     line_labels.view(-1),
@@ -320,6 +325,8 @@ def _train_loop(
 
     use_bf16 = cfg.precision == "bf16"
     use_fp16 = cfg.precision == "fp16"
+    use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
+    run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
 
     args = TrainingArguments(
         output_dir=str(out_dir),
@@ -331,14 +338,16 @@ def _train_loop(
         weight_decay=cfg.weight_decay,
         warmup_steps=warmup_steps,
         logging_steps=cfg.logging_steps,
+        eval_strategy="steps" if run_eval else "no",
+        eval_steps=cfg.eval_steps if run_eval else None,
         save_strategy="steps",
         save_steps=cfg.save_steps,
         save_total_limit=2,
         seed=cfg.seed,
         bf16=use_bf16,
         fp16=use_fp16,
-        gradient_checkpointing=cfg.grad_checkpointing,
-        dataloader_num_workers=0,
+        gradient_checkpointing=use_grad_ckpt,
+        dataloader_num_workers=profile.dataloader_workers,
         report_to=[],
         optim="adamw_torch",
         max_steps=cfg.max_steps,
@@ -355,23 +364,22 @@ def _train_loop(
         model=model,
         args=args,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
+        eval_dataset=val_ds if run_eval else None,
         processing_class=tokenizer,
+        callbacks=[make_nan_guard_callback()],
     )
 
     train_output = trainer.train()
     eval_metrics: dict = {}
     if val_ds is not None:
+        profile.empty_cache()
         eval_metrics = trainer.evaluate(eval_dataset=val_ds) or {}
 
-    # Save the fused encoder + heads under one safetensors blob.
+    # Safetensors only: encoder via save_pretrained + heads sidecar.
     model.eval()
-    torch.save(model.state_dict(), out_dir / "pytorch_model.bin")
     encoder.save_pretrained(out_dir)
     tokenizer.save_pretrained(out_dir)
 
-    # Also dump head weights as a sidecar so the Rust backend can locate
-    # them without having to load the whole state_dict.
     from safetensors.torch import save_file
 
     head_state = {
@@ -386,6 +394,22 @@ def _train_loop(
     }
     save_file(head_state, out_dir / "classifier_heads.safetensors")
 
+    write_run_metadata(
+        out_dir,
+        model_def,
+        {
+            "train": dataset_dir / "train.jsonl",
+            "val": dataset_dir / "val.jsonl",
+        },
+        extra={
+            "smoke": smoke,
+            "device": device_name,
+            "profile": profile.name,
+            "error_codes": error_codes,
+            "severities": severities,
+        },
+    )
+
     return JclClassifierResult(
         out_dir=out_dir,
         metrics={k: float(v) for k, v in eval_metrics.items() if isinstance(v, (int, float))},
@@ -397,6 +421,8 @@ def _train_loop(
     )
 
 
+@register_trainer("multi_head_classifier")
+@register_trainer("classifier")
 def train_jcl_classifier(
     model_def: ModelDefinition,
     *,
@@ -408,13 +434,7 @@ def train_jcl_classifier(
     device: str = "auto",
     seed: Optional[int] = None,
 ) -> JclClassifierResult:
-    """Train the v2 JCL classifier from a `ModelDefinition`.
-
-    `tokenizer_path` defaults to `model_def.data.tokenizer` resolved
-    relative to the model dir; pass an override path during smoke runs
-    before the BPE has been trained (the smoke run can use the stock
-    ModernBERT tokenizer).
-    """
+    """Train the JCL classifier from a `ModelDefinition`."""
     from transformers import AutoTokenizer
 
     training_dict = model_def.merged_smoke() if smoke else dict(model_def.training)
@@ -422,31 +442,34 @@ def train_jcl_classifier(
     if seed is not None:
         cfg.seed = seed
 
+    error_codes, severities = _resolve_heads(training_dict)
+    # Keep module-level aliases in sync for any mid-run evaluator imports.
+    global ERROR_CODES, SEVERITIES
+    ERROR_CODES = list(error_codes)
+    SEVERITIES = list(severities)
+
     dataset_dir = Path(dataset_dir) if dataset_dir else model_def.prepared_dir
     if out_dir is None:
-        run_name = "smoke" if smoke else model_def.model_id.replace(":", "-")
+        run_name = "smoke" if smoke else model_def.identity
         out_dir = model_def.checkpoints_dir / run_name
     else:
         out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Tokenizer: prefer the trained JCL BPE; fall back to the stock
-    # ModernBERT tokenizer (only useful for smoke). The fallback is
-    # transparent — encodes work, just without the column-aware special
-    # tokens, so eval gates may miss until the JCL tokenizer is trained.
+    ds_cfg = get_dataset_cfg(model_def)
     resolved_tokenizer = (
         Path(tokenizer_path)
         if tokenizer_path
         else (
-            model_def.resolve(model_def.data["tokenizer"])
-            if model_def.data.get("tokenizer")
+            model_def.resolve(ds_cfg["tokenizer"])
+            if ds_cfg.get("tokenizer")
             else None
         )
     )
     if resolved_tokenizer and resolved_tokenizer.exists():
         from transformers import PreTrainedTokenizerFast
 
-        tokenizer = PreTrainedTokenizerFast(
+        tokenizer: Any = PreTrainedTokenizerFast(
             tokenizer_file=str(resolved_tokenizer),
             model_max_length=cfg.max_input_tokens,
             pad_token="<PAD>",
@@ -467,12 +490,35 @@ def train_jcl_classifier(
     if not train_rows:
         raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
 
+    target_device = resolve_device(device)
+    profile = get_profile(target_device)
+
     print(
         f"JCL classifier: model={cfg.model_id} train={len(train_rows)} "
         f"val={len(val_rows)} max_len={cfg.max_input_tokens} epochs={cfg.epochs}"
     )
 
-    train_ds = _build_dataset(train_rows, tokenizer, cfg.max_input_tokens)
-    val_ds = _build_dataset(val_rows, tokenizer, cfg.max_input_tokens) if val_rows else None
+    train_ds = _build_dataset(
+        train_rows, tokenizer, cfg.max_input_tokens, error_codes, severities
+    )
+    val_ds = (
+        _build_dataset(val_rows, tokenizer, cfg.max_input_tokens, error_codes, severities)
+        if val_rows
+        else None
+    )
 
-    return _train_loop(cfg, train_ds, val_ds, out_dir, tokenizer)
+    return _train_loop(
+        cfg,
+        train_ds,
+        val_ds,
+        out_dir,
+        tokenizer,
+        error_codes=error_codes,
+        severities=severities,
+        profile=profile,
+        embedding_strategy=training_dict.get("embedding_strategy"),
+        model_def=model_def,
+        dataset_dir=dataset_dir,
+        smoke=smoke,
+        device_name=str(target_device),
+    )

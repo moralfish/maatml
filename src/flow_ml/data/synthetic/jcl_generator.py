@@ -238,7 +238,7 @@ def generate_one(
 
     if category is None or category is ErrorCategory.none:
         sid = f"syn-valid-{stable_hash(template_id, seed, idx)[:8]}"
-        return JclSample(
+        return JclSample(  # type: ignore[call-arg]
             sample_id=sid,
             source=f"synthetic:{template_id}",
             sanitized_jcl="\n".join(lines) + "\n",
@@ -256,7 +256,7 @@ def generate_one(
         return None
     new_lines, error_line, error_column, suggestion = result
     sid = f"syn-{category.value}-{stable_hash(template_id, seed, idx)[:8]}"
-    return JclSample(
+    return JclSample(  # type: ignore[call-arg]
         sample_id=sid,
         source=f"synthetic:{template_id}",
         sanitized_jcl="\n".join(new_lines) + "\n",
