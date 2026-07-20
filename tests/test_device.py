@@ -1,6 +1,10 @@
 """Device profile selection tests."""
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 from flow_ml.device import get_profile, resolve_device
 
 
@@ -31,12 +35,18 @@ def test_cpu_profile() -> None:
     assert p.weights_dtype_policy == "fp32_master"
 
 
+def test_get_profile_from_device_like_object() -> None:
+    """Profiles accept any object with a ``.type`` attribute (no torch needed)."""
+    p = get_profile(SimpleNamespace(type="mps"))
+    assert p.name == "mps"
+
+
 def test_resolve_device_cpu() -> None:
+    pytest.importorskip("torch")
     assert resolve_device("cpu").type == "cpu"
 
 
 def test_get_profile_from_torch_device() -> None:
-    import torch
-
+    torch = pytest.importorskip("torch")
     p = get_profile(torch.device("cpu"))
     assert p.name == "cpu"
