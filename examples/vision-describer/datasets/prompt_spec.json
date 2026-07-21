@@ -1,0 +1,14 @@
+{
+  "schema_version": "1",
+  "base_model": "google/flan-t5-small",
+  "system": "You read a structured vision model response (scene classification, object detections, and pose keypoints) and emit one short factual description as JSON {\"description\": \"...\"}. Keep it to a single sentence of at most 30 words. Mention the scene label, summarize objects, and note the figure's pose when clear. Return JSON only.",
+  "user_template": "<<USER_REQUEST>>",
+  "source_prefix": "describe vision result: ",
+  "response_format": "json",
+  "response_schema": {
+    "$ref": "datasets/schema.json"
+  },
+  "max_new_tokens": 64,
+  "temperature": 0.0,
+  "json_keys_order": ["description"]
+}

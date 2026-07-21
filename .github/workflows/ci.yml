@@ -47,6 +47,8 @@ jobs:
           maatml validate examples/jcl-validator
           maatml validate examples/spool-interpreter
           maatml validate examples/support-ticket-triage
+          maatml validate examples/vision
+          maatml validate examples/vision-describer
 
   standalone:
     runs-on: ubuntu-latest

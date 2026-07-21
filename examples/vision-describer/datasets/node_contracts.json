@@ -1,0 +1,24 @@
+{
+  "schema_version": "1",
+  "task": "vision_description",
+  "max_description_words": 30,
+  "scene_labels": ["plain", "gradient", "striped", "noisy", "checker"],
+  "shape_labels": ["circle", "square", "triangle", "star"],
+  "keypoint_names": [
+    "head", "neck", "l_shoulder", "r_shoulder", "l_elbow", "r_elbow",
+    "l_wrist", "r_wrist", "hip", "l_knee", "r_knee", "feet"
+  ],
+  "score_thresh": 0.3,
+  "pose_cues": [
+    "raising both arms",
+    "raising the left arm",
+    "raising the right arm",
+    "arms lowered",
+    "standing upright"
+  ],
+  "notes": [
+    "Input is a linearized VisionMultitaskResult JSON (scene/detections/pose).",
+    "Output is a single factual sentence wrapped as {\"description\": \"...\"}.",
+    "Low-confidence detections (< score_thresh) are dropped before linearization."
+  ]
+}

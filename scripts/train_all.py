@@ -32,6 +32,9 @@ _NAME_ALIASES = {
     "spool": "spool-interpreter",
     "tickets": "support-ticket-triage",
     "triage": "support-ticket-triage",
+    "vision": "vision",
+    "describer": "vision-describer",
+    "vision-describer": "vision-describer",
 }
 
 
