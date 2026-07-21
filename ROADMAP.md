@@ -57,9 +57,3 @@ Infrastructure everything else consumes.
 - **Data flywheel** — `maatml datagen` / `ingest`; shared gated builder;
   optional OpenAI-compatible teacher behind the validator gate (`[teacher]`) ✅
 - **Docs site** — mkdocs-material (`[docs]`), plugin-author guide ✅
-
-## Non-goals (for now)
-
-Competing with Axolotl / Unsloth on throughput, model coverage, or GUI.
-MaatML wins on reproducible pipelines for domains where correctness is
-decidable — not as a general fine-tuning speed race.
