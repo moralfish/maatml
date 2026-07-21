@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "maatml"
 version = "0.4.0"
-description = "A machine learning models framework from experimentation to production — data, training, evaluation, export, and deploy pipelines for small task-specific language models"
+description = "A machine learning models framework from experimentation to production: data, training, evaluation, export, and deploy pipelines for small task-specific language models"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [
   { name = "Nedal Elghamry" }
 ]
-urls = { Homepage = "https://maatml.org", Documentation = "https://maatml.org", Repository = "https://github.com/moralfish/maatml", Changelog = "https://github.com/moralfish/maatml/blob/main/CHANGELOG.md" }
+urls = { Homepage = "https://maatml.pages.dev", Documentation = "https://maatml.pages.dev", Repository = "https://github.com/moralfish/maatml", Changelog = "https://github.com/moralfish/maatml/blob/main/CHANGELOG.md" }
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -55,7 +55,7 @@ ml = [
   "sentencepiece>=0.2"
 ]
 cuda = [
-  # QLoRA / bitsandbytes — CUDA Linux only (not macOS / MPS). Also install [ml].
+  # QLoRA / bitsandbytes: CUDA Linux only (not macOS / MPS). Also install [ml].
   "bitsandbytes>=0.43",
 ]
 pref = [
@@ -79,6 +79,11 @@ vision = [
   "onnx>=1.16",
   "onnxscript>=0.1.0",
   "onnxruntime>=1.18",
+]
+vllm = [
+  # OpenAI-compatible VLM serving for examples/vision-vlm.
+  # Linux-only (use the nvidia-ai-iot container on Jetson).
+  "vllm>=0.10; platform_system=='Linux'",
 ]
 
 [tool.setuptools.packages.find]

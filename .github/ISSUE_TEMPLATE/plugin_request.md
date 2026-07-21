@@ -16,7 +16,7 @@ What does this model do, and who needs it?
 
 ## Architecture sketch
 
-Preferred architecture if known (`classifier`, `seq2seq`, `generative`, other):
+Preferred architecture if known (`causal_sft`, `seq2seq`, `multi_head_classifier`, `dpo`/`orpo`, `vision_multitask`, `vlm_sft`, or new):
 
 Base model ideas (optional):
 

@@ -5,12 +5,20 @@
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![CI](https://github.com/moralfish/maatml/actions/workflows/ci.yml/badge.svg)](https://github.com/moralfish/maatml/actions/workflows/ci.yml)
 
-**MaatML** takes task-specific language models from **experimentation to
-production**: prepare → train → evaluate → package, driven by a standalone
-`model.yml`. Licensed under **Apache-2.0**.
+**MaatML** fine-tunes small, task-specific models across **text, vision, and
+vision-language**, and takes them from experimentation to production through a
+single declarative `model.yml`: **prepare → train → evaluate → export → serve**.
+Licensed under **Apache-2.0**.
 
-Site: [maatml.pages.dev(https://maatml.pages.dev) ·
-PyPI: [`maatml`](https://pypi.org/project/maatml/) · Source:
+**What makes it different:** correctness is checked *outside* the model by
+**validators**. The same validator gates your synthetic **data**, your
+**evaluation**, and your **live inference**, so a MaatML model ships with a
+contract, not just weights. That validator-gated *data → eval → serving* loop,
+now across modalities, is what general fine-tuning tools leave out.
+
+Site: [maatml.pages.dev](https://maatml.pages.dev) ·
+PyPI: [`maatml`](https://pypi.org/project/maatml/) ·
+Source: [github.com/moralfish/maatml](https://github.com/moralfish/maatml)
 
 
 ## Installation
@@ -29,6 +37,7 @@ pip install "maatml[ml]"
 pip install "maatml[ml,cuda]"    # QLoRA on NVIDIA CUDA (bitsandbytes)
 pip install "maatml[ml,pref]"    # DPO / ORPO (TRL)
 pip install "maatml[ml,vision]"  # torchvision + ONNX (examples/vision)
+pip install "maatml[vllm]"       # Linux-only vLLM serving (examples/vision-vlm)
 pip install "maatml[teacher]"    # OpenAI-compatible teacher for datagen
 pip install "maatml[docs]"       # mkdocs site
 ```
@@ -46,23 +55,43 @@ For contributing to this repository (editable install), see
 
 ## Example models
 
+Six reference models share the identical folder layout and CLI, from a
+one-command support-ticket triage to a vLLM-servable vision-language model:
+
 | Model | Task | Architecture | Base |
 |-------|------|--------------|------|
+| [Support Ticket Triage](examples/support-ticket-triage/) | triage → JSON | `causal_sft` (LoRA) | Qwen3-0.6B |
+| [Vision VLM](examples/vision-vlm/) | describe a scene image | `vlm_sft` (vLLM-servable) | SmolVLM-256M-Instruct |
+| [Vision](examples/vision/) | scene + detect + pose | `vision_multitask` | MobileNetV3-Large |
+| [Vision Describer](examples/vision-describer/) | caption from vision JSON | `seq2seq` | flan-t5-small |
 | [JCL Validator](examples/jcl-validator/) | `jcl_validation` | `classifier` (4-head) | ModernBERT-base |
 | [Spool Interpreter](examples/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
-| [Support Ticket Triage](examples/support-ticket-triage/) | triage | `causal_sft` | Qwen3-0.6B |
-| [Vision](examples/vision/) | scene + detect + pose | `vision_multitask` | MobileNetV3-Large |
-| [Vision Describer](examples/vision-describer/) | short caption from vision JSON | `seq2seq` | flan-t5-small |
 
-Any directory with a valid `model.yml` works the same way — install maatml from
+Any directory with a valid `model.yml` works the same way: install maatml from
 PyPI and point the CLI at the folder. Scaffold a new model folder with
 `maatml scaffold`.
+
+## Where MaatML fits
+
+MaatML **builds on** Hugging Face `transformers` / `peft` / `trl` and does the
+one thing those building blocks leave to you: it wraps them in an opinionated,
+validator-gated lifecycle for **small** task-specific models you can train on a
+laptop and deploy to the edge or vLLM.
+
+- **Complements** general fine-tuning tools (Axolotl, LLaMA-Factory, Unsloth,
+  TRL) rather than competing on scale. Reach for those for large models,
+  multi-node training, RL, or broad model coverage.
+- **Not an orchestrator.** It trains and serves models; it does not schedule
+  arbitrary DAGs. Run `maatml train` as a step inside MLflow / Prefect /
+  Metaflow if you need pipeline orchestration.
+- **Its niche:** local-first, multimodal, structured-output models with
+  correctness gated *outside* the model, from data generation through serving.
 
 ## Requirements
 
 - **Python** 3.10+ (developed against 3.13)
 - **OS** macOS, Linux (Windows untested)
-- **Disk / memory** ~3 GB for the ML stack; 16 GB unified memory is the design[analysis.md](../analysis.md)
+- **Disk / memory** ~3 GB for the ML stack; 16 GB unified memory is the design
   target for local training
 
 ## CLI overview
@@ -98,36 +127,33 @@ Export defaults to a safetensors bundle + `manifest.json`. GGUF/MLX need
 external tooling (`llama.cpp` convert / `mlx_lm`). Pin base-model revisions
 with `training.model_revision`.
 
-Docs: [maatml.org](https://maatml.org) · Roadmap: [ROADMAP.md](ROADMAP.md) ·
+Docs: [maatml.pages.dev](https://maatml.pages.dev) · Roadmap: [ROADMAP.md](ROADMAP.md) ·
 In-repo docs: `docs/` (`pip install "maatml[docs]"` then `mkdocs serve`).
 
 Run `maatml <command> --help` for options.
 
-## End-to-end example (JCL Validator)
+## End-to-end example (Support Ticket Triage)
 
-Clone the repo only if you want the reference examples and seed corpora:
+The quickest model to run: a LoRA fine-tune of Qwen3-0.6B that turns a raw
+support ticket into `{priority, category, team, summary}` JSON, gated by a schema
+validator:
 
 ```bash
 git clone https://github.com/moralfish/maatml.git
 cd maatml
 pip install "maatml[ml]"
 
-# 1. Seed samples live at
-#    examples/jcl-validator/datasets/samples/seed_samples.jsonl
-#    (or regenerate via examples/jcl-validator/scripts/build_seeds.py)
-
-# 2. Prepare splits
-maatml prepare examples/jcl-validator/
-
-# 3. Smoke training, then full training
-maatml train examples/jcl-validator/ --smoke
-maatml train examples/jcl-validator/
-
-# 4. Evaluate the most recent checkpoint
-maatml evaluate examples/jcl-validator/
+maatml prepare  examples/support-ticket-triage/
+maatml train    examples/support-ticket-triage/ --smoke   # fast pipeline check
+maatml train    examples/support-ticket-triage/
+maatml evaluate examples/support-ticket-triage/ --gate    # enforce eval gates
+maatml serve    examples/support-ticket-triage/           # JSON inference API
 ```
 
-JCL training also needs the custom tokenizer once:
+For a **multimodal** walkthrough (image → description, servable by vLLM) see
+[examples/vision-vlm/](examples/vision-vlm/). For an **advanced** model with a
+custom column-aware tokenizer, see [examples/jcl-validator/](examples/jcl-validator/).
+Its tokenizer is built once up front:
 
 ```bash
 python examples/jcl-validator/scripts/build_seeds.py --target 10000 \
@@ -186,9 +212,9 @@ Community: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · Security:
 ## Licensing
 
 - **maatml** is licensed under the [Apache License 2.0](LICENSE).
-- This repository **does not redistribute base-model weights** — only Hugging
+- This repository **does not redistribute base-model weights**, only Hugging
   Face Hub IDs. The reference bases (ModernBERT, flan-t5, and related Apache-2.0
   models such as Qwen3 when used) are Apache-2.0; **your fine-tuned checkpoints
   inherit the base model's license terms**.
 - Seed corpora are **fully synthetic**, produced by deterministic builders under
-  `examples/*/scripts/` — no proprietary mainframe dumps are shipped.
+  `examples/*/scripts/`, with no proprietary mainframe dumps shipped.
