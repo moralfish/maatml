@@ -42,15 +42,20 @@ def resolve_export_format(
     architecture: str,
     requested: Optional[str] = None,
 ) -> str:
-    """Pick export format; enforce architecture constraints."""
+    """Pick export format; enforce architecture constraints.
+
+    Known formats come from the ``EXPORTERS`` registry (built-ins + plugins).
+    ``gguf`` / ``mlx`` remain gated to causal / preference architectures.
+    """
     arch = normalize_architecture(architecture)
     if requested is None or requested == "auto":
         return "safetensors"
 
     fmt = requested.lower().strip()
-    if fmt not in ("safetensors", "gguf", "mlx"):
+    known = set(EXPORTERS.names()) or {"safetensors", "gguf", "mlx"}
+    if fmt not in known:
         raise ValueError(
-            f"Unknown export format {requested!r}; choose safetensors|gguf|mlx"
+            f"Unknown export format {requested!r}; known: {', '.join(sorted(known))}"
         )
 
     if fmt in ("gguf", "mlx") and arch not in ("causal_sft", "dpo", "orpo"):

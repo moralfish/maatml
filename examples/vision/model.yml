@@ -1,0 +1,78 @@
+# Vision multitask — one MobileNetV3-Large checkpoint for scene classification,
+# CenterNet-style shape detection, and single-person stick-figure pose.
+#
+# Synthetic scenes (PIL) keep the example offline and CI-friendly. Export to
+# ONNX and serve with `maatml serve` (onnxruntime CPU on Mac, TensorRT EP on Jetson).
+
+name: vision
+model_id: vision
+task: vision_multitask
+architecture: vision_multitask
+version: 0.1.0
+description: >-
+  Multitask vision model (scene classification + shape detection + pose)
+  trained on deterministic synthetic scenes; ONNX-exportable for Jetson.
+base_model: torchvision/mobilenet_v3_large
+
+plugins: [./vision_plugin]
+
+dataset:
+  format: jsonl_seed
+  seed: 42
+  schema: datasets/schema.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/benchmark_samples.jsonl
+  request_field: image
+  target_field: expected
+  group_by: family
+  split_ratios: [0.7, 0.15, 0.15]
+  sanitize: []
+  generator: synthetic_scenes
+
+evaluation:
+  validator: vision_scene
+  metrics: vision_scene
+  predictor: vision_multitask
+  gates:
+    scene_accuracy: 0.85
+    map_50: 0.15
+    pck_0_2: 0.15
+
+training:
+  image_size: 320
+  backbone: mobilenet_v3_large
+  pretrained: true
+  batch_size: 4
+  learning_rate: 1.0e-3
+  weight_decay: 0.0001
+  epochs: 8
+  seed: 42
+  logging_steps: 10
+  max_steps: -1
+  score_thresh: 0.25
+  loss_weights:
+    scene: 1.0
+    detect: 2.0
+    pose: 5.0
+  heads:
+    scene_labels: [plain, gradient, striped, noisy, checker]
+    shape_labels: [circle, square, triangle, star]
+    keypoint_names:
+      [head, neck, l_shoulder, r_shoulder, l_elbow, r_elbow,
+       l_wrist, r_wrist, hip, l_knee, r_knee, feet]
+
+smoke:
+  pretrained: false
+  batch_size: 2
+  learning_rate: 1.0e-3
+  epochs: 1
+  max_steps: 4
+  logging_steps: 1
+
+packaging:
+  max_input_tokens: 1
+  expected_latency_ms: 30
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.8
+    low: 0.3

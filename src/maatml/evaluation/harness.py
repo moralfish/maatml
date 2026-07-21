@@ -357,17 +357,12 @@ def run_evaluation(
         validate_fn: Callable[..., ValidationResult] = _noop_validate
     else:
         validate_fn = _resolve_callable("validator", validator, VALIDATORS)
-        # Task validators need schema + contracts; fail early with a clear error.
+        # Task validators need schema when declared; contracts are optional
+        # (text models like JCL/spool declare them; vision may not).
         if resolved_schema is None:
             raise FileNotFoundError(
                 "Evaluator requires a schema file. Set data/dataset.schema in "
                 "model.yml, pass schema_path=, or place schema.json under the checkpoint."
-            )
-        if resolved_contracts is None:
-            raise FileNotFoundError(
-                "Evaluator requires a contracts file. Set data/dataset.contracts in "
-                "model.yml, pass contracts_path=, or place node_contracts.json under "
-                "the checkpoint."
             )
 
     metrics_callable: Optional[Callable[..., dict[str, float]]] = None
@@ -377,6 +372,13 @@ def run_evaluation(
     row_results: list[RowEval] = []
     failures: list[dict] = []
     timings: list[float] = []
+
+    request_field = "request"
+    if model_def is not None:
+        cfg = get_dataset_cfg(model_def)
+        request_field = str(
+            cfg.get("request_field") or cfg.get("raw_field") or "request"
+        )
 
     predict = pred_obj.predict if hasattr(pred_obj, "predict") else pred_obj
 
@@ -394,10 +396,16 @@ def run_evaluation(
         elapsed = (time.perf_counter() - t0) * 1000.0
         timings.append(elapsed)
 
+        user_prompt = row.get(request_field)
+        if not isinstance(user_prompt, str):
+            # Fall back to classic text field when request_field is an image path.
+            alt = row.get("request")
+            user_prompt = alt if isinstance(alt, str) else None
+
         if resolved_schema is None and resolved_contracts is None:
-            result = validate_fn(gen_text, user_prompt=row.get("request"))
+            result = validate_fn(gen_text, user_prompt=user_prompt)
         else:
-            kwargs: dict[str, Any] = {"user_prompt": row.get("request")}
+            kwargs: dict[str, Any] = {"user_prompt": user_prompt}
             if resolved_schema is not None:
                 kwargs["schema_path"] = resolved_schema
             if resolved_contracts is not None:
@@ -408,13 +416,17 @@ def run_evaluation(
         row_results.append(item)
 
         if not result.ok and len(failures) < failures_to_keep:
+            input_val = row.get(request_field, row.get("request"))
+            if isinstance(input_val, str):
+                input_preview: Any = input_val[:500]
+            else:
+                input_preview = input_val
             failures.append(
                 {
                     "sample_id": row.get("sample_id"),
                     "category": row.get("category"),
-                    "request": (row.get("request") or "")[:500]
-                    if isinstance(row.get("request"), str)
-                    else row.get("request"),
+                    "request": input_preview,
+                    request_field: input_preview,
                     "raw_output": gen_text[:1500],
                     "errors": [
                         {

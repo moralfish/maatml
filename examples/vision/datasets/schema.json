@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VisionMultitaskResult",
+  "type": "object",
+  "required": ["scene", "detections", "pose"],
+  "additionalProperties": true,
+  "properties": {
+    "scene": {
+      "type": "object",
+      "required": ["label"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "enum": ["plain", "gradient", "striped", "noisy", "checker"]
+        },
+        "confidence": { "type": "number" }
+      }
+    },
+    "detections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["label", "box"],
+        "properties": {
+          "label": {
+            "type": "string",
+            "enum": ["circle", "square", "triangle", "star"]
+          },
+          "box": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": { "type": "number" }
+          },
+          "confidence": { "type": "number" }
+        }
+      }
+    },
+    "pose": {
+      "type": "object",
+      "required": ["keypoints"],
+      "properties": {
+        "keypoints": {
+          "type": "array",
+          "minItems": 12,
+          "items": {
+            "type": "object",
+            "required": ["name", "x", "y"],
+            "properties": {
+              "name": { "type": "string" },
+              "x": { "type": "number" },
+              "y": { "type": "number" },
+              "confidence": { "type": "number" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

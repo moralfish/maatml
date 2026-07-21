@@ -71,6 +71,15 @@ docs = [
   "mkdocs>=1.6",
   "mkdocs-material>=9.5",
 ]
+vision = [
+  # Multitask vision (classification / detection / pose) + ONNX export.
+  # Also install [ml].
+  "torchvision>=0.18",
+  "pillow>=10.0",
+  "onnx>=1.16",
+  "onnxscript>=0.1.0",
+  "onnxruntime>=1.18",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

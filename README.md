@@ -9,13 +9,9 @@
 production**: prepare → train → evaluate → package, driven by a standalone
 `model.yml`. Licensed under **Apache-2.0**.
 
-Site: [maatml.org](https://maatml.org) · [maatml.com](https://maatml.com) ·
+Site: [maatml.pages.dev(https://maatml.pages.dev) ·
 PyPI: [`maatml`](https://pypi.org/project/maatml/) · Source:
-[github.com/moralfish/maatml](https://github.com/moralfish/maatml)
 
-Core owns architectures (`causal_sft`, `seq2seq`, `multi_head_classifier`,
-`dpo`, `orpo`). Examples own task semantics (validators, metrics, sanitizers,
-tokenizers).
 
 ## Installation
 
@@ -32,6 +28,7 @@ pip install "maatml[ml]"
 # Optional extras
 pip install "maatml[ml,cuda]"    # QLoRA on NVIDIA CUDA (bitsandbytes)
 pip install "maatml[ml,pref]"    # DPO / ORPO (TRL)
+pip install "maatml[ml,vision]"  # torchvision + ONNX (examples/vision)
 pip install "maatml[teacher]"    # OpenAI-compatible teacher for datagen
 pip install "maatml[docs]"       # mkdocs site
 ```
@@ -54,6 +51,7 @@ For contributing to this repository (editable install), see
 | [JCL Validator](examples/jcl-validator/) | `jcl_validation` | `classifier` (4-head) | ModernBERT-base |
 | [Spool Interpreter](examples/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
 | [Support Ticket Triage](examples/support-ticket-triage/) | triage | `causal_sft` | Qwen3-0.6B |
+| [Vision](examples/vision/) | scene + detect + pose | `vision_multitask` | MobileNetV3-Large |
 
 Any directory with a valid `model.yml` works the same way — install maatml from
 PyPI and point the CLI at the folder. Scaffold a new model folder with
@@ -63,7 +61,7 @@ PyPI and point the CLI at the folder. Scaffold a new model folder with
 
 - **Python** 3.10+ (developed against 3.13)
 - **OS** macOS, Linux (Windows untested)
-- **Disk / memory** ~3 GB for the ML stack; 16 GB unified memory is the design
+- **Disk / memory** ~3 GB for the ML stack; 16 GB unified memory is the design[analysis.md](../analysis.md)
   target for local training
 
 ## CLI overview
@@ -76,8 +74,9 @@ maatml prepare  <model-dir>                                   # builds output/pr
 maatml train    <model-dir> [--smoke] [--resume auto|PATH] [--set K=V]
 maatml sweep    <model-dir> --param K=a,b [--metric NAME] [--smoke] [--max-trials N]
 maatml evaluate <model-dir> [--checkpoint X] [--gate]         # writes output/eval/<run>.{json,md}
-maatml export   <model-dir> [--checkpoint X] [--format safetensors|gguf|mlx] [--parity]
+maatml export   <model-dir> [--checkpoint X] [--format safetensors|gguf|mlx|onnx] [--parity]
 maatml verify   <export-dir-or-manifest>                      # sha256 check vs manifest.json
+maatml serve    <model-dir> [--checkpoint X] [--host HOST] [--port N]  # JSON inference API
 maatml datagen  <model-dir> [--target N] [--teacher]          # validator-gated seed generation
 maatml ingest   <model-dir> --input PATH [--map field=col] [--sanitize tag]
 maatml runs     <model-dir>                                   # list training runs
