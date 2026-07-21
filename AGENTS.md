@@ -52,6 +52,7 @@ torchrun --nproc_per_node=N -m maatml.cli train examples/<name>/
 .venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 1000
 .venv/bin/python examples/spool-interpreter/scripts/build_seeds.py --target 1500
 .venv/bin/python examples/vision/scripts/build_seeds.py --target 2000
+.venv/bin/python examples/vision-describer/scripts/build_seeds.py --target 400
 
 # Custom JCL BPE tokenizer (required before JCL training)
 .venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 10000 \
@@ -76,6 +77,7 @@ seed builders live under `examples/*/…_plugin/` and register via
 | `examples/spool-interpreter/` | `seq2seq` | flan-t5-base |
 | `examples/support-ticket-triage/` | `causal_sft` (LoRA SFT) | Qwen3-0.6B |
 | `examples/vision/` | `vision_multitask` (scene + detect + pose) | MobileNetV3-Large |
+| `examples/vision-describer/` | `seq2seq` (vision JSON → short description) | flan-t5-small |
 
 Built-in architectures also include `dpo` / `orpo` (TRL preference; `maatml[pref]`).
 

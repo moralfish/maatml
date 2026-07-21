@@ -223,37 +223,42 @@ def _train_loop(
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
 
-    args = Seq2SeqTrainingArguments(  # type: ignore[call-arg]
-        output_dir=str(out_dir),
-        run_name=run_id,
-        per_device_train_batch_size=cfg.batch_size,
-        per_device_eval_batch_size=cfg.batch_size,
-        gradient_accumulation_steps=cfg.grad_accum,
-        learning_rate=cfg.learning_rate,
-        num_train_epochs=cfg.epochs,
-        weight_decay=cfg.weight_decay,
-        warmup_steps=warmup_steps,
-        logging_steps=cfg.logging_steps,
-        eval_strategy="steps" if run_eval else "no",
-        eval_steps=cfg.eval_steps if run_eval else None,
-        save_strategy="steps",
-        save_steps=cfg.save_steps,
-        save_total_limit=2,
-        seed=cfg.seed,
-        bf16=use_bf16,
-        fp16=use_fp16,
-        gradient_checkpointing=use_grad_ckpt,
-        dataloader_num_workers=num_workers,
-        report_to=report_to,
-        optim="adamw_torch",
-        max_steps=cfg.max_steps,
-        predict_with_generate=False,
-        generation_max_length=cfg.generation.max_new_tokens,
-        generation_num_beams=cfg.generation.num_beams,
-        remove_unused_columns=False,
-        group_by_length=bool(group_by_length),
-        use_cpu=(not distributed) and str(device_name).startswith("cpu"),
-    )
+    args_kwargs: dict = {
+        "output_dir": str(out_dir),
+        "run_name": run_id,
+        "per_device_train_batch_size": cfg.batch_size,
+        "per_device_eval_batch_size": cfg.batch_size,
+        "gradient_accumulation_steps": cfg.grad_accum,
+        "learning_rate": cfg.learning_rate,
+        "num_train_epochs": cfg.epochs,
+        "weight_decay": cfg.weight_decay,
+        "warmup_steps": warmup_steps,
+        "logging_steps": cfg.logging_steps,
+        "eval_strategy": "steps" if run_eval else "no",
+        "eval_steps": cfg.eval_steps if run_eval else None,
+        "save_strategy": "steps",
+        "save_steps": cfg.save_steps,
+        "save_total_limit": 2,
+        "seed": cfg.seed,
+        "bf16": use_bf16,
+        "fp16": use_fp16,
+        "gradient_checkpointing": use_grad_ckpt,
+        "dataloader_num_workers": num_workers,
+        "report_to": report_to,
+        "optim": "adamw_torch",
+        "max_steps": cfg.max_steps,
+        "predict_with_generate": False,
+        "generation_max_length": cfg.generation.max_new_tokens,
+        "generation_num_beams": cfg.generation.num_beams,
+        "remove_unused_columns": False,
+        "use_cpu": (not distributed) and str(device_name).startswith("cpu"),
+    }
+    # transformers≥5 dropped group_by_length from TrainingArguments.
+    import inspect
+
+    if "group_by_length" in inspect.signature(Seq2SeqTrainingArguments.__init__).parameters:
+        args_kwargs["group_by_length"] = bool(group_by_length)
+    args = Seq2SeqTrainingArguments(**args_kwargs)  # type: ignore[call-arg]
 
     collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,

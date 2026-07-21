@@ -1,0 +1,98 @@
+# Vision Result Describer — flan-t5-small seq2seq that turns a structured
+# VisionMultitaskResult JSON into one short factual description.
+#
+# Input:  linearized vision JSON (scene + detections + pose)
+# Output: {"description": "<≤30-word sentence>"}
+#
+# Designed to sit downstream of examples/vision via two maatml serve
+# processes + scripts/compose_client.py.
+
+name: vision-describer
+model_id: vision-describer
+task: vision_description
+architecture: seq2seq
+version: 0.1.0
+description: >-
+  flan-t5-small seq2seq that reads a vision multitask JSON response and
+  emits a short grounded description.
+base_model: google/flan-t5-small
+
+plugins: [./vision_describer_plugin]
+
+dataset:
+  format: jsonl_seed
+  seed: 4242
+  schema: datasets/schema.json
+  contracts: datasets/node_contracts.json
+  prompt_spec: datasets/prompt_spec.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/benchmark_samples.jsonl
+  request_field: request
+  target_field: expected_description
+  group_by: family
+  split_ratios: [0.8, 0.1, 0.1]
+  sanitize: []
+  generator: vision_describer
+  source_prefix: "describe vision result: "
+  target_key_order: [description]
+
+evaluation:
+  validator: vision_describer
+  metrics: vision_describer
+  predictor: seq2seq
+  gates:
+    json_parse_rate: 0.98
+    schema_conformance_rate: 0.95
+    conciseness_rate: 0.90
+    scene_grounding_rate: 0.80
+    object_grounding_rate: 0.70
+
+training:
+  model_id: google/flan-t5-small
+  source_max_len: 512
+  target_max_len: 64
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 5.0e-5
+  epochs: 6
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  seed: 4242
+  precision: bf16
+  grad_checkpointing: false
+  embedding_strategy: resize
+  eval_steps: 9999
+  save_steps: 200
+  logging_steps: 20
+  max_steps: -1
+  generation:
+    num_beams: 1
+    max_new_tokens: 64
+
+smoke:
+  source_max_len: 384
+  target_max_len: 48
+  batch_size: 2
+  grad_accum: 1
+  learning_rate: 5.0e-5
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  precision: bf16
+  grad_checkpointing: false
+  embedding_strategy: resize
+  eval_steps: 9999
+  save_steps: 9999
+  logging_steps: 1
+  max_steps: 6
+  generation:
+    num_beams: 1
+    max_new_tokens: 48
+
+packaging:
+  max_input_tokens: 512
+  expected_latency_ms: 400
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.8
+    low: 0.3

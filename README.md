@@ -52,6 +52,7 @@ For contributing to this repository (editable install), see
 | [Spool Interpreter](examples/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
 | [Support Ticket Triage](examples/support-ticket-triage/) | triage | `causal_sft` | Qwen3-0.6B |
 | [Vision](examples/vision/) | scene + detect + pose | `vision_multitask` | MobileNetV3-Large |
+| [Vision Describer](examples/vision-describer/) | short caption from vision JSON | `seq2seq` | flan-t5-small |
 
 Any directory with a valid `model.yml` works the same way — install maatml from
 PyPI and point the CLI at the folder. Scaffold a new model folder with

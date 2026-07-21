@@ -586,36 +586,41 @@ def train_sft(
         report_to = normalize_report_to(cfg.report_to)
         num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
 
-        args = TrainingArguments(  # type: ignore[call-arg]
-            output_dir=str(out_dir),
-            run_name=run.run_id,
-            per_device_train_batch_size=cfg.batch_size,
-            per_device_eval_batch_size=cfg.batch_size,
-            gradient_accumulation_steps=cfg.grad_accum,
-            learning_rate=cfg.learning_rate,
-            num_train_epochs=cfg.epochs,
-            weight_decay=cfg.weight_decay,
-            warmup_steps=warmup_steps,
-            logging_steps=cfg.logging_steps,
-            eval_strategy="steps" if run_eval_during_training else "no",
-            eval_steps=cfg.eval_steps if run_eval_during_training else None,
-            save_strategy="steps",
-            save_steps=cfg.save_steps,
-            save_total_limit=2,
-            seed=cfg.seed,
-            bf16=use_bf16,
-            fp16=use_fp16,
-            gradient_checkpointing=use_grad_ckpt,
-            dataloader_num_workers=num_workers,
-            report_to=report_to,
-            optim="adamw_torch",
-            max_steps=cfg.max_steps,
+        args_kwargs: dict = {
+            "output_dir": str(out_dir),
+            "run_name": run.run_id,
+            "per_device_train_batch_size": cfg.batch_size,
+            "per_device_eval_batch_size": cfg.batch_size,
+            "gradient_accumulation_steps": cfg.grad_accum,
+            "learning_rate": cfg.learning_rate,
+            "num_train_epochs": cfg.epochs,
+            "weight_decay": cfg.weight_decay,
+            "warmup_steps": warmup_steps,
+            "logging_steps": cfg.logging_steps,
+            "eval_strategy": "steps" if run_eval_during_training else "no",
+            "eval_steps": cfg.eval_steps if run_eval_during_training else None,
+            "save_strategy": "steps",
+            "save_steps": cfg.save_steps,
+            "save_total_limit": 2,
+            "seed": cfg.seed,
+            "bf16": use_bf16,
+            "fp16": use_fp16,
+            "gradient_checkpointing": use_grad_ckpt,
+            "dataloader_num_workers": num_workers,
+            "report_to": report_to,
+            "optim": "adamw_torch",
+            "max_steps": cfg.max_steps,
             # Distributed: let HF Trainer / accelerate place the model.
-            use_cpu=(not distributed) and target_device.type == "cpu",
-            remove_unused_columns=False,
-            group_by_length=bool(cfg.group_by_length),
-            length_column_name="length",
-        )
+            "use_cpu": (not distributed) and target_device.type == "cpu",
+            "remove_unused_columns": False,
+            "length_column_name": "length",
+        }
+        # transformers≥5 dropped group_by_length from TrainingArguments.
+        import inspect
+
+        if "group_by_length" in inspect.signature(TrainingArguments.__init__).parameters:
+            args_kwargs["group_by_length"] = bool(cfg.group_by_length)
+        args = TrainingArguments(**args_kwargs)  # type: ignore[call-arg]
 
         trainer = Trainer(
             model=model,

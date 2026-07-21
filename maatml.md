@@ -13,6 +13,8 @@ folder with a `model.yml` that drives prepare → train → evaluate.
 | jcl-validator | classify JCL syntax errors | multi-head classifier | ModernBERT-base |
 | spool-interpreter | summarise z/OS spool output as JSON | seq2seq | flan-t5-base |
 | support-ticket-triage | triage support tickets | causal SFT (LoRA) | Qwen3-0.6B |
+| vision | scene + detect + pose | vision_multitask | MobileNetV3-Large |
+| vision-describer | short caption from vision JSON | seq2seq | flan-t5-small |
 
 Each example folder carries `model.yml`, optional `*_plugin/`, `datasets/`,
 `scripts/`, and `output/` (prepared splits, checkpoints, eval — gitignored).
