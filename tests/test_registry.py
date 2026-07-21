@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from flow_ml.registry import (
+from maatml.config import load_model_def
+from maatml.registry import (
+    EXPORTERS,
+    FORMATS,
+    PREDICTORS,
     TRAINERS,
     VALIDATORS,
     discover_plugins,
@@ -17,7 +21,7 @@ from flow_ml.registry import (
 @pytest.fixture(autouse=True)
 def _isolate_registries():
     """Snapshot + restore all registries so tests don't leak registrations."""
-    import flow_ml.registry as reg
+    import maatml.registry as reg
 
     snaps = {kind: dict(r._entries) for kind, r in reg._ALL_REGISTRIES.items()}
     discovered_snap = reg._discovered
@@ -44,7 +48,7 @@ def test_register_get_require() -> None:
 def test_folder_local_plugin_load(tmp_path: Path) -> None:
     plugin = tmp_path / "local_plugin.py"
     plugin.write_text(
-        "from flow_ml.registry import register_validator\n"
+        "from maatml.registry import register_validator\n"
         "@register_validator('local_test_validator')\n"
         "def _v(*a, **k):\n"
         "    return {'ok': True}\n",
@@ -56,11 +60,49 @@ def test_folder_local_plugin_load(tmp_path: Path) -> None:
     assert VALIDATORS.require("local_test_validator")() == {"ok": True}
 
 
-def test_discover_plugins_registers_contrib() -> None:
+def test_folder_local_package_plugin_load(tmp_path: Path) -> None:
+    pkg = tmp_path / "toy_plugin"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text(
+        "from maatml.registry import register_validator\n"
+        "from .helper import VALUE\n"
+        "@register_validator('pkg_test_validator')\n"
+        "def _v(*a, **k):\n"
+        "    return {'value': VALUE}\n",
+        encoding="utf-8",
+    )
+    (pkg / "helper.py").write_text("VALUE = 42\n", encoding="utf-8")
+    loaded = load_model_plugins(tmp_path, ["./toy_plugin"])
+    assert loaded
+    assert VALIDATORS.require("pkg_test_validator")() == {"value": 42}
+
+
+def test_discover_plugins_registers_core() -> None:
     discover_plugins(force=True)
-    assert VALIDATORS.get("jcl") is not None
-    assert VALIDATORS.get("spool") is not None
     assert TRAINERS.get("causal_sft") is not None
     assert TRAINERS.get("seq2seq") is not None
     assert TRAINERS.get("multi_head_classifier") is not None
     assert TRAINERS.get("classifier") is not None
+    assert FORMATS.get("jsonl_seed") is not None
+    assert FORMATS.get("alpaca") is not None
+    assert FORMATS.get("sharegpt") is not None
+    assert PREDICTORS.get("seq2seq") is not None
+    assert PREDICTORS.get("classifier") is not None
+    assert EXPORTERS.get("safetensors") is not None
+    assert EXPORTERS.get("gguf") is not None
+    assert EXPORTERS.get("mlx") is not None
+    # Task validators live in example plugins, not core discovery.
+    assert VALIDATORS.get("jcl") is None
+    assert VALIDATORS.get("spool") is None
+
+
+def test_load_model_def_registers_jcl_plugin() -> None:
+    discover_plugins(force=True)
+    repo = Path(__file__).resolve().parents[1]
+    md = load_model_def(repo / "examples" / "jcl-validator")
+    assert "jcl" in (md.evaluation or {}).get("validator", "")
+    assert VALIDATORS.get("jcl") is not None
+    assert PREDICTORS.get("jcl_classifier") is not None
+    from maatml.registry import GENERATORS
+
+    assert GENERATORS.get("jcl") is not None

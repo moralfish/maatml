@@ -1,23 +1,28 @@
-# flow-ml
+# maatml
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
 [![CI](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](.github/workflows/ci.yml)
 
-A **training and fine-tuning framework** for task-specific language models.
-Each model is a standalone folder with a `model.yml` that drives the full
-lifecycle: prepare → train → evaluate. Licensed under **Apache-2.0**.
+**MaatML** takes task-specific language models from **experimentation to
+production**: prepare → train → evaluate → package, driven by a standalone
+`model.yml`. Licensed under **Apache-2.0**.
 
-## Reference models
+Core owns architectures (`causal_sft`, `seq2seq`, `multi_head_classifier`,
+`dpo`, `orpo`). Examples own task semantics (validators, metrics, sanitizers,
+tokenizers).
+
+## Example models
 
 | Model | Task | Architecture | Base |
 |-------|------|--------------|------|
-| [JCL Validator](models/jcl-validator/) | `jcl_validation` | `classifier` (4-head) | ModernBERT-base |
-| [Spool Interpreter](models/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
+| [JCL Validator](examples/jcl-validator/) | `jcl_validation` | `classifier` (4-head) | ModernBERT-base |
+| [Spool Interpreter](examples/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
+| [Support Ticket Triage](examples/support-ticket-triage/) | triage | `causal_sft` | Qwen3-0.6B |
 
-Any directory with a valid `model.yml` works the same way — install flow-ml via
+Any directory with a valid `model.yml` works the same way — install maatml via
 pip and point the CLI at the folder. Scaffold a new model folder with
-`flow_ml scaffold` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+`maatml scaffold` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 
 ## Requirements
 
@@ -37,6 +42,18 @@ pip install -e ".[dev]"
 
 # Training / evaluation extras
 pip install -e ".[dev,ml]"
+
+# Optional: QLoRA on NVIDIA CUDA (bitsandbytes; not macOS/MPS)
+pip install -e ".[ml,cuda]"
+
+# Optional: DPO / ORPO preference trainers (TRL)
+pip install -e ".[ml,pref]"
+
+# Optional: OpenAI-compatible teacher for datagen
+pip install -e ".[teacher]"
+
+# Optional: docs site (mkdocs serve)
+pip install -e ".[docs]"
 ```
 
 ## CLI overview
@@ -45,53 +62,71 @@ Each command takes a model folder (containing `model.yml`) as its first
 argument. Outputs land under `<model-folder>/output/` (gitignored).
 
 ```
-flow_ml prepare  <model-dir>                                   # builds output/prepared/{train,val,test}.jsonl
-flow_ml train    <model-dir> [--smoke] [--limit N] [--seed S] # writes output/checkpoints/<run-name>/
-flow_ml evaluate <model-dir> [--checkpoint X] [--split test]  # writes output/eval/<run-name>.{json,md}
-flow_ml plan     <model-dir>                                   # prints the prepare/train/eval command plan
-flow_ml plugins                                                # list discovered trainers/validators/metrics
-flow_ml scaffold <dir> --architecture causal_sft [--name X]   # create a new model folder
-flow_ml validate <model-dir>                                   # check model.yml + registered plugins
+maatml prepare  <model-dir>                                   # builds output/prepared/{train,val,test}.jsonl
+maatml train    <model-dir> [--smoke] [--resume auto|PATH] [--set K=V]
+maatml sweep    <model-dir> --param K=a,b [--metric NAME] [--smoke] [--max-trials N]
+maatml evaluate <model-dir> [--checkpoint X] [--gate]         # writes output/eval/<run>.{json,md}
+maatml export   <model-dir> [--checkpoint X] [--format safetensors|gguf|mlx] [--parity]
+maatml verify   <export-dir-or-manifest>                      # sha256 check vs manifest.json
+maatml datagen  <model-dir> [--target N] [--teacher]          # validator-gated seed generation
+maatml ingest   <model-dir> --input PATH [--map field=col] [--sanitize tag]
+maatml runs     <model-dir>                                   # list training runs
+maatml plan     <model-dir>                                   # prints the prepare/train/eval/export plan
+maatml plugins                                                # list discovered trainers/validators/metrics
+maatml scaffold <dir> --architecture causal_sft|dpo [--name X]
+maatml validate <model-dir>                                   # check model.yml + registered plugins
 ```
 
-Run `flow_ml <command> --help` for options.
+Multi-GPU (CUDA): `accelerate launch -m maatml.cli train <model-dir>/` or
+`torchrun --nproc_per_node=N -m maatml.cli train <model-dir>/`.
+
+QLoRA (CUDA + `[cuda]`): set `training.quantization.load_in_4bit: true` in
+`model.yml`. Preference data: `dataset.format: preference_jsonl` with
+`{prompt, chosen, rejected}` rows; scaffold with `--architecture dpo`.
+
+Export defaults to a safetensors bundle + `manifest.json`. GGUF/MLX need
+external tooling (`llama.cpp` convert / `mlx_lm`). Pin base-model revisions
+with `training.model_revision`.
+
+Roadmap: [ROADMAP.md](ROADMAP.md) (v0.4 product surface done). Docs site:
+`docs/` + `mkdocs.yml` (`pip install maatml[docs]`).
+
+Run `maatml <command> --help` for options.
 
 ## End-to-end example (JCL Validator)
 
 ```bash
 # 1. Seed samples live at
-#    models/jcl-validator/datasets/samples/seed_samples.jsonl
-#    (or regenerate via scripts/build_jcl_seeds.py)
+#    examples/jcl-validator/datasets/samples/seed_samples.jsonl
+#    (or regenerate via examples/jcl-validator/scripts/build_seeds.py)
 
 # 2. Prepare splits
-flow_ml prepare models/jcl-validator/
+maatml prepare examples/jcl-validator/
 
 # 3. Smoke training, then full training
-flow_ml train models/jcl-validator/ --smoke
-flow_ml train models/jcl-validator/
+maatml train examples/jcl-validator/ --smoke
+maatml train examples/jcl-validator/
 
 # 4. Evaluate the most recent checkpoint
-flow_ml evaluate models/jcl-validator/
+maatml evaluate examples/jcl-validator/
 ```
 
 JCL training also needs the custom tokenizer once:
 
 ```bash
-python scripts/build_jcl_seeds.py --target 10000 \
-  --out models/jcl-validator/datasets/samples/tokenizer_corpus.jsonl
-python -m flow_ml.tokenization.jcl_tokenizer train \
-  --corpus models/jcl-validator/datasets/samples/tokenizer_corpus.jsonl \
-  --out models/jcl-validator/datasets/tokenizer.json
+python examples/jcl-validator/scripts/build_seeds.py --target 10000 \
+  --out examples/jcl-validator/datasets/samples/tokenizer_corpus.jsonl
+python examples/jcl-validator/scripts/build_tokenizer.py
 ```
 
-## Batch scripts (JCL + Spool)
+## Batch scripts
 
 ```bash
 # Deterministic seed corpora (no API calls)
-python scripts/build_jcl_seeds.py
-python scripts/build_spool_seeds.py
+python examples/jcl-validator/scripts/build_seeds.py
+python examples/spool-interpreter/scripts/build_seeds.py
 
-# Train / evaluate both models
+# Train / evaluate example models
 python scripts/train_all.py --smoke
 python scripts/train_all.py
 python scripts/evaluate_all.py
@@ -109,17 +144,19 @@ python scripts/evaluate_all.py
 ## Repository layout
 
 ```
-models/                     # one folder per model
+examples/                   # reference task models (plugins + data)
   jcl-validator/
     model.yml               # single source of truth
-    README.md
+    jcl_plugin/             # validator, metrics, predictor, tokenizer, …
     datasets/               # schemas, prompt specs, seed samples
+    scripts/                # seed + tokenizer builders
     output/                 # gitignored prepared / checkpoints / eval
-  spool-interpreter/        # same layout
+  spool-interpreter/        # same layout (uses core seq2seq)
+  support-ticket-triage/
 
-src/flow_ml/                # Python package (config, CLI, trainers, validators)
-scripts/                    # seed builders + batch train/eval
-tests/
+src/maatml/                 # core framework (architectures, CLI, harnesses)
+scripts/                    # batch train/eval/validate
+tests/                      # core unit tests
 ```
 
 ## Development
@@ -132,10 +169,10 @@ Community: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · Security:
 
 ## Licensing
 
-- **flow-ml** is licensed under the [Apache License 2.0](LICENSE).
+- **maatml** is licensed under the [Apache License 2.0](LICENSE).
 - This repository **does not redistribute base-model weights** — only Hugging
   Face Hub IDs. The reference bases (ModernBERT, flan-t5, and related Apache-2.0
   models such as Qwen3 when used) are Apache-2.0; **your fine-tuned checkpoints
   inherit the base model's license terms**.
 - Seed corpora are **fully synthetic**, produced by deterministic builders under
-  `scripts/` — no proprietary mainframe dumps are shipped.
+  `examples/*/scripts/` — no proprietary mainframe dumps are shipped.

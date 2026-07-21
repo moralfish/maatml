@@ -1,4 +1,4 @@
-"""Evaluate flow-ml models discovered under models/ (and optionally examples/).
+"""Evaluate maatml models discovered under examples/.
 
 Uses the evaluation harness + plugin registry — no hardcoded evaluate_* imports.
 
@@ -23,9 +23,9 @@ sys.path.insert(0, str(REPO / "src"))
 
 from rich.console import Console  # noqa: E402
 
-from flow_ml.config import ModelDefinition, load_model_def  # noqa: E402
-from flow_ml.registry import discover_plugins  # noqa: E402
-from flow_ml.scaffold import normalize_architecture  # noqa: E402
+from maatml.config import ModelDefinition, load_model_def  # noqa: E402
+from maatml.registry import discover_plugins  # noqa: E402
+from maatml.scaffold import normalize_architecture  # noqa: E402
 
 console = Console()
 
@@ -45,24 +45,21 @@ class Outcome:
     detail: str = ""
 
 
-def discover_model_dirs(*, include_examples: bool = False) -> list[Path]:
-    roots = [REPO / "models"]
-    if include_examples:
-        roots.append(REPO / "examples")
+def discover_model_dirs() -> list[Path]:
+    root = REPO / "examples"
     dirs: list[Path] = []
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for child in sorted(root.iterdir()):
-            if child.is_dir() and (child / "model.yml").is_file():
-                dirs.append(child)
+    if not root.is_dir():
+        return dirs
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and (child / "model.yml").is_file():
+            dirs.append(child)
     return dirs
 
 
-def _select_dirs(only: list[str] | None, *, include_examples: bool) -> list[Path]:
-    all_dirs = discover_model_dirs(include_examples=include_examples or bool(only))
+def _select_dirs(only: list[str] | None) -> list[Path]:
+    all_dirs = discover_model_dirs()
     if not only:
-        return [d for d in all_dirs if "models" in d.parts]
+        return all_dirs
     selected: list[Path] = []
     for key in only:
         alias = _NAME_ALIASES.get(key, key)
@@ -83,12 +80,12 @@ def _latest_checkpoint(md: ModelDefinition) -> Path:
         )
     candidates = [p for p in ckpt_root.iterdir() if p.is_dir()]
     if not candidates:
-        raise FileNotFoundError(f"No checkpoint directories in {ckpt_root}")
+        raise FileNotFoundError(f"No checkpoint dirs in {ckpt_root}")
     return max(candidates, key=lambda p: p.stat().st_mtime)
 
 
 def _default_eval_keys(md: ModelDefinition) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    from flow_ml.registry import PREDICTORS
+    from maatml.registry import PREDICTORS
 
     ev = md.evaluation or {}
     predictor = ev.get("predictor")
@@ -103,18 +100,6 @@ def _default_eval_keys(md: ModelDefinition) -> tuple[Optional[str], Optional[str
             predictor = md.architecture
         elif PREDICTORS.get(arch):
             predictor = arch
-
-    if validator is None:
-        if md.task == "jcl_validation":
-            validator = "jcl"
-        elif md.task == "spool_interpretation":
-            validator = "spool"
-
-    if metrics is None:
-        if validator == "jcl" or md.task == "jcl_validation":
-            metrics = "jcl"
-        elif validator == "spool" or md.task == "spool_interpretation":
-            metrics = "spool"
 
     return predictor, validator, metrics
 
@@ -133,9 +118,9 @@ def _run_one(
     console.rule(f"[bold cyan]{label}[/]")
     try:
         discover_plugins()
-        from flow_ml.evaluation import predictors as _predictors  # noqa: F401
-        from flow_ml.evaluation.harness import run_evaluation
-        from flow_ml.evaluation.runner import write_markdown_summary
+        from maatml.evaluation import predictors as _predictors  # noqa: F401
+        from maatml.evaluation.harness import run_evaluation
+        from maatml.evaluation.runner import write_markdown_summary
 
         md = load_model_def(model_dir)
         ckpt = checkpoint if checkpoint else _latest_checkpoint(md)
@@ -161,12 +146,7 @@ def _run_one(
         )
         write_markdown_summary(report, out_path.with_suffix(".md"))
         elapsed = time.monotonic() - started
-        headline = (
-            report.metrics.get("json_parse_rate")
-            or report.metrics.get("schema_conformance_rate")
-            or (next(iter(report.metrics.values())) if report.metrics else 0.0)
-        )
-        detail = f"n={report.n} report={out_path.name} headline={headline:.3f}"
+        detail = f"n={report.n} metrics={ {k: round(v, 4) for k, v in report.metrics.items()} }"
         console.print(f"[green]{label} done[/] in {elapsed:.1f}s — {detail}")
         return Outcome(task=label, ok=True, elapsed_s=elapsed, detail=detail)
     except Exception as exc:  # noqa: BLE001
@@ -182,17 +162,16 @@ def _run_one(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Evaluate discovered flow-ml models.")
-    parser.add_argument("--only", nargs="+")
-    parser.add_argument("--checkpoint", type=Path, default=None)
-    parser.add_argument("--split", default="test", choices=["train", "val", "test"])
+    parser = argparse.ArgumentParser(description="Evaluate discovered maatml models.")
+    parser.add_argument("--only", nargs="+", help="Subset by folder name or alias")
+    parser.add_argument("--split", default="test")
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--max-input-tokens", type=int, default=4096)
+    parser.add_argument("--max-input-tokens", type=int, default=1024)
     parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--include-examples", action="store_true")
+    parser.add_argument("--checkpoint", type=Path, default=None)
     args = parser.parse_args(argv)
 
-    selected = _select_dirs(args.only, include_examples=args.include_examples)
+    selected = _select_dirs(args.only)
     outcomes: list[Outcome] = []
     overall_started = time.monotonic()
     for model_dir in selected:

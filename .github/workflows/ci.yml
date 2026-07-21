@@ -21,9 +21,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Ruff
-        run: ruff check src tests scripts
+        run: ruff check src tests scripts examples
       - name: Mypy
-        run: mypy src/flow_ml --ignore-missing-imports
+        run: mypy src/maatml --ignore-missing-imports
 
   test:
     runs-on: ubuntu-latest
@@ -40,13 +40,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Pytest
-        run: pytest tests/ -q
+        run: pytest tests/ examples/ -q
       - name: Validate model scaffolds
         run: |
           python scripts/validate_repo.py
-          flow_ml validate models/jcl-validator
-          flow_ml validate models/spool-interpreter
-          flow_ml validate examples/support-ticket-triage
+          maatml validate examples/jcl-validator
+          maatml validate examples/spool-interpreter
+          maatml validate examples/support-ticket-triage
 
   standalone:
     runs-on: ubuntu-latest
@@ -62,15 +62,13 @@ jobs:
       - name: Install wheel only (no editable) and exercise CLI
         run: |
           python -m pip install dist/*.whl
-          # Dev test deps are not required for the standalone invariant —
-          # the wheel itself must provide the CLI + package data.
-          flow_ml --help
-          flow_ml plugins
+          maatml --help
+          maatml plugins
           TMPDIR="$(mktemp -d)"
-          flow_ml scaffold "$TMPDIR/my-model" --architecture causal_sft --name my-model
-          flow_ml validate "$TMPDIR/my-model"
+          maatml scaffold "$TMPDIR/my-model" --architecture causal_sft --name my-model
+          maatml validate "$TMPDIR/my-model"
           test -f "$TMPDIR/my-model/model.yml"
           test -f "$TMPDIR/my-model/README.md"
           test -f "$TMPDIR/my-model/datasets/samples/seed_samples.jsonl"
-          # Package data must be present in the installed wheel.
-          python -c "from importlib.resources import files; p = files('flow_ml.data').joinpath('sanitization.yaml'); assert p.is_file(), p"
+          # Core wheel must NOT ship example sanitization rules.
+          python -c "from importlib.resources import files; import importlib.util; assert importlib.util.find_spec('maatml.data') is not None; import pathlib; root = pathlib.Path(files('maatml')); assert not (root / 'data' / 'sanitization.yaml').exists()"

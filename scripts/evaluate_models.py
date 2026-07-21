@@ -1,8 +1,8 @@
-"""Shim: forwards to `python -m flow_ml.cli evaluate ...`."""
+"""Shim: forwards to `python -m maatml.cli evaluate ...`."""
 
 import sys
 
-from flow_ml.cli import app
+from maatml.cli import app
 
 if __name__ == "__main__":
     sys.argv = [sys.argv[0], "evaluate", *sys.argv[1:]]

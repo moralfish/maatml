@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/moralfish/maatml/schemas/jcl-validation-result.json",
+  "title": "JclValidationResult",
+  "description": "Canonical JCL validation result emitted by the JCL Validator. Mirrors the JclValidationResult Pydantic type in maatml.data.schemas.",
+  "type": "object",
+  "required": ["valid", "errors", "confidence"],
+  "additionalProperties": false,
+  "properties": {
+    "valid": { "type": "boolean" },
+    "errors": {
+      "type": "array",
+      "maxItems": 5,
+      "items": { "$ref": "#/definitions/JclError" }
+    },
+    "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+  },
+  "definitions": {
+    "JclError": {
+      "type": "object",
+      "required": ["line", "severity", "code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 },
+        "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+        "code": {
+          "type": "string",
+          "enum": [
+            "missing_dd",
+            "invalid_job_card",
+            "unresolved_symbolic_parameter",
+            "continuation_error",
+            "invalid_exec_statement",
+            "invalid_dataset_reference_structure",
+            "other",
+            "none"
+          ]
+        },
+        "message": { "type": "string", "minLength": 1 },
+        "suggestion": { "type": "string" }
+      }
+    }
+  }
+}

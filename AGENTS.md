@@ -12,108 +12,148 @@ can use `pip install -e ".[dev]"`; unit tests run without torch.
 # Install
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,ml]"
+# Optional: QLoRA (CUDA Linux) / preference trainers / teacher / docs
+# pip install -e ".[dev,ml,cuda]"   # bitsandbytes
+# pip install -e ".[dev,ml,pref]"   # trl (DPO/ORPO)
+# pip install -e ".[teacher]"       # httpx for maatml datagen --teacher
+# pip install -e ".[docs]"          # mkdocs-material
 
 # Test / lint (run from repo root)
-.venv/bin/python -m pytest tests/
-ruff check src tests scripts
+.venv/bin/python -m pytest tests/ examples/ -q
+ruff check src tests scripts examples
 
 # Per-model lifecycle (any standalone folder with model.yml)
-.venv/bin/flow_ml scaffold ~/models/my-task --architecture causal_sft
-.venv/bin/flow_ml validate ~/models/my-task
-.venv/bin/flow_ml prepare  models/<name>/
-.venv/bin/flow_ml train    models/<name>/ [--smoke] [--device mps|cpu] [--seed N] [--limit N]
-.venv/bin/flow_ml evaluate models/<name>/ [--checkpoint X] [--split test|val]
-.venv/bin/flow_ml plugins
+.venv/bin/maatml scaffold ~/models/my-task --architecture causal_sft
+.venv/bin/maatml scaffold ~/models/my-dpo --architecture dpo
+.venv/bin/maatml validate ~/models/my-task
+.venv/bin/maatml prepare  examples/<name>/
+.venv/bin/maatml train    examples/<name>/ [--smoke] [--device mps|cpu|cuda] [--seed N] [--limit N] [--resume auto|PATH] [--set training.learning_rate=1e-4]
+.venv/bin/maatml sweep    examples/<name>/ --param training.learning_rate=1e-4,3e-4 --param training.lora.r=8,16 [--metric eval_loss] [--smoke] [--max-trials N]
+.venv/bin/maatml evaluate examples/<name>/ [--checkpoint X] [--split test|val] [--gate]
+.venv/bin/maatml export   examples/<name>/ [--checkpoint X] [--format safetensors|gguf|mlx] [--out PATH] [--parity]
+.venv/bin/maatml verify   examples/<name>/output/export/<run_id>
+.venv/bin/maatml datagen  examples/<name>/ [--target N] [--seed S] [--teacher] [--out PATH]
+.venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
+.venv/bin/maatml runs     examples/<name>/
+.venv/bin/maatml plugins
+
+# Multi-GPU (CUDA) — HF Trainer / accelerate owns placement; rank-0 writes runs.jsonl
+accelerate launch -m maatml.cli train examples/<name>/
+# or:
+torchrun --nproc_per_node=N -m maatml.cli train examples/<name>/
 
 # Seed corpus regen (deterministic, validator-gated)
-.venv/bin/python scripts/build_jcl_seeds.py   --target 1000
-.venv/bin/python scripts/build_spool_seeds.py --target 1500
+.venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 1000
+.venv/bin/python examples/spool-interpreter/scripts/build_seeds.py --target 1500
 
 # Custom JCL BPE tokenizer (required before JCL training)
-.venv/bin/python scripts/build_jcl_seeds.py --target 10000 \
-    --out models/jcl-validator/datasets/samples/tokenizer_corpus.jsonl
-.venv/bin/python -m flow_ml.tokenization.jcl_tokenizer train \
-    --corpus models/jcl-validator/datasets/samples/tokenizer_corpus.jsonl \
-    --out models/jcl-validator/datasets/tokenizer.json
+.venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 10000 \
+    --out examples/jcl-validator/datasets/samples/tokenizer_corpus.jsonl
+.venv/bin/python examples/jcl-validator/scripts/build_tokenizer.py
 ```
+
+See also [ROADMAP.md](ROADMAP.md) for v0.4 product surface and later tranches.
 
 ## Architecture
 
-flow-ml is a **plugin-based training/fine-tuning framework**. Core owns
-registries, device profiles, generic prepare/train/eval harnesses, and
-guards. Task-specific validators/metrics live under `flow_ml.contrib.*` and
-register via entry points (`flow_ml.plugins`).
+MaatML is a **plugin-based training/fine-tuning framework** (experimentation →
+production). Core owns architectures, registries, device profiles, generic
+prepare/train/eval harnesses, and guards. **Examples own task semantics** —
+validators, metrics, predictors, tokenizers, generators, sanitizer rules, and
+seed builders live under `examples/*/…_plugin/` and register via
+`model.yml` `plugins:`.
 
 | Location | Architecture | Base |
 |---|---|---|
-| `models/jcl-validator/` | `classifier` / `multi_head_classifier` | ModernBERT-base |
-| `models/spool-interpreter/` | `seq2seq` | flan-t5-base |
+| `examples/jcl-validator/` | `classifier` / `multi_head_classifier` | ModernBERT-base |
+| `examples/spool-interpreter/` | `seq2seq` | flan-t5-base |
 | `examples/support-ticket-triage/` | `causal_sft` (LoRA SFT) | Qwen3-0.6B |
+
+Built-in architectures also include `dpo` / `orpo` (TRL preference; `maatml[pref]`).
 
 **Standalone model folders.** Every path in `model.yml` resolves relative to
 the model folder via `ModelDefinition.resolve()`. Core never falls back to
-repo-relative paths. `pip install flow-ml` + `flow_ml scaffold ~/anywhere/...`
+repo-relative paths. `pip install maatml` + `maatml scaffold ~/anywhere/...`
 must work with no checkout present.
 
 **Single source of truth.** `model.yml` carries `architecture`, `dataset:`,
-`training:`, `smoke:`, `evaluation:`, `packaging:`. Version is semver
-(`0.1.0`); identity is `name@version`.
+`training:`, `smoke:`, `evaluation:`, `packaging:`, `plugins:`. Version is
+semver (`0.1.0`); identity is `name@version`.
 
 ### Dispatch (registry)
 
 ```
-architecture → trainer registry (causal_sft / seq2seq / multi_head_classifier)
-dataset.format → format registry (jsonl_seed → prepare)
+architecture → trainer registry (causal_sft / seq2seq / multi_head_classifier / dpo / orpo)
+dataset.format → format registry (jsonl_seed / alpaca / sharegpt / preference_jsonl → prepare)
+dataset.generator → generator registry (jcl / spool / custom → datagen)
 evaluation.validator / metrics / predictor → plugin registries
+export --format → exporter registry (safetensors / gguf / mlx)
 ```
 
-`model.yml` may also list `plugins: [./plugin.py]` for folder-local extensions.
+`model.yml` may also list `plugins: [./jcl_plugin]` for folder-local packages.
 
-### Device profiles (`flow_ml.device`)
+### Device profiles (`maatml.device`)
 
-- `mps`: no mid-train eval, workers=0, no grad checkpointing, fp32 master weights
-- `cuda`: mid-train eval on, workers>0, checkpointing allowed
-- `cpu`: conservative defaults
+- `mps`: no mid-train eval, workers=0, no grad checkpointing, fp32 master weights,
+  `allow_quantized_load=False`
+- `cuda`: mid-train eval on, workers>0, checkpointing allowed, native bf16/fp16
+  master weights when `training.precision` matches, `allow_quantized_load=True`
+- `cpu`: conservative defaults, no quantized load
 
-### Guards (`flow_ml.training.guards`)
+QLoRA (`training.quantization:`) is CUDA-only; mps/cpu raise a hard error.
+Optional `training.attn_implementation` and `training.dataloader_workers`.
+
+### Guards (`maatml.training.guards`)
 
 - `NanGuardCallback` aborts on non-finite loss/grad_norm
 - `ensure_tokenizer_model_contract` + `training.embedding_strategy`
-- `run_metadata.json` written into each checkpoint dir
+- `run_metadata.json` written into each checkpoint dir (rank-0 only when distributed)
 
 ### Out-of-model validators
 
-JCL and Spool validators live under `flow_ml.validation` and are registered
-by `flow_ml.contrib.{jcl,spool}`. Shared fence stripping / result types are in
-`flow_ml.validation.base`.
+Shared fence stripping / result types are in `maatml.validation.base`.
+Task validators register from example plugins (e.g. `jcl_plugin`, `spool_plugin`).
 
 ## Data flow
 
 ```
-datasets/samples/seed_samples.jsonl  ← scripts/build_*_seeds.py
+datasets/samples/seed_samples.jsonl  ← build_seeds / maatml datagen / ingest
         │
-        │  flow_ml prepare
+        │  maatml prepare
         ▼
 output/prepared/{train,val,test}.jsonl
         │
-        │  flow_ml train (registry by architecture)
+        │  maatml train / sweep  →  output/runs.jsonl
         ▼
-output/checkpoints/<name@version>/{*.safetensors, tokenizer, run_metadata.json, ...}
+output/checkpoints/<run_id>/{*.safetensors, tokenizer, run_metadata.json, ...}
         │
-        │  flow_ml evaluate
+        │  maatml evaluate [--gate]
         ▼
 output/eval/<run>.{json,md}
+        │
+        │  maatml export [--parity] → output/export/<run_id>/ + manifest.json
+        │  maatml verify <export-dir>
 ```
 
 ## Operational notes
 
 - **JCL tokenizer required before training.** If
-  `models/jcl-validator/datasets/tokenizer.json` is missing, training falls
+  `examples/jcl-validator/datasets/tokenizer.json` is missing, training falls
   back to the stock ModernBERT tokenizer and eval gates miss. Set
   `training.embedding_strategy: resize` when using the custom tokenizer.
-- **Seed regen stamps `family`.** Group-aware splits hash `family` (fallback
-  `source` → `sample_id`). Re-run builders after schema changes.
-- **Checkpoint selection.** `_latest_checkpoint()` picks the most recently
-  modified dir under `output/checkpoints/`. Pass `--checkpoint` explicitly
-  when needed.
-- **Tests live under `tests/`.** Run from repo root.
+  Use `dataset.text_transform: jcl_columns` for column-aware pre-tokenization.
+- **Seed regen stamps `family`.** Group-aware splits hash `dataset.group_by`
+  when set, else `family` → `source` → `sample_id`. Re-run builders after
+  schema changes. Prefer `maatml datagen` when `dataset.generator` is set.
+- **Checkpoint selection.** `resolve_checkpoint` prefers the latest completed
+  run in `output/runs.jsonl`, then falls back to newest mtime under
+  `output/checkpoints/`. Pass `--checkpoint <run_id|path>` explicitly when
+  needed. Resume via `maatml train --resume auto|PATH`.
+- **Export.** Default format is safetensors (works for all architectures).
+  `gguf` / `mlx` are causal/preference-only and need external tooling
+  (llama.cpp convert / `mlx_lm`). `training.model_revision` pins the HF
+  revision for base model loads.
+- **Overrides / sweep.** `--set training.learning_rate=1e-4` mutates the loaded
+  model def; `maatml sweep` runs a cartesian product of `--param` axes (cap with
+  `--max-trials`).
+- **Tests** live under `tests/` (core) and `examples/*/tests/` (task plugins).

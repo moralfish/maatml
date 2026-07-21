@@ -1,4 +1,4 @@
-"""Train flow-ml models discovered under models/ (and optionally examples/).
+"""Train maatml models discovered under examples/.
 
 Uses the plugin registry — no hardcoded trainer imports.
 
@@ -6,7 +6,6 @@ Usage:
     .venv/bin/python scripts/train_all.py
     .venv/bin/python scripts/train_all.py --smoke
     .venv/bin/python scripts/train_all.py --only jcl spool
-    .venv/bin/python scripts/train_all.py --include-examples
 """
 from __future__ import annotations
 
@@ -22,9 +21,9 @@ sys.path.insert(0, str(REPO / "src"))
 
 from rich.console import Console  # noqa: E402
 
-from flow_ml.config import get_dataset_cfg, load_model_def  # noqa: E402
-from flow_ml.registry import FORMATS, TRAINERS, discover_plugins  # noqa: E402
-from flow_ml.scaffold import normalize_architecture  # noqa: E402
+from maatml.config import get_dataset_cfg, load_model_def  # noqa: E402
+from maatml.registry import FORMATS, TRAINERS, discover_plugins  # noqa: E402
+from maatml.scaffold import normalize_architecture  # noqa: E402
 
 console = Console()
 
@@ -44,24 +43,21 @@ class Outcome:
     detail: str = ""
 
 
-def discover_model_dirs(*, include_examples: bool = False) -> list[Path]:
-    roots = [REPO / "models"]
-    if include_examples:
-        roots.append(REPO / "examples")
+def discover_model_dirs() -> list[Path]:
+    root = REPO / "examples"
     dirs: list[Path] = []
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for child in sorted(root.iterdir()):
-            if child.is_dir() and (child / "model.yml").is_file():
-                dirs.append(child)
+    if not root.is_dir():
+        return dirs
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and (child / "model.yml").is_file():
+            dirs.append(child)
     return dirs
 
 
-def _select_dirs(only: list[str] | None, *, include_examples: bool) -> list[Path]:
-    all_dirs = discover_model_dirs(include_examples=include_examples or bool(only))
+def _select_dirs(only: list[str] | None) -> list[Path]:
+    all_dirs = discover_model_dirs()
     if not only:
-        return [d for d in all_dirs if "models" in d.parts]
+        return all_dirs
     selected: list[Path] = []
     for key in only:
         alias = _NAME_ALIASES.get(key, key)
@@ -116,7 +112,7 @@ def _run_one(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Train discovered flow-ml models.")
+    parser = argparse.ArgumentParser(description="Train discovered maatml models.")
     parser.add_argument(
         "--only",
         nargs="+",
@@ -124,13 +120,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--skip-prepare", action="store_true")
-    parser.add_argument("--include-examples", action="store_true")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None)
     args = parser.parse_args(argv)
 
-    selected = _select_dirs(args.only, include_examples=args.include_examples)
+    selected = _select_dirs(args.only)
     outcomes: list[Outcome] = []
     overall_started = time.monotonic()
     for model_dir in selected:

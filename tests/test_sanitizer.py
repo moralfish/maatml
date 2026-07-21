@@ -1,6 +1,17 @@
 from __future__ import annotations
 
-from flow_ml.data.sanitizer import sanitize_jcl, sanitize_spool
+from pathlib import Path
+
+from maatml.data.sanitizer import make_tag_sanitizer
+
+REPO = Path(__file__).resolve().parents[1]
+JCL_RULES = REPO / "examples" / "jcl-validator" / "jcl_plugin" / "sanitization.yaml"
+SPOOL_RULES = (
+    REPO / "examples" / "spool-interpreter" / "spool_plugin" / "sanitization.yaml"
+)
+
+sanitize_jcl = make_tag_sanitizer(JCL_RULES, tag="jcl", length_preserving_only=True)
+sanitize_spool = make_tag_sanitizer(SPOOL_RULES, tag="spool")
 
 
 def test_jcl_redacts_userid_assignment_length_preserving() -> None:

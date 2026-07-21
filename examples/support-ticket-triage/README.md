@@ -14,10 +14,10 @@ Causal LoRA SFT example: given a customer support ticket, emit triage JSON.
 ## Lifecycle
 
 ```bash
-flow_ml prepare examples/support-ticket-triage/
-flow_ml train   examples/support-ticket-triage/ --smoke
-flow_ml train   examples/support-ticket-triage/
-flow_ml evaluate examples/support-ticket-triage/
+maatml prepare examples/support-ticket-triage/
+maatml train   examples/support-ticket-triage/ --smoke
+maatml train   examples/support-ticket-triage/
+maatml evaluate examples/support-ticket-triage/
 ```
 
 Add more tickets under `datasets/samples/seed_samples.jsonl`, then re-prepare.

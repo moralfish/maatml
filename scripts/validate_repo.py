@@ -1,6 +1,6 @@
-"""Validate all model folders under models/ (and examples/ if present).
+"""Validate all model folders under examples/.
 
-Delegates to ``flow_ml.scaffold.validate_model_dir`` — no hardcoded
+Delegates to ``maatml.scaffold.validate_model_dir`` — no hardcoded
 scaffold file lists or runtime checks.
 """
 from __future__ import annotations
@@ -12,25 +12,24 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
-from flow_ml.scaffold import validate_model_dir  # noqa: E402
+from maatml.scaffold import validate_model_dir  # noqa: E402
 
 
 def _model_dirs() -> list[Path]:
     dirs: list[Path] = []
-    for root_name in ("models", "examples"):
-        root = ROOT / root_name
-        if not root.is_dir():
-            continue
-        for child in sorted(root.iterdir()):
-            if child.is_dir() and (child / "model.yml").is_file():
-                dirs.append(child)
+    root = ROOT / "examples"
+    if not root.is_dir():
+        return dirs
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and (child / "model.yml").is_file():
+            dirs.append(child)
     return dirs
 
 
 def main() -> int:
     dirs = _model_dirs()
     if not dirs:
-        print("validate_repo: no model.yml folders found under models/ or examples/")
+        print("validate_repo: no model.yml folders found under examples/")
         return 1
 
     all_errors: list[str] = []

@@ -1,0 +1,102 @@
+# Spool Interpreter — flan-t5-base seq2seq that turns sanitised z/OS
+# spool output into a structured SpoolInterpretation JSON:
+# { summary, status, returnCode, rootCause, suggestedFix, explanation,
+#   relatedDocs, failureCategory, confidence }.
+#
+# Task: spool_interpretation
+# Architecture: seq2seq (encoder-decoder, full fine-tune)
+
+name: spool-interpreter
+model_id: spool-interpreter
+task: spool_interpretation
+architecture: seq2seq
+version: 0.1.0
+description: "flan-t5-base seq2seq that interprets z/OS job spool output into a structured SpoolInterpretation JSON."
+base_model: google/flan-t5-base
+
+plugins: [./spool_plugin]
+
+data:
+  seed: 7331
+  prompt_spec: datasets/prompt_spec.json
+  schema: datasets/spool_interpretation_schema.json
+  contracts: datasets/node_contracts.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/test_prompt_set.jsonl
+  raw_field: request
+  split_ratios: [0.8, 0.1, 0.1]
+
+dataset:
+  format: jsonl_seed
+  target_field: expected_interpretation
+  request_field: request
+  group_by: family
+  sanitize: [spool]
+  generator: spool
+  source_prefix: "interpret spool: "
+  target_key_order:
+    - summary
+    - status
+    - returnCode
+    - rootCause
+    - suggestedFix
+    - explanation
+    - relatedDocs
+    - failureCategory
+    - confidence
+
+evaluation:
+  validator: spool
+  metrics: spool
+  predictor: seq2seq
+
+training:
+  model_id: google/flan-t5-base
+  source_max_len: 1024
+  target_max_len: 512
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 3.0e-5
+  epochs: 6
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  seed: 7331
+  precision: bf16
+  grad_checkpointing: false
+  # flan-t5 tokenizer/model vocab can disagree across transformers versions.
+  embedding_strategy: resize
+  eval_steps: 9999
+  save_steps: 250
+  logging_steps: 25
+  max_steps: -1
+  generation:
+    num_beams: 1
+    max_new_tokens: 512
+
+smoke:
+  source_max_len: 512
+  target_max_len: 256
+  batch_size: 2
+  grad_accum: 1
+  learning_rate: 3.0e-5
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  precision: bf16
+  grad_checkpointing: false
+  embedding_strategy: resize
+  eval_steps: 9999
+  save_steps: 9999
+  logging_steps: 2
+  max_steps: 8
+  generation:
+    num_beams: 1
+    max_new_tokens: 128
+
+packaging:
+  max_input_tokens: 1024
+  expected_latency_ms: 2000
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.9
+    low: 0.6

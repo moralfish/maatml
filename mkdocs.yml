@@ -1,0 +1,13 @@
+site_name: MaatML
+site_description: Experimentation → production for task-specific language models
+repo_url: https://github.com/moralfish/maatml
+theme:
+  name: material
+nav:
+  - Home: index.md
+  - Plugin author guide: plugins.md
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true

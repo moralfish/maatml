@@ -1,0 +1,44 @@
+{
+  "_provenance": {
+    "source": "Hand-authored. Bounded vocabulary for SpoolInterpretation. failure_category mirrors FailureCategory in maatml.data.schemas.",
+    "schema_version": "2"
+  },
+  "statuses": ["completed", "failed", "abended", "skipped", "running"],
+  "failure_categories": [
+    "dataset_resolution_failure",
+    "allocation_failure",
+    "permission_or_security_failure",
+    "jcl_syntax_failure",
+    "utility_parameter_failure",
+    "execution_abend",
+    "scheduler_or_environment_issue",
+    "other"
+  ],
+  "return_code": {
+    "format": "string-of-4-hex-or-decimal-digits-or-null",
+    "examples": ["0000", "0008", "012C", null],
+    "rationale": "z/OS return codes are conventionally 4-character strings; null is allowed when the spool didn't expose one (e.g. abend before completion)."
+  },
+  "non_empty_strings": ["summary", "rootCause", "suggestedFix"],
+  "confidence": {
+    "min": 0.0,
+    "max": 1.0,
+    "calibration_note": "0.9+ when the spool clearly indicates the cause; 0.7-0.9 on plausible reads; <0.7 when the spool is ambiguous or truncated."
+  },
+  "explanation": {
+    "required_when": "status != 'completed'",
+    "sentence_target": "2-4 sentences walking through the chain of events; distinct from `summary` (1-sentence recap).",
+    "rationale": "Narrative reasoning so operators can audit the model's interpretation."
+  },
+  "related_docs_catalog": {
+    "_note": "Doc keys (not URLs) the runtime maps to actual help links at render time. Seed builder draws from these per failure category.",
+    "dataset_resolution_failure": ["dataset-not-cataloged", "iam-catalog-lookup", "step-allocation-failure"],
+    "allocation_failure": ["space-abend-e37", "x37-extent-exhaustion", "sms-class-mismatch"],
+    "permission_or_security_failure": ["racf-icf-message", "dataset-access-violation", "facility-class-profile"],
+    "jcl_syntax_failure": ["jcl-error-iefxxxx", "exec-statement-syntax", "dd-statement-syntax"],
+    "utility_parameter_failure": ["sort-control-statement", "iebcopy-options", "idcams-define-syntax"],
+    "execution_abend": ["abend-s0c7", "abend-s0c4", "cobol-data-exception", "numproc-options", "iee041i-recovery"],
+    "scheduler_or_environment_issue": ["jes2-spool-full", "initiator-class-missing", "system-trigger-suspended"],
+    "other": ["spool-interpretation-overview"]
+  }
+}

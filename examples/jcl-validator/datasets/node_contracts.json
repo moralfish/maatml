@@ -1,0 +1,63 @@
+{
+  "_provenance": {
+    "source": "Hand-authored. Bounded vocabulary for JclValidationResult. Mirrors ErrorCategory + Severity enums in maatml/data/schemas.py.",
+    "schema_version": "2",
+    "v2_change": "Added `severities: [..., none]` entry so the classifier can emit 'none' alongside the 'none' error code on clean JCL. Added `error_message_templates` so the v2 classifier-only path can fill `message` + `suggestion` from the predicted code without generating text (zero-hallucination guarantee)."
+  },
+  "severities": ["error", "warning", "info", "none"],
+  "error_codes": [
+    "missing_dd",
+    "invalid_job_card",
+    "unresolved_symbolic_parameter",
+    "continuation_error",
+    "invalid_exec_statement",
+    "invalid_dataset_reference_structure",
+    "other",
+    "none"
+  ],
+  "max_errors_per_result": 5,
+  "valid_when": {
+    "valid_true_iff_errors_empty": true,
+    "rationale": "If `valid: true`, the `errors` array MUST be empty. If `valid: false`, the array MUST contain at least one entry."
+  },
+  "confidence": {
+    "min": 0.0,
+    "max": 1.0,
+    "calibration_note": "0.9+ on clean valid samples; 0.7-0.9 on confident error detections; <0.7 when ambiguous."
+  },
+  "error_message_templates_purpose": "The v2 classifier predicts a code from the bounded set but does not generate text. The runtime fills `message` + `suggestion` from these templates keyed by the predicted code. Zero hallucination on user-facing copy.",
+  "error_message_templates": {
+    "missing_dd": {
+      "message": "Required DD statement is missing for this step.",
+      "suggestion": "Add the DD statement (e.g. `//SYSPRINT DD SYSOUT=*` or the dataset-specific DD) before the next EXEC."
+    },
+    "invalid_job_card": {
+      "message": "JOB card is malformed (account, class, msgclass, or priority fields are missing or invalid).",
+      "suggestion": "Re-check the JOB statement: accounting field in parentheses, then optional CLASS / MSGCLASS / PRIORITY operands."
+    },
+    "unresolved_symbolic_parameter": {
+      "message": "A symbolic parameter (e.g. &NAME) is referenced but never set.",
+      "suggestion": "Define the symbolic via SET before its first use, or replace the reference with a literal value."
+    },
+    "continuation_error": {
+      "message": "JCL continuation line does not follow the column-72 / column-16 continuation rules.",
+      "suggestion": "Ensure the continued line starts at column 16, and the previous line's column-72 holds a non-blank continuation marker."
+    },
+    "invalid_exec_statement": {
+      "message": "EXEC statement is malformed (missing PGM= or PROC=, or operands in wrong order).",
+      "suggestion": "Use `//STEPNAME EXEC PGM=program-name` or `//STEPNAME EXEC PROC=proc-name`."
+    },
+    "invalid_dataset_reference_structure": {
+      "message": "Dataset reference (DSN=) does not parse as a valid z/OS dataset name.",
+      "suggestion": "Use qualified names with dots (e.g. `DSN=PROD.DAILY.LOAD`); each qualifier is 1-8 alphanumeric chars starting with A-Z or @#$."
+    },
+    "other": {
+      "message": "JCL statement is invalid for a reason outside the standard error categories.",
+      "suggestion": "Open the spool / SDSF view for the full message and review the JCL against the IBM z/OS JCL Reference."
+    },
+    "none": {
+      "message": "",
+      "suggestion": ""
+    }
+  }
+}

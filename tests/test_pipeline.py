@@ -1,62 +1,38 @@
-"""Pipeline tests for prepare_jcl / prepare_spool against ModelDefinition.
+"""Pipeline tests for generic prepare against ModelDefinition.
 
-Each test builds a minimal `models/<name>/` folder under tmp_path and writes a
-synthetic `model.yml` pointing at the real on-disk dataset assets, then runs
-the prepare_* function.  This mirrors how the CLI invokes the pipeline.
+Uses the real example model folders (plugins register sanitizers).
 """
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
-from flow_ml.config import load_model_def
-from flow_ml.data.pipeline import prepare_jcl, prepare_spool
-from flow_ml.utils.io import iter_jsonl
+from maatml.config import load_model_def
+from maatml.data.pipeline import prepare
+from maatml.registry import discover_plugins
+from maatml.utils.io import iter_jsonl
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-JCL_SEEDS = REPO_ROOT / "models" / "jcl-validator" / "datasets" / "samples" / "seed_samples.jsonl"
-SPOOL_SEEDS = REPO_ROOT / "models" / "spool-interpreter" / "datasets" / "samples" / "seed_samples.jsonl"
-
-
-def _make_model_folder(
-    tmp_path: Path,
-    model_yml: str,
-    *,
-    seeds_path: Path | None = None,
-) -> Path:
-    """Build a tmp `models/foo/` folder containing model.yml and a copy of the
-    seed samples file, then return the folder path."""
-    mdir = tmp_path / "model"
-    mdir.mkdir()
-    (mdir / "model.yml").write_text(model_yml, encoding="utf-8")
-    (mdir / "datasets" / "samples").mkdir(parents=True)
-    if seeds_path is not None:
-        shutil.copy2(seeds_path, mdir / "datasets" / "samples" / "seed_samples.jsonl")
-    return mdir
+JCL_DIR = REPO_ROOT / "examples" / "jcl-validator"
+SPOOL_DIR = REPO_ROOT / "examples" / "spool-interpreter"
 
 
 def test_prepare_jcl_writes_splits(tmp_path: Path) -> None:
-    mdir = _make_model_folder(
-        tmp_path,
-        """name: foo
-model_id: foo
-version: 0.1.0
-task: jcl_validation
-data:
-  seed: 7
-  seed_samples: datasets/samples/seed_samples.jsonl
-  split_ratios: [0.6, 0.2, 0.2]
-  raw_field: request
-""",
-        seeds_path=JCL_SEEDS,
+    discover_plugins(force=True)
+    # Copy minimal example into tmp so prepare writes under tmp.
+    import shutil
+
+    mdir = tmp_path / "jcl-validator"
+    shutil.copytree(
+        JCL_DIR,
+        mdir,
+        ignore=shutil.ignore_patterns("output", "__pycache__", "*.pyc", ".DS_Store"),
     )
     md = load_model_def(mdir)
-    seed_count = sum(
-        1 for line in JCL_SEEDS.read_text().splitlines() if line.strip()
-    )
-    summary = prepare_jcl(md)
+    seeds = mdir / "datasets" / "samples" / "seed_samples.jsonl"
+    seed_count = sum(1 for line in seeds.read_text().splitlines() if line.strip())
+    summary = prepare(md)
     total = sum(summary["split_counts"].values())
-    assert total == seed_count
+    assert total >= seed_count
     for split in ("train", "val", "test"):
         path = md.prepared_dir / f"{split}.jsonl"
         assert path.exists()
@@ -70,32 +46,21 @@ data:
 
 
 def test_prepare_spool_writes_splits(tmp_path: Path) -> None:
-    mdir = _make_model_folder(
-        tmp_path,
-        """name: foo
-model_id: foo
-version: 0.1.0
-task: spool_interpretation
-data:
-  seed: 11
-  seed_samples: datasets/samples/seed_samples.jsonl
-  split_ratios: [0.5, 0.25, 0.25]
-  raw_field: raw_spool
-""",
-        seeds_path=SPOOL_SEEDS,
+    discover_plugins(force=True)
+    import shutil
+
+    mdir = tmp_path / "spool-interpreter"
+    shutil.copytree(
+        SPOOL_DIR,
+        mdir,
+        ignore=shutil.ignore_patterns("output", "__pycache__", "*.pyc", ".DS_Store"),
     )
     md = load_model_def(mdir)
-    # Count seeds dynamically: this corpus has grown over time as new
-    # categories were added. Pinning to a constant breaks every time the
-    # seed file is extended.
-    seed_count = sum(
-        1
-        for line in (mdir / "datasets/samples/seed_samples.jsonl").read_text().splitlines()
-        if line.strip()
-    )
-    summary = prepare_spool(md)
+    seeds = mdir / "datasets" / "samples" / "seed_samples.jsonl"
+    seed_count = sum(1 for line in seeds.read_text().splitlines() if line.strip())
+    summary = prepare(md)
     total = sum(summary["split_counts"].values())
-    assert total == seed_count
+    assert total >= seed_count
     for split in ("train", "val", "test"):
         path = md.prepared_dir / f"{split}.jsonl"
         assert path.exists()
@@ -105,5 +70,3 @@ data:
             assert row["request"]
             assert row["expected_interpretation"]
             assert row["category"]
-            assert "raw_spool" not in row
-            assert "sanitized_spool" not in row

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from flow_ml.evaluation.runner import (
+from maatml.evaluation.runner import (
     LatencyStats,
     Report,
     _baseline_delta,

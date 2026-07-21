@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from flow_ml.config import ModelDefinition
-from flow_ml.training.guards import ensure_tokenizer_model_contract, write_run_metadata
+from maatml.config import ModelDefinition
+from maatml.training.guards import ensure_tokenizer_model_contract, write_run_metadata
 
 
 class _FakeEmb:

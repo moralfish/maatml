@@ -1,4 +1,4 @@
-# Contributing to flow-ml
+# Contributing to maatml
 
 Thanks for contributing. This guide is for human contributors. AI coding agents
 should also read [AGENTS.md](AGENTS.md).
@@ -27,8 +27,8 @@ pip install -e ".[dev,ml]"
 ## Lint and tests
 
 ```bash
-ruff check src tests scripts
-pytest tests/
+ruff check src tests scripts examples
+pytest tests/ examples/ -q
 ```
 
 ## Pull requests
@@ -45,7 +45,7 @@ pytest tests/
 The package stays **0.x** while the plugin API is still churning. Breaking
 changes to public surfaces are expected before 1.0.
 
-### Per-model versions (`models/<name>/model.yml`)
+### Per-model versions (`examples/<name>/model.yml`)
 
 | Bump | When |
 | ---- | ---- |
@@ -55,11 +55,10 @@ changes to public surfaces are expected before 1.0.
 
 ## Models
 
-Each task model lives under `models/` as a standalone folder with its own
+Each task model lives under `examples/` as a standalone folder with its own
 `model.yml`. Any folder with a valid `model.yml` can be prepared, trained, and
-evaluated via the `flow_ml` CLI. Scaffolding new models with `flow_ml scaffold`
-is on the roadmap (or available when that command lands) — open a plugin request
-issue if you want to propose a new task.
+evaluated via the `maatml` CLI. Scaffolding new models with `maatml scaffold`
+via `maatml scaffold <dir> --architecture causal_sft`.
 
 ## AI agent guidance
 

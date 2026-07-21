@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Security fixes are applied to the latest **0.x** release of flow-ml.
+Security fixes are applied to the latest **0.x** release of maatml.
 
 | Version | Supported |
 | ------- | --------- |

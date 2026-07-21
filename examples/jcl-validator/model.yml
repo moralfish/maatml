@@ -1,0 +1,156 @@
+# JCL Validator — ModernBERT-base multi-head classifier with custom
+# column-aware JCL tokenizer.
+#
+# Architecture: 4-head sequence classifier (validity / error_code /
+# severity / line_localization). Full fine-tune, no LoRA. Output is a
+# structured `JclValidationResult` JSON built from head logits (no
+# generative decoding).
+#
+# Goals: <500 ms latency, ~150-200 MB on-disk, custom tokenizer that
+# preserves JCL column-sensitive grammar (columns 1-2 = `//`, columns
+# 73-80 = ignored sequence numbers, column 72 = continuation marker).
+
+name: jcl-validator
+model_id: jcl-validator
+task: jcl_validation
+architecture: classifier
+version: 0.1.0
+description: "ModernBERT-base multi-head classifier with custom JCL tokenizer; emits JclValidationResult JSON."
+base_model: answerdotai/ModernBERT-base
+
+plugins: [./jcl_plugin]
+
+data:
+  seed: 1337
+  prompt_spec: datasets/prompt_spec.json
+  schema: datasets/jcl_validation_schema.json
+  contracts: datasets/node_contracts.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/test_prompt_set.jsonl
+  raw_field: request
+  split_ratios: [0.8, 0.1, 0.1]
+  # The custom JCL tokenizer is trained separately (one-shot) on a
+  # 10k-sample corpus, then committed alongside the model.
+  tokenizer: datasets/tokenizer.json
+
+dataset:
+  format: jsonl_seed
+  target_field: expected_validation_result
+  request_field: request
+  group_by: family
+  sanitize: [jcl]
+  text_transform: jcl_columns
+  tokenizer: datasets/tokenizer.json
+  generator: jcl
+
+evaluation:
+  validator: jcl
+  metrics: jcl
+  predictor: jcl_classifier
+
+training:
+  model_id: answerdotai/ModernBERT-base
+  # 1024-token cap fits all of the synthetic seed decks (the longest is
+  # ~600 tokens after column normalisation). 2048 OOMs the MPS allocator
+  # on M5 Max because attention is O(seq_len^2 × batch). If real-world
+  # decks exceed 1024 we'd revisit with gradient checkpointing.
+  max_input_tokens: 1024
+  # bs=8 × grad_accum=2 ⇒ effective batch 16, but the attention matmul
+  # only holds 8 sequences at a time.
+  batch_size: 8
+  grad_accum: 2
+  learning_rate: 2.0e-5
+  epochs: 4
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  seed: 1337
+  # bf16 autocast on MPS/CUDA, fp32 weights for master copy.
+  precision: bf16
+  grad_checkpointing: false
+  # Custom JCL BPE vocab differs from ModernBERT; resize embeddings to match.
+  embedding_strategy: resize
+  eval_steps: 9999
+  save_steps: 250
+  logging_steps: 25
+  max_steps: -1
+  heads:
+    - name: validity
+      kind: classification
+      labels: [invalid, valid]
+      target_path: valid
+      loss_weight: 1.0
+    - name: error_code
+      kind: classification
+      labels:
+        - missing_dd
+        - invalid_job_card
+        - unresolved_symbolic_parameter
+        - continuation_error
+        - invalid_exec_statement
+        - invalid_dataset_reference_structure
+        - other
+        - none
+      target_path: "errors[0].code"
+      loss_weight: 1.0
+    - name: severity
+      kind: classification
+      labels: [error, warning, info, none]
+      target_path: "errors[0].severity"
+      loss_weight: 0.5
+    - name: line
+      kind: line_pointer
+      target_path: "errors[0].line"
+      loss_weight: 0.3
+
+smoke:
+  base_model: answerdotai/ModernBERT-base
+  max_input_tokens: 1024
+  batch_size: 2
+  grad_accum: 1
+  learning_rate: 5.0e-5
+  epochs: 1
+  weight_decay: 0.0
+  warmup_ratio: 0.0
+  precision: bf16
+  grad_checkpointing: false
+  embedding_strategy: resize
+  eval_steps: 5
+  save_steps: 5
+  logging_steps: 2
+  max_steps: 6
+  heads:
+    - name: validity
+      kind: classification
+      labels: [invalid, valid]
+      target_path: valid
+      loss_weight: 1.0
+    - name: error_code
+      kind: classification
+      labels:
+        - missing_dd
+        - invalid_job_card
+        - unresolved_symbolic_parameter
+        - continuation_error
+        - invalid_exec_statement
+        - invalid_dataset_reference_structure
+        - other
+        - none
+      target_path: "errors[0].code"
+      loss_weight: 1.0
+    - name: severity
+      kind: classification
+      labels: [error, warning, info, none]
+      target_path: "errors[0].severity"
+      loss_weight: 0.5
+    - name: line
+      kind: line_pointer
+      target_path: "errors[0].line"
+      loss_weight: 0.3
+
+packaging:
+  max_input_tokens: 2048
+  expected_latency_ms: 500
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.9
+    low: 0.6

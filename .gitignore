@@ -18,10 +18,14 @@ dist/
 # Per-model generated artifacts: keep folder structure, ignore content
 models/*/output/**
 !models/*/output/.gitkeep
+examples/*/output/**
+!examples/*/output/.gitkeep
 
 # Generated dataset files (augmented from seeds at prepare time)
 models/*/datasets/samples/augmented_*.jsonl
 models/*/datasets/samples/*.parquet
+examples/*/datasets/samples/augmented_*.jsonl
+examples/*/datasets/samples/*.parquet
 
 # Built archives
 *.fm

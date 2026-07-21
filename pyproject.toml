@@ -3,15 +3,16 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "flow-ml"
-version = "0.1.0"
-description = "A plugin-based training and fine-tuning framework for task-specific language models"
+name = "maatml"
+version = "0.4.0"
+description = "A machine learning models framework from experimentation to production — data, training, evaluation, export, and deploy pipelines for small task-specific language models"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [
   { name = "Nedal Elghamry" }
 ]
+urls = { Homepage = "https://github.com/moralfish/maatml", Repository = "https://github.com/moralfish/maatml", Changelog = "https://github.com/moralfish/maatml/blob/main/CHANGELOG.md" }
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -31,13 +32,9 @@ dependencies = [
 ]
 
 [project.scripts]
-# Console-script entry point so `flow_ml <cmd>` works from any shell after
-# `pip install -e .`.  Equivalent to `python -m flow_ml.cli <cmd>`.
-flow_ml = "flow_ml.cli:main"
-
-[project.entry-points."flow_ml.plugins"]
-jcl = "flow_ml.contrib.jcl"
-spool = "flow_ml.contrib.spool"
+# Console-script entry point so `maatml <cmd>` works from any shell after
+# `pip install -e .`.  Equivalent to `python -m maatml.cli <cmd>`.
+maatml = "maatml.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -57,17 +54,26 @@ ml = [
   "peft>=0.10",
   "sentencepiece>=0.2"
 ]
+cuda = [
+  # QLoRA / bitsandbytes — CUDA Linux only (not macOS / MPS). Also install [ml].
+  "bitsandbytes>=0.43",
+]
+pref = [
+  # DPO / ORPO via TRL. Also install [ml].
+  "trl>=0.9",
+]
+teacher = [
+  # OpenAI-compatible teacher client for maatml datagen --teacher.
+  "httpx>=0.27",
+]
+docs = [
+  # Optional docs site: mkdocs serve
+  "mkdocs>=1.6",
+  "mkdocs-material>=9.5",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[tool.setuptools.package-data]
-flow_ml = [
-  "data/*.yaml",
-  "data/*.yml",
-  "tokenization/fixtures/*",
-  "contrib/**/*",
-]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/*.py[cod]"]
@@ -76,4 +82,4 @@ flow_ml = [
 line-length = 100
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "examples"]
