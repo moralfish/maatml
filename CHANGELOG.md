@@ -16,8 +16,12 @@ for the Python package and per-model versions under `examples/`.
 
 ### Changed
 
-- Docs and README lead with `pip install maatml` (PyPI); site URLs
-  [maatml.org](https://maatml.org) / [maatml.com](https://maatml.com).
+- Docs overhaul: README and site now lead with the validator-gated
+  *data → eval → serving* differentiator across text / vision / VLM; new
+  `docs/lifecycle.md` and `docs/serving.md`; CONTRIBUTING gains a
+  "Where to start" good-first-issues section.
+- Docs and README lead with `pip install maatml` (PyPI); canonical site is
+  [maatml.pages.dev](https://maatml.pages.dev).
 - PyPI Trusted Publishing workflow (`.github/workflows/publish.yml`) + GitHub
   Environment `pypi`.
 
@@ -26,9 +30,9 @@ for the Python package and per-model versions under `examples/`.
 ### Added
 
 - **Product surface (v0.4):**
-  - `maatml export` — safetensors bundle (+ optional `gguf` / `mlx` when
+  - `maatml export`: safetensors bundle (+ optional `gguf` / `mlx` when
     tooling is installed) with `manifest.json` from `PackagingSpec`
-  - `maatml verify` — recompute sha256 of manifest-listed files
+  - `maatml verify`: recompute sha256 of manifest-listed files
   - Post-export `--parity` gate against `dataset.benchmark_samples` +
     `evaluation.gates`
   - `training.model_revision` passed to `from_pretrained` / tokenizer load;
@@ -108,7 +112,7 @@ for the Python package and per-model versions under `examples/`.
   tokenizer↔embedding contract, `run_metadata.json` provenance)
 - Shared validation base + generic evaluation harness
 - Reference contrib plugins: `maatml.contrib.jcl`, `maatml.contrib.spool`
-- Example model: `examples/support-ticket-triage` (`causal_sft` — ticket → triage JSON)
+- Example model: `examples/support-ticket-triage` (`causal_sft`, ticket → triage JSON)
 - Reference models: JCL Validator (ModernBERT multi-head classifier) and Spool
   Interpreter (flan-t5 seq2seq), versioned at `0.1.0`
 - Group-aware (`family`) dataset splits and family-stamped seed corpora

@@ -1,12 +1,17 @@
 site_name: MaatML
-site_description: Experimentation → production for task-specific language models
-site_url: https://maatml.org/
+site_description: Experimentation → production for small text, vision, and vision-language models
+site_url: https://maatml.pages.dev/
 repo_url: https://github.com/moralfish/maatml
 repo_name: moralfish/maatml
+# Internal maintainer checklist, kept in-repo but not published to the site.
+exclude_docs: |
+  GO_PUBLIC.md
 theme:
   name: material
 nav:
   - Home: index.md
+  - The validator-gated lifecycle: lifecycle.md
+  - Serving & deployment: serving.md
   - Plugin author guide: plugins.md
 markdown_extensions:
   - admonition

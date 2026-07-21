@@ -13,14 +13,14 @@ Do not open public issues for security reports. See [SECURITY.md](SECURITY.md).
 
 ## Using MaatML (as a package)
 
-End users should install from PyPI — not from a source checkout:
+End users should install from PyPI, not from a source checkout:
 
 ```bash
 pip install maatml
 pip install "maatml[ml]"          # training stack
 ```
 
-Docs and site: [maatml.org](https://maatml.org) · [maatml.com](https://maatml.com) ·
+Docs and site: [maatml.pages.dev](https://maatml.pages.dev) ·
 [PyPI](https://pypi.org/project/maatml/).
 
 ## Development setup
@@ -48,9 +48,32 @@ mypy src/maatml --ignore-missing-imports
 pytest tests/ examples/ -q
 ```
 
+## Where to start
+
+New here? These are good first contributions: small, self-contained, and
+genuinely useful:
+
+- **Add an end-to-end training test for a language trainer.** The vision and VLM
+  examples exercise a real train→export run; `causal_sft` / `seq2seq` /
+  `multi_head` are still covered only by their plumbing. A tiny CPU smoke run
+  would close that gap.
+- **Add a broadly relatable example model.** Scaffold a new `examples/<task>/`
+  for an everyday task (log triage, PII redaction, a small captioner). See the
+  [plugin author guide](docs/plugins.md) and the
+  [validator-gated lifecycle](docs/lifecycle.md).
+- **Tighten a validator or its gates.** Validators are where MaatML earns its
+  keep. Clearer contracts and error messages help every model.
+- **Docs.** Improve a walkthrough, a plugin hook, or an example README (the VLM
+  path especially).
+
+Browse [issues labelled `good first issue`](https://github.com/moralfish/maatml/labels/good%20first%20issue),
+or open a [feature](https://github.com/moralfish/maatml/issues/new?template=feature_request.md)
+or [plugin/task](https://github.com/moralfish/maatml/issues/new?template=plugin_request.md)
+issue to discuss anything larger first.
+
 ## Pull requests
 
-- Keep PRs focused — one concern per PR when practical.
+- Keep PRs focused: one concern per PR when practical.
 - Add or update tests for behavior changes.
 - Sign off every commit with the [Developer Certificate of Origin](https://developercertificate.org/)
   (`git commit -s` adds a `Signed-off-by:` trailer).
@@ -59,7 +82,7 @@ pytest tests/ examples/ -q
 
 Publishing uses **Trusted Publishing** (OIDC) via
 [`.github/workflows/publish.yml`](.github/workflows/publish.yml). Creating a
-GitHub Release (`vX.Y.Z`) builds the wheel/sdist and uploads to PyPI — no API
+GitHub Release (`vX.Y.Z`) builds the wheel/sdist and uploads to PyPI, with no API
 token in CI secrets.
 
 One-time PyPI setup (maintainer): project → Publishing → add a trusted
