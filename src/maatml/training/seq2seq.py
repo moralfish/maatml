@@ -223,7 +223,7 @@ def _train_loop(
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
 
-    args = Seq2SeqTrainingArguments(
+    args = Seq2SeqTrainingArguments(  # type: ignore[call-arg]
         output_dir=str(out_dir),
         run_name=run_id,
         per_device_train_batch_size=cfg.batch_size,

@@ -20,13 +20,16 @@ Each example folder carries `model.yml`, optional `*_plugin/`, `datasets/`,
 ## Workflow
 
 ```bash
-maatml prepare  examples/<name>/             # → output/prepared/{train,val,test}.jsonl
-maatml train    examples/<name>/ [--smoke]   # → output/checkpoints/
-maatml evaluate examples/<name>/             # → output/eval/{ckpt}.{json,md}
-maatml plugins                               # list discovered plugin registrations
+pip install "maatml[ml]"
+
+maatml prepare  <model-dir>/             # → output/prepared/{train,val,test}.jsonl
+maatml train    <model-dir>/ [--smoke]   # → output/checkpoints/
+maatml evaluate <model-dir>/             # → output/eval/{ckpt}.{json,md}
+maatml plugins                           # list discovered plugin registrations
 ```
 
-CLI dispatcher: [src/maatml/cli.py](src/maatml/cli.py). Subcommands route by
+Reference examples live in this repo under `examples/`. CLI dispatcher:
+[src/maatml/cli.py](src/maatml/cli.py). Subcommands route by
 `model.yml.architecture` and registered plugins.
 
 ## Architecture dispatch

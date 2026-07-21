@@ -106,15 +106,16 @@ def run_datagen(
         generate_fn = _teacher_generate_fn(model_def, teacher, seed=seed)
         gen_name = "teacher"
     else:
-        gen_name = cfg.get("generator")
-        if not gen_name:
+        raw_gen = cfg.get("generator")
+        if not raw_gen:
             raise KeyError(
                 "No dataset.generator in model.yml and --teacher not set. "
                 "Set dataset.generator to a registered name (e.g. jcl, spool) "
                 "or pass --teacher. Register custom generators with "
                 "@register_generator."
             )
-        factory = GENERATORS.require(str(gen_name))
+        gen_name = str(raw_gen)
+        factory = GENERATORS.require(gen_name)
         generate_fn = factory(model_def, seed=seed)
 
     accepted, rejected = build_gated_corpus(

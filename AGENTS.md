@@ -4,12 +4,15 @@ Guidance for AI coding agents working in this repository.
 
 ## Commands
 
+**Users** install from PyPI (`pip install maatml` / `pip install "maatml[ml]"`).
+This file is for **contributors** working in a checkout.
+
 All commands assume the project venv (`.venv/bin/...`). Training needs the
 `[ml]` extra (torch, transformers, peft, tokenizers). CPU-free contributions
 can use `pip install -e ".[dev]"`; unit tests run without torch.
 
 ```bash
-# Install
+# Install (editable, for framework development)
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,ml]"
 # Optional: QLoRA (CUDA Linux) / preference trainers / teacher / docs
@@ -21,6 +24,7 @@ pip install -e ".[dev,ml]"
 # Test / lint (run from repo root)
 .venv/bin/python -m pytest tests/ examples/ -q
 ruff check src tests scripts examples
+mypy src/maatml --ignore-missing-imports
 
 # Per-model lifecycle (any standalone folder with model.yml)
 .venv/bin/maatml scaffold ~/models/my-task --architecture causal_sft

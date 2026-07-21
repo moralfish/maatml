@@ -1,6 +1,6 @@
 ---
 name: Plugin / task request
-about: Propose a new task model or plugin for flow-ml
+about: Propose a new task model or plugin for maatml
 title: "[plugin] "
 labels: ["plugin"]
 assignees: []
@@ -8,7 +8,7 @@ assignees: []
 
 ## Task name
 
-Proposed folder name under `models/` (e.g. `my-task`).
+Proposed folder name under `examples/` (e.g. `my-task`).
 
 ## Problem / use case
 

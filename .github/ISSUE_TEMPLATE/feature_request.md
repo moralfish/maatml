@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an enhancement to flow-ml
+about: Suggest an enhancement to maatml
 title: "[feat] "
 labels: ["enhancement"]
 assignees: []

@@ -28,13 +28,11 @@ from __future__ import annotations
 
 import json
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Type
 
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
-from pydantic import BaseModel, ConfigDict, Field
 from rich.console import Console
 from torch.utils.data import Dataset
 from transformers import (
@@ -55,76 +53,14 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl, read_json, sha256_file, stable_hash
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
+from .sft_config import (  # noqa: F401 — re-export public config surface
+    LoraSettings,
+    QuantizationSettings,
+    SFTTrainConfig,
+    SFTTrainResult,
+)
 
 console = Console()
-
-
-# ---------------------------------------------------------------------------
-# Config + result dataclasses
-# ---------------------------------------------------------------------------
-
-
-class LoraSettings(BaseModel):
-    enabled: bool = True
-    r: int = 16
-    alpha: int = 32
-    dropout: float = 0.05
-    target_modules: list[str] = Field(
-        default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj"]
-    )
-    # merged (default) | adapter | both — see train_sft artifact save path.
-    save_mode: str = "merged"
-
-
-class QuantizationSettings(BaseModel):
-    """Optional bitsandbytes / QLoRA settings (CUDA-only)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    load_in_4bit: bool = False
-    load_in_8bit: bool = False
-    bnb_4bit_compute_dtype: str = "bf16"
-    bnb_4bit_quant_type: str = "nf4"
-    bnb_4bit_use_double_quant: bool = True
-
-    def enabled(self) -> bool:
-        return bool(self.load_in_4bit or self.load_in_8bit)
-
-
-class SFTTrainConfig(BaseModel):
-    """Generic SFT training config — same shape for all three tasks."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    model_id: str = "Qwen/Qwen3-1.7B"
-    max_input_tokens: int = Field(default=4096, gt=0)
-    batch_size: int = Field(default=2, gt=0)
-    grad_accum: int = Field(default=8, gt=0)
-    learning_rate: float = 1e-4
-    epochs: float = 4.0
-    weight_decay: float = 0.01
-    warmup_ratio: float = 0.05
-    seed: int = 7331
-    precision: str = "bf16"
-    grad_checkpointing: bool = False
-    eval_steps: int = 9999
-    save_steps: int = 200
-    logging_steps: int = 20
-    max_steps: int = -1
-    lora: LoraSettings = Field(default_factory=LoraSettings)
-    report_to: Any = None
-    group_by_length: bool = False
-    quantization: Optional[QuantizationSettings] = None
-    attn_implementation: Optional[str] = None
-    dataloader_workers: Optional[int] = None
-    model_revision: Optional[str] = None
-
-
-@dataclass
-class SFTTrainResult:
-    out_dir: Path
-    metrics: dict[str, float]
-    train_runtime: float
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +186,7 @@ def build_chat_example(
     target_field: str,
     request_field: str = "request",
     user_placeholder: str = "<<USER_REQUEST>>",
-) -> dict[str, list[int]]:
+) -> dict[str, Any]:
     """Tokenize a sample into input_ids + labels.
 
     Loss is masked over system/user turns and unmasked over each assistant
@@ -650,7 +586,7 @@ def train_sft(
         report_to = normalize_report_to(cfg.report_to)
         num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
 
-        args = TrainingArguments(
+        args = TrainingArguments(  # type: ignore[call-arg]
             output_dir=str(out_dir),
             run_name=run.run_id,
             per_device_train_batch_size=cfg.batch_size,

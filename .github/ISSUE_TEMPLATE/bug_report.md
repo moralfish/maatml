@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a defect in flow-ml or a reference model
+about: Report a defect in maatml or a reference model
 title: "[bug] "
 labels: ["bug"]
 assignees: []
@@ -28,10 +28,10 @@ What happened instead (include error messages / logs if relevant).
 
 - OS:
 - Python version:
-- flow-ml version / commit:
-- Install profile: `[dev]` / `[dev,ml]`
+- maatml version (`pip show maatml` or git commit):
+- Install: `pip install maatml` / `pip install "maatml[ml]"` / editable `[dev]`
 - Device (if training/eval): cpu / mps / cuda
 
 ## Additional context
 
-Screenshots, related issues, or model folder (`models/...`) involved.
+Screenshots, related issues, or model folder (`examples/...`) involved.

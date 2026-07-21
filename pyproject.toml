@@ -12,7 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [
   { name = "Nedal Elghamry" }
 ]
-urls = { Homepage = "https://github.com/moralfish/maatml", Repository = "https://github.com/moralfish/maatml", Changelog = "https://github.com/moralfish/maatml/blob/main/CHANGELOG.md" }
+urls = { Homepage = "https://maatml.org", Documentation = "https://maatml.org", Repository = "https://github.com/moralfish/maatml", Changelog = "https://github.com/moralfish/maatml/blob/main/CHANGELOG.md" }
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: Apache Software License",
@@ -33,7 +33,7 @@ dependencies = [
 
 [project.scripts]
 # Console-script entry point so `maatml <cmd>` works from any shell after
-# `pip install -e .`.  Equivalent to `python -m maatml.cli <cmd>`.
+# `pip install maatml`.  Equivalent to `python -m maatml.cli <cmd>`.
 maatml = "maatml.cli:main"
 
 [project.optional-dependencies]

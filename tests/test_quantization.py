@@ -7,7 +7,7 @@ import pytest
 
 from maatml.device import get_profile
 from maatml.training.load import from_pretrained_kwargs
-from maatml.training.sft_base import QuantizationSettings, SFTTrainConfig
+from maatml.training.sft_config import QuantizationSettings, SFTTrainConfig
 
 
 def test_quantization_settings_parse() -> None:

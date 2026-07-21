@@ -1,16 +1,51 @@
 # maatml
 
+[![PyPI](https://img.shields.io/pypi/v/maatml.svg)](https://pypi.org/project/maatml/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue.svg)](pyproject.toml)
-[![CI](https://img.shields.io/badge/CI-GitHub_Actions-blue.svg)](.github/workflows/ci.yml)
+[![CI](https://github.com/moralfish/maatml/actions/workflows/ci.yml/badge.svg)](https://github.com/moralfish/maatml/actions/workflows/ci.yml)
 
 **MaatML** takes task-specific language models from **experimentation to
 production**: prepare → train → evaluate → package, driven by a standalone
 `model.yml`. Licensed under **Apache-2.0**.
 
+Site: [maatml.org](https://maatml.org) · [maatml.com](https://maatml.com) ·
+PyPI: [`maatml`](https://pypi.org/project/maatml/) · Source:
+[github.com/moralfish/maatml](https://github.com/moralfish/maatml)
+
 Core owns architectures (`causal_sft`, `seq2seq`, `multi_head_classifier`,
 `dpo`, `orpo`). Examples own task semantics (validators, metrics, sanitizers,
 tokenizers).
+
+## Installation
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+
+# Library + CLI (no torch)
+pip install maatml
+
+# Training / evaluation stack
+pip install "maatml[ml]"
+
+# Optional extras
+pip install "maatml[ml,cuda]"    # QLoRA on NVIDIA CUDA (bitsandbytes)
+pip install "maatml[ml,pref]"    # DPO / ORPO (TRL)
+pip install "maatml[teacher]"    # OpenAI-compatible teacher for datagen
+pip install "maatml[docs]"       # mkdocs site
+```
+
+Then:
+
+```bash
+maatml --help
+maatml scaffold ~/models/my-task --architecture causal_sft --name my-task
+maatml validate ~/models/my-task
+```
+
+For contributing to this repository (editable install), see
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Example models
 
@@ -20,9 +55,9 @@ tokenizers).
 | [Spool Interpreter](examples/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
 | [Support Ticket Triage](examples/support-ticket-triage/) | triage | `causal_sft` | Qwen3-0.6B |
 
-Any directory with a valid `model.yml` works the same way — install maatml via
-pip and point the CLI at the folder. Scaffold a new model folder with
-`maatml scaffold` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
+Any directory with a valid `model.yml` works the same way — install maatml from
+PyPI and point the CLI at the folder. Scaffold a new model folder with
+`maatml scaffold`.
 
 ## Requirements
 
@@ -30,31 +65,6 @@ pip and point the CLI at the folder. Scaffold a new model folder with
 - **OS** macOS, Linux (Windows untested)
 - **Disk / memory** ~3 GB for the ML stack; 16 GB unified memory is the design
   target for local training
-
-## Installation
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-
-# Library + CLI (no torch)
-pip install -e ".[dev]"
-
-# Training / evaluation extras
-pip install -e ".[dev,ml]"
-
-# Optional: QLoRA on NVIDIA CUDA (bitsandbytes; not macOS/MPS)
-pip install -e ".[ml,cuda]"
-
-# Optional: DPO / ORPO preference trainers (TRL)
-pip install -e ".[ml,pref]"
-
-# Optional: OpenAI-compatible teacher for datagen
-pip install -e ".[teacher]"
-
-# Optional: docs site (mkdocs serve)
-pip install -e ".[docs]"
-```
 
 ## CLI overview
 
@@ -88,14 +98,20 @@ Export defaults to a safetensors bundle + `manifest.json`. GGUF/MLX need
 external tooling (`llama.cpp` convert / `mlx_lm`). Pin base-model revisions
 with `training.model_revision`.
 
-Roadmap: [ROADMAP.md](ROADMAP.md) (v0.4 product surface done). Docs site:
-`docs/` + `mkdocs.yml` (`pip install maatml[docs]`).
+Docs: [maatml.org](https://maatml.org) · Roadmap: [ROADMAP.md](ROADMAP.md) ·
+In-repo docs: `docs/` (`pip install "maatml[docs]"` then `mkdocs serve`).
 
 Run `maatml <command> --help` for options.
 
 ## End-to-end example (JCL Validator)
 
+Clone the repo only if you want the reference examples and seed corpora:
+
 ```bash
+git clone https://github.com/moralfish/maatml.git
+cd maatml
+pip install "maatml[ml]"
+
 # 1. Seed samples live at
 #    examples/jcl-validator/datasets/samples/seed_samples.jsonl
 #    (or regenerate via examples/jcl-validator/scripts/build_seeds.py)

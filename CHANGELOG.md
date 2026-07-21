@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for the Python package and per-model versions under `examples/`.
 
+## [Unreleased]
+
+### Fixed
+
+- CPU-free CI: move SFT config models to `training/sft_config.py` so
+  `tests/test_quantization.py` collects without torch; mypy assignment /
+  `TrainingArguments` stub mismatches.
+
+### Changed
+
+- Docs and README lead with `pip install maatml` (PyPI); site URLs
+  [maatml.org](https://maatml.org) / [maatml.com](https://maatml.com).
+- PyPI Trusted Publishing workflow (`.github/workflows/publish.yml`) + GitHub
+  Environment `pypi`.
+
 ## [0.4.0] - 2026-07-21
 
 ### Added

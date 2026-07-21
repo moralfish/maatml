@@ -20,7 +20,8 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
-from .sft_base import LoraSettings, QuantizationSettings, _maybe_attach_lora
+from .sft_base import _maybe_attach_lora
+from .sft_config import LoraSettings, QuantizationSettings
 
 
 class PreferenceTrainConfig(BaseModel):

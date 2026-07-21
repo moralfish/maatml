@@ -4,8 +4,19 @@ MaatML takes task-specific language models from **experimentation to
 production**: prepare → train → evaluate → export → deploy, with a
 validator-gated data flywheel.
 
-This docs site is optional (`pip install maatml[docs]` + `mkdocs serve`).
-The canonical references in the repo are:
+**Install from PyPI** (not from source):
+
+```bash
+pip install maatml
+pip install "maatml[ml]"       # training stack
+pip install "maatml[docs]"     # this site: mkdocs serve
+```
+
+- Site: [maatml.org](https://maatml.org) · [maatml.com](https://maatml.com)
+- PyPI: [pypi.org/project/maatml](https://pypi.org/project/maatml/)
+- Source: [github.com/moralfish/maatml](https://github.com/moralfish/maatml)
+
+Canonical references in the repo:
 
 - [README.md](../README.md) — install, CLI overview, end-to-end examples
 - [AGENTS.md](../AGENTS.md) — command cheat-sheet for contributors / agents
