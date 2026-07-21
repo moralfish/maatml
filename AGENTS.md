@@ -15,11 +15,12 @@ can use `pip install -e ".[dev]"`; unit tests run without torch.
 # Install (editable, for framework development)
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,ml]"
-# Optional: QLoRA (CUDA Linux) / preference trainers / teacher / docs
+# Optional: QLoRA (CUDA Linux) / preference trainers / teacher / docs / vision
 # pip install -e ".[dev,ml,cuda]"   # bitsandbytes
 # pip install -e ".[dev,ml,pref]"   # trl (DPO/ORPO)
 # pip install -e ".[teacher]"       # httpx for maatml datagen --teacher
 # pip install -e ".[docs]"          # mkdocs-material
+# pip install -e ".[dev,ml,vision]" # torchvision + ONNX for examples/vision
 
 # Test / lint (run from repo root)
 .venv/bin/python -m pytest tests/ examples/ -q
@@ -34,8 +35,9 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml train    examples/<name>/ [--smoke] [--device mps|cpu|cuda] [--seed N] [--limit N] [--resume auto|PATH] [--set training.learning_rate=1e-4]
 .venv/bin/maatml sweep    examples/<name>/ --param training.learning_rate=1e-4,3e-4 --param training.lora.r=8,16 [--metric eval_loss] [--smoke] [--max-trials N]
 .venv/bin/maatml evaluate examples/<name>/ [--checkpoint X] [--split test|val] [--gate]
-.venv/bin/maatml export   examples/<name>/ [--checkpoint X] [--format safetensors|gguf|mlx] [--out PATH] [--parity]
+.venv/bin/maatml export   examples/<name>/ [--checkpoint X] [--format safetensors|gguf|mlx|onnx] [--out PATH] [--parity]
 .venv/bin/maatml verify   examples/<name>/output/export/<run_id>
+.venv/bin/maatml serve    examples/<name>/ [--checkpoint X] [--host 127.0.0.1] [--port 8080]
 .venv/bin/maatml datagen  examples/<name>/ [--target N] [--seed S] [--teacher] [--out PATH]
 .venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
 .venv/bin/maatml runs     examples/<name>/
@@ -49,6 +51,7 @@ torchrun --nproc_per_node=N -m maatml.cli train examples/<name>/
 # Seed corpus regen (deterministic, validator-gated)
 .venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 1000
 .venv/bin/python examples/spool-interpreter/scripts/build_seeds.py --target 1500
+.venv/bin/python examples/vision/scripts/build_seeds.py --target 2000
 
 # Custom JCL BPE tokenizer (required before JCL training)
 .venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 10000 \
@@ -72,6 +75,7 @@ seed builders live under `examples/*/…_plugin/` and register via
 | `examples/jcl-validator/` | `classifier` / `multi_head_classifier` | ModernBERT-base |
 | `examples/spool-interpreter/` | `seq2seq` | flan-t5-base |
 | `examples/support-ticket-triage/` | `causal_sft` (LoRA SFT) | Qwen3-0.6B |
+| `examples/vision/` | `vision_multitask` (scene + detect + pose) | MobileNetV3-Large |
 
 Built-in architectures also include `dpo` / `orpo` (TRL preference; `maatml[pref]`).
 

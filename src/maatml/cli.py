@@ -8,8 +8,9 @@ Outputs land under ``<model-dir>/output/`` (gitignored).
   maatml train     <model-dir> [--smoke] [--resume auto|PATH] [--set K=V]
   maatml sweep     <model-dir> --param K=a,b [--metric NAME] [--smoke]
   maatml evaluate  <model-dir> [--checkpoint X] [--split test] [--gate]
-  maatml export    <model-dir> [--checkpoint X] [--format gguf|mlx|safetensors]
+  maatml export    <model-dir> [--checkpoint X] [--format gguf|mlx|safetensors|onnx]
   maatml verify    <export-dir-or-manifest>
+  maatml serve     <model-dir> [--checkpoint X] [--host HOST] [--port N]
   maatml datagen   <model-dir> [--target N] [--teacher]
   maatml ingest    <model-dir> --input PATH [--map field=col] [--sanitize tag]
   maatml runs      <model-dir>
@@ -330,7 +331,7 @@ def cmd_export(
     format: Optional[str] = typer.Option(
         None,
         "--format",
-        help="safetensors (default) | gguf | mlx",
+        help="safetensors (default) | gguf | mlx | onnx (plugin-registered)",
     ),
     out: Optional[Path] = typer.Option(
         None,
@@ -389,6 +390,34 @@ def cmd_verify(
             console.print(f"  - {err}")
         raise typer.Exit(code=1)
     console.print(f"[green]OK[/] {path}")
+
+
+@app.command("serve")
+def cmd_serve(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    checkpoint: Optional[str] = typer.Option(
+        None,
+        "--checkpoint",
+        help="run_id, checkpoint dir, or export dir; defaults to latest completed run",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+    port: int = typer.Option(8080, "--port", help="Bind port"),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    """Serve a checkpoint or export bundle as a JSON inference API.
+
+    Endpoints: GET /health, GET /info, POST /predict (?validate=1 optional).
+    Works for any architecture with a registered predictor (text + vision).
+    """
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .serve import run_server
+
+    try:
+        run_server(md, checkpoint=checkpoint, host=host, port=port, device=device)
+    except (FileNotFoundError, KeyError, ImportError, RuntimeError) as exc:
+        console.print(f"[red]serve failed[/] {exc}")
+        raise typer.Exit(code=1) from exc
 
 
 @app.command("datagen")
@@ -539,6 +568,9 @@ def cmd_plan(
     console.print(f"4. maatml evaluate {md.model_dir}")
     console.print(f"5. maatml export {md.model_dir}")
     console.print(f"6. maatml verify {md.model_dir}/output/export/<run_id>")
+    console.print(
+        f"7. maatml serve {md.model_dir} --checkpoint output/export/<run_id>"
+    )
 
 
 @app.command("plugins")

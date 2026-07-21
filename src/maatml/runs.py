@@ -264,6 +264,10 @@ def resolve_checkpoint(
         path = Path(raw)
         if path.exists():
             return path.resolve()
+        # Model-dir-relative path (e.g. output/export/<run_id>).
+        cand = model_def.model_dir / raw
+        if cand.exists():
+            return cand.resolve()
         rec = get_run(model_def, raw)
         if rec is not None:
             return Path(rec.out_dir)

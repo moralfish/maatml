@@ -24,6 +24,22 @@ def test_resolve_export_format_constraints() -> None:
         resolve_export_format("seq2seq", "gguf")
     with pytest.raises(ValueError, match="only supported"):
         resolve_export_format("classifier", "mlx")
+    with pytest.raises(ValueError, match="Unknown export format"):
+        resolve_export_format("causal_sft", "not-a-real-format")
+
+
+def test_resolve_export_format_accepts_registered_plugin_format() -> None:
+    from maatml.registry import EXPORTERS, register_exporter
+
+    @register_exporter("toy_fmt")
+    def _toy_export(model_def, checkpoint_dir, out_dir, *, run_id=None):  # noqa: ANN001
+        del model_def, checkpoint_dir, run_id
+        return Path(out_dir)
+
+    try:
+        assert resolve_export_format("vision_multitask", "toy_fmt") == "toy_fmt"
+    finally:
+        EXPORTERS._entries.pop("toy_fmt", None)
 
 
 def test_export_safetensors_bundle(tmp_path: Path) -> None:
