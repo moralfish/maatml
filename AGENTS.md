@@ -15,12 +15,13 @@ can use `pip install -e ".[dev]"`; unit tests run without torch.
 # Install (editable, for framework development)
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev,ml]"
-# Optional: QLoRA (CUDA Linux) / preference trainers / teacher / docs / vision
+# Optional: QLoRA (CUDA Linux) / preference trainers / teacher / docs / vision / vllm
 # pip install -e ".[dev,ml,cuda]"   # bitsandbytes
 # pip install -e ".[dev,ml,pref]"   # trl (DPO/ORPO)
 # pip install -e ".[teacher]"       # httpx for maatml datagen --teacher
 # pip install -e ".[docs]"          # mkdocs-material
 # pip install -e ".[dev,ml,vision]" # torchvision + ONNX for examples/vision
+# pip install -e ".[vllm]"          # Linux-only OpenAI-compatible VLM serving
 
 # Test / lint (run from repo root)
 .venv/bin/python -m pytest tests/ examples/ -q
@@ -52,6 +53,7 @@ torchrun --nproc_per_node=N -m maatml.cli train examples/<name>/
 .venv/bin/python examples/jcl-validator/scripts/build_seeds.py --target 1000
 .venv/bin/python examples/spool-interpreter/scripts/build_seeds.py --target 1500
 .venv/bin/python examples/vision/scripts/build_seeds.py --target 2000
+.venv/bin/python examples/vision-vlm/scripts/build_seeds.py --target 300
 .venv/bin/python examples/vision-describer/scripts/build_seeds.py --target 400
 
 # Custom JCL BPE tokenizer (required before JCL training)
@@ -77,6 +79,7 @@ seed builders live under `examples/*/…_plugin/` and register via
 | `examples/spool-interpreter/` | `seq2seq` | flan-t5-base |
 | `examples/support-ticket-triage/` | `causal_sft` (LoRA SFT) | Qwen3-0.6B |
 | `examples/vision/` | `vision_multitask` (scene + detect + pose) | MobileNetV3-Large |
+| `examples/vision-vlm/` | `vlm_sft` (SmolVLM LoRA; vLLM-servable) | SmolVLM-256M-Instruct |
 | `examples/vision-describer/` | `seq2seq` (vision JSON → short description) | flan-t5-small |
 
 Built-in architectures also include `dpo` / `orpo` (TRL preference; `maatml[pref]`).
@@ -93,11 +96,11 @@ semver (`0.1.0`); identity is `name@version`.
 ### Dispatch (registry)
 
 ```
-architecture → trainer registry (causal_sft / seq2seq / multi_head_classifier / dpo / orpo)
+architecture → trainer registry (causal_sft / seq2seq / multi_head_classifier / dpo / orpo / vlm_sft / …)
 dataset.format → format registry (jsonl_seed / alpaca / sharegpt / preference_jsonl → prepare)
 dataset.generator → generator registry (jcl / spool / custom → datagen)
 evaluation.validator / metrics / predictor → plugin registries
-export --format → exporter registry (safetensors / gguf / mlx)
+export --format → exporter registry (safetensors / gguf / mlx / onnx)
 ```
 
 `model.yml` may also list `plugins: [./jcl_plugin]` for folder-local packages.

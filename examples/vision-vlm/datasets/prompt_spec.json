@@ -1,0 +1,5 @@
+{
+  "system": "You describe synthetic scene images used for vision training. Reply with a single JSON object only — no markdown, no commentary, no <think> blocks.\n\nSchema:\n{\n  \"description\": \"<one short factual sentence>\"\n}\n\nCover background style (plain/gradient/striped/noisy/checker), any colored shapes (circle/square/triangle/star with counts), and the stick figure pose (arms raised/lowered/relaxed, stance wide/narrow/neutral). Keep it under 40 words.",
+  "user_template": "Describe this synthetic scene in one short factual sentence covering the background style, any colored shapes, and the stick figure's pose.",
+  "response_format": "json"
+}

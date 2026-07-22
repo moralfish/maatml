@@ -25,6 +25,11 @@ _CONFIG_NAMES = (
     "generation_config.json",
     "training_args.bin",
     "run_metadata.json",
+    # Multimodal processor assets (VLM checkpoints; needed for vLLM serving).
+    "preprocessor_config.json",
+    "processor_config.json",
+    "chat_template.json",
+    "chat_template.jinja",
 )
 _TOKENIZER_NAMES = (
     "tokenizer.json",

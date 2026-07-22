@@ -1,0 +1,85 @@
+# Vision VLM — SmolVLM-256M-Instruct fine-tuned to describe synthetic scenes.
+#
+# Reads the scene image directly and emits {"description": "..."}.
+# Exported safetensors bundles are HF-format and serveable by vLLM.
+
+name: vision-vlm
+model_id: vision-vlm
+task: vision_description
+architecture: vlm_sft
+runtime: vllm
+version: 0.1.0
+description: >-
+  Small vision-language model (SmolVLM-256M) that describes synthetic scenes
+  in one sentence; HF export is directly servable by vLLM.
+base_model: HuggingFaceTB/SmolVLM-256M-Instruct
+
+plugins: [./vlm_plugin]
+
+dataset:
+  format: jsonl_seed
+  seed: 42
+  schema: datasets/schema.json
+  prompt_spec: datasets/prompt_spec.json
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/benchmark_samples.jsonl
+  request_field: image
+  target_field: expected_output
+  group_by: family
+  split_ratios: [0.7, 0.15, 0.15]
+  sanitize: []
+  generator: described_scenes
+
+evaluation:
+  validator: vision_vlm
+  metrics: vision_vlm
+  predictor: vision_vlm
+  gates:
+    scene_mention_rate: 0.5
+    shape_mention_f1: 0.3
+    brevity_rate: 0.8
+    all_layers_pass_rate: 0.7
+
+training:
+  model_id: HuggingFaceTB/SmolVLM-256M-Instruct
+  image_size: 320
+  image_longest_edge: 384
+  max_input_tokens: 512
+  batch_size: 1
+  grad_accum: 4
+  learning_rate: 1.0e-4
+  weight_decay: 0.0
+  epochs: 2
+  seed: 42
+  precision: bf16
+  logging_steps: 5
+  max_steps: -1
+  user_prompt: >-
+    Describe this synthetic scene in one short factual sentence covering
+    the background style, any colored shapes, and the stick figure's pose.
+  generation:
+    max_new_tokens: 64
+  lora:
+    enabled: true
+    r: 8
+    alpha: 16
+    dropout: 0.05
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+smoke:
+  batch_size: 1
+  grad_accum: 1
+  learning_rate: 1.0e-4
+  epochs: 1
+  max_steps: 4
+  logging_steps: 1
+  image_longest_edge: 256
+  max_input_tokens: 256
+
+packaging:
+  max_input_tokens: 512
+  expected_latency_ms: 200
+  weights_dtype: f16
+  confidence_thresholds:
+    high: 0.8
+    low: 0.3
