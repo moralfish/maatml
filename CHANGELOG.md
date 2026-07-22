@@ -29,6 +29,8 @@ for the Python package and per-model versions under `examples/`.
 - CPU-free CI: move SFT config models to `training/sft_config.py` so
   `tests/test_quantization.py` collects without torch; mypy assignment /
   `TrainingArguments` stub mismatches.
+- `maatml serve` builds a serve context without torch (falls back to a plain
+  device string), so its tests pass on CPU-free CI.
 
 ### Changed
 
