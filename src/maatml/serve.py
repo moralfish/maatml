@@ -94,7 +94,12 @@ def build_serve_context(
         load_model_plugins(model_def.model_dir, model_def.plugins)
 
     checkpoint_dir = resolve_checkpoint(model_def, checkpoint)
-    target_device = resolve_device(device)
+    try:
+        target_device = resolve_device(device)
+    except ImportError:
+        # torch absent: real serving needs it, but keep a plain device string so
+        # torch-free predictors (and tests) can still build a serve context.
+        target_device = "cpu" if device in (None, "auto") else device
 
     pred_name = _resolve_predictor_name(model_def)
     pred_obj = PREDICTORS.require(pred_name)
