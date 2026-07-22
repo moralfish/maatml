@@ -8,6 +8,22 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-22
+
+### Added
+
+- **Serving:** `maatml serve` runs a dependency-light HTTP inference API
+  (`/health`, `/info`, `/predict`); `/predict?validate=1` re-runs the registered
+  validator inline. Light enough for edge / Jetson.
+- **Vision:** `vision_multitask` architecture (MobileNetV3: scene classification,
+  shape detection, pose) with ONNX export. Extra: `pip install maatml[vision]`.
+- **Vision-language:** `vlm_sft` architecture; `examples/vision-vlm` fine-tunes
+  SmolVLM-256M and exports HF-format checkpoints servable by vLLM. Extra:
+  `pip install maatml[vllm]` (Linux-only).
+- **Captioning:** `examples/vision-describer` (flan-t5 seq2seq) turns the
+  multitask vision output into a short description.
+- `maatml export --format onnx`; VLM processor assets bundled for vLLM serving.
+
 ### Fixed
 
 - CPU-free CI: move SFT config models to `training/sft_config.py` so
