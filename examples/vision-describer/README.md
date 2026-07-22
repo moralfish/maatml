@@ -1,7 +1,7 @@
 # Vision Result Describer
 
 Small **flan-t5-small** seq2seq model that reads a structured
-[`examples/vision`](../vision/) multitask response and emits one short
+[`examples/vision`](https://github.com/moralfish/maatml/tree/main/examples/vision) multitask response and emits one short
 factual description:
 
 ```json
