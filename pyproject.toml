@@ -7,6 +7,12 @@ name = "maatml"
 version = "0.5.0"
 description = "A machine learning models framework from experimentation to production: data, training, evaluation, export, and deploy pipelines for small task-specific language models"
 readme = "README.md"
+keywords = [
+  "fine-tuning", "llm", "vlm", "lora", "qlora", "peft",
+  "small-language-models", "apple-silicon", "mps", "onnx", "vllm",
+  "mlops", "machine-learning", "pytorch", "transformers", "cli",
+  "edge-ai", "synthetic-data", "structured-output", "validator",
+]
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [
