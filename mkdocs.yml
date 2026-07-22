@@ -8,13 +8,58 @@ exclude_docs: |
   GO_PUBLIC.md
 theme:
   name: material
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
 nav:
   - Home: index.md
+  - Get started: getting-started.md
   - The validator-gated lifecycle: lifecycle.md
   - Serving & deployment: serving.md
   - Plugin author guide: plugins.md
+  - Examples:
+      - examples/index.md
+      - Support Ticket Triage: examples/support-ticket-triage.md
+      - Vision (multitask): examples/vision.md
+      - Vision VLM: examples/vision-vlm.md
+      - Vision Describer: examples/vision-describer.md
+      - JCL Validator: examples/jcl-validator.md
+      - Spool Interpreter: examples/spool-interpreter.md
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - tables
   - toc:
       permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true

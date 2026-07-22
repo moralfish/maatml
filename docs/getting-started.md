@@ -1,0 +1,92 @@
+# Get started in 5 minutes
+
+The fastest path from a clean checkout to a served model uses
+[support-ticket-triage](examples/support-ticket-triage.md): a LoRA fine-tune of
+Qwen3-0.6B that turns a raw support ticket into `{priority, category, team,
+summary}` JSON. Everything below runs on CPU.
+
+## 1. Install
+
+```bash
+git clone https://github.com/moralfish/maatml.git
+cd maatml
+python -m venv .venv
+source .venv/bin/activate
+pip install "maatml[ml]"
+```
+
+`[ml]` pulls in the training stack (`torch`, `transformers`, `peft`, …). If you
+only need the CLI and library — no training — `pip install maatml` is enough.
+
+## 2. Build the train / val / test splits
+
+```bash
+maatml prepare examples/support-ticket-triage/
+```
+
+This reads the seed data already committed at
+`datasets/samples/seed_samples.jsonl` and writes
+`output/prepared/{train,val,test}.jsonl` under the model folder. Nothing is
+downloaded yet.
+
+## 3. Smoke-train the pipeline
+
+```bash
+maatml train examples/support-ticket-triage/ --smoke
+```
+
+`--smoke` runs a couple of steps on a slice of data so you can confirm the
+tokenizer, base model, LoRA adapter, and trainer all wire up correctly before
+spending real compute. This step downloads the base model
+(`Qwen/Qwen3-0.6B`, ~1.2 GB) from the Hugging Face Hub on first run.
+
+## 4. Train for real
+
+```bash
+maatml train examples/support-ticket-triage/
+```
+
+Checkpoints land under `output/checkpoints/<run_id>/`. List every run with
+`maatml runs examples/support-ticket-triage/`.
+
+## 5. Evaluate against the gates
+
+```bash
+maatml evaluate examples/support-ticket-triage/ --gate
+```
+
+`--gate` exits non-zero if `evaluation.gates` in `model.yml` aren't met — the
+same check you'd wire into CI.
+
+## 6. Serve it
+
+```bash
+maatml serve examples/support-ticket-triage/
+```
+
+In another terminal:
+
+```bash
+curl -s localhost:8080/predict \
+  -H 'content-type: application/json' \
+  -d '{"request": "Cannot log in since this morning, urgent, paying customer"}' | jq
+```
+
+Add `?validate=1` to the URL to also run the task's validator inline on the
+response.
+
+## What just happened
+
+One `model.yml` drove every stage above — prepare, train, evaluate, serve —
+through the same CLI. See [the validator-gated lifecycle](lifecycle.md) for why
+that matters, and the [plugin author guide](plugins.md) for how to point this
+at your own task instead of support-ticket triage.
+
+## Next steps
+
+- Browse the [other five examples](examples/index.md) — vision, a
+  vLLM-servable vision-language model, and two mainframe-log models share this
+  same folder layout.
+- Scaffold your own task:
+  `maatml scaffold ~/models/my-task --architecture causal_sft --name my-task`.
+- `maatml --help` and `maatml <command> --help` document every flag.
