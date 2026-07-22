@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VisionVlmDescription",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["description"],
+  "properties": {
+    "description": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 280
+    }
+  }
+}

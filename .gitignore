@@ -36,3 +36,7 @@ examples/*/datasets/samples/*.parquet
 
 # Maintainer-only (local) release checklist — do not publish
 docs/GO_PUBLIC.md
+
+# Build / deploy artifacts (not committed)
+/site/
+/.wrangler/
