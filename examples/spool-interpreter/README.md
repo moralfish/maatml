@@ -33,9 +33,9 @@ minor for retrain/data/config changes, patch for metadata-only edits.
 or `null` on `status: completed`. `explanation` must be non-empty when
 `status != "completed"`; `relatedDocs` is a list of doc keys.
 
-Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json)
+Full enumeration in [`datasets/node_contracts.json`](https://github.com/moralfish/maatml/blob/main/examples/spool-interpreter/datasets/node_contracts.json)
 and the JSON Schema at
-[`datasets/spool_interpretation_schema.json`](datasets/spool_interpretation_schema.json).
+[`datasets/spool_interpretation_schema.json`](https://github.com/moralfish/maatml/blob/main/examples/spool-interpreter/datasets/spool_interpretation_schema.json).
 
 ## Layout
 

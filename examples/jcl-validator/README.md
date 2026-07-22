@@ -36,9 +36,9 @@ minor for retrain/data/config changes, patch for metadata-only edits.
 `continuation_error`, `invalid_exec_statement`,
 `invalid_dataset_reference_structure`, `other`, `none`.
 
-Full enumeration in [`datasets/node_contracts.json`](datasets/node_contracts.json)
+Full enumeration in [`datasets/node_contracts.json`](https://github.com/moralfish/maatml/blob/main/examples/jcl-validator/datasets/node_contracts.json)
 and the JSON Schema at
-[`datasets/jcl_validation_schema.json`](datasets/jcl_validation_schema.json).
+[`datasets/jcl_validation_schema.json`](https://github.com/moralfish/maatml/blob/main/examples/jcl-validator/datasets/jcl_validation_schema.json).
 
 ## Layout
 
