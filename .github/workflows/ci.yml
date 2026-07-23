@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -49,6 +49,36 @@ jobs:
           maatml validate examples/support-ticket-triage
           maatml validate examples/vision
           maatml validate examples/vision-describer
+          maatml validate examples/vision-vlm
+
+  ml-smoke:
+    # Exercises the real training stack on CPU end to end: prepare -> smoke
+    # train -> evaluate the validator + metrics on support-ticket-triage. The
+    # rest of CI is intentionally torch-free; this is the one job that proves
+    # the [ml] path and the flagship example's gates plumbing actually run.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (CPU torch + ml extra)
+        run: |
+          python -m pip install --upgrade pip
+          # CPU wheel only — avoids pulling the multi-GB CUDA build.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev,ml]"
+      - name: Smoke train + evaluate triage on CPU
+        env:
+          HF_HUB_DISABLE_TELEMETRY: "1"
+          TOKENIZERS_PARALLELISM: "false"
+        run: |
+          maatml prepare  examples/support-ticket-triage/
+          maatml train    examples/support-ticket-triage/ --smoke --device cpu
+          # No --gate: a 2-step smoke model will not meet the gates. This still
+          # exercises the triage validator + metrics on a real checkpoint.
+          maatml evaluate examples/support-ticket-triage/ --device cpu
 
   standalone:
     runs-on: ubuntu-latest

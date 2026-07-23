@@ -81,9 +81,11 @@ laptop and deploy to the edge or vLLM.
 - **Complements** general fine-tuning tools (Axolotl, LLaMA-Factory, Unsloth,
   TRL) rather than competing on scale. Reach for those for large models,
   multi-node training, RL, or broad model coverage.
-- **Not an orchestrator.** It trains and serves models; it does not schedule
-  arbitrary DAGs. Run `maatml train` as a step inside MLflow / Prefect /
-  Metaflow if you need pipeline orchestration.
+- **Runs its own fixed lifecycle** (`prepare → train → evaluate → export →
+  verify` / `serve`), and will add a single-command `maatml run` for that path
+  (see [ROADMAP.md](ROADMAP.md)). It is **not** a general-purpose workflow
+  scheduler: no triggers, no arbitrary shell/Python steps, no remote executors.
+  Drop `maatml train` into MLflow / Prefect / Metaflow when you need that.
 - **Its niche:** local-first, multimodal, structured-output models with
   correctness gated *outside* the model, from data generation through serving.
 
@@ -135,8 +137,10 @@ Run `maatml <command> --help` for options.
 ## End-to-end example (Support Ticket Triage)
 
 The quickest model to run: a LoRA fine-tune of Qwen3-0.6B that turns a raw
-support ticket into `{priority, category, team, summary}` JSON, gated by a schema
-validator:
+support ticket into `{priority, category, team, summary}` JSON, gated by a
+schema validator plus a `category → team` routing contract enforced *outside*
+the model. Every reference model now registers a validator and declares
+`evaluation.gates`.
 
 ```bash
 git clone https://github.com/moralfish/maatml.git

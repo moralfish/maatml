@@ -8,6 +8,34 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+### Added
+
+- **Triage contract:** `examples/support-ticket-triage` ships a real validator
+  (`triage_plugin`) with a JSON → schema → **routing contract** (`category →
+  team`) → summary-quality pipeline, plus enforced `evaluation.gates`, a fixed
+  benchmark (`test_prompt_set.jsonl`), and CPU-free tests. It was the only
+  reference example without a validator.
+- **Gates everywhere:** `jcl-validator` and `spool-interpreter` promote their
+  README target tables into enforced `evaluation.gates`, so every bundled
+  example now gates.
+- **Serve hardening:** opt-in CORS via `--cors` / `MAATML_SERVE_CORS` and a
+  request-body size cap via `--max-body-bytes` (default 1 MiB → `413`).
+- **Honest manifests:** export `manifest.json` records `weights_dtype` read from
+  the exported safetensors tensors (`weights_dtype_verified: true`) alongside the
+  declared `weights_dtype_declared` hint; mixed-precision exports list every
+  observed dtype.
+- **CI:** Python 3.13 in the test matrix; a CPU `ml-smoke` job that runs
+  `prepare → train --smoke → evaluate` on triage through the real `[ml]` stack.
+
+### Changed
+
+- **Behavior change:** `maatml evaluate --gate` now **fails (exit non-zero)**
+  when a model declares no `evaluation.gates`, instead of passing vacuously.
+  Scripts relying on the old exit-0 must add a `gates:` block or drop `--gate`.
+- **Security:** `maatml serve` no longer sends a wildcard
+  `Access-Control-Allow-Origin: *` by default — cross-origin access is now
+  opt-in.
+
 ## [0.5.0] - 2026-07-22
 
 ### Added

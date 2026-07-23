@@ -172,3 +172,65 @@ def test_serve_predict_bad_body(
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def _serve(md: ModelDefinition, ctx) -> tuple[object, str, threading.Thread]:
+    server = serve_model(md, host="127.0.0.1", port=0, context=ctx)
+    host, port = server.server_address[:2]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, f"http://{host}:{port}", thread
+
+
+def test_cors_off_by_default(
+    serve_model_dir: tuple[ModelDefinition, Path],
+) -> None:
+    md, ckpt = serve_model_dir
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu")
+    assert ctx.cors_origin is None
+    server, base, thread = _serve(md, ctx)
+    try:
+        with urllib.request.urlopen(f"{base}/health", timeout=5) as resp:
+            assert resp.headers.get("Access-Control-Allow-Origin") is None
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_cors_enabled_when_configured(
+    serve_model_dir: tuple[ModelDefinition, Path],
+) -> None:
+    md, ckpt = serve_model_dir
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", cors_origin="*")
+    server, base, thread = _serve(md, ctx)
+    try:
+        with urllib.request.urlopen(f"{base}/health", timeout=5) as resp:
+            assert resp.headers.get("Access-Control-Allow-Origin") == "*"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_body_size_cap_returns_413(
+    serve_model_dir: tuple[ModelDefinition, Path],
+) -> None:
+    md, ckpt = serve_model_dir
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", max_body_bytes=64)
+    server, base, thread = _serve(md, ctx)
+    try:
+        big = json.dumps({"request": "x" * 500}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/predict",
+            data=big,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with pytest.raises(urllib.error.HTTPError) as exc_info:
+            urllib.request.urlopen(req, timeout=5)
+        assert exc_info.value.code == 413
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
