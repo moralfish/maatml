@@ -2,16 +2,16 @@
 
 Eight layers, mirroring the JCL validator:
 
-  1. JSON parse                      — text → dict
-  2. JSON schema                     — matches `SpoolInterpretation` JSON Schema
-  3. status enum                     — status ∈ {completed, failed, abended, skipped, running}
-  4. failureCategory enum            — failureCategory ∈ FailureCategory enum or null
-  5. Field shape                     — non-empty summary/rootCause/suggestedFix;
+  1. JSON parse: text → dict
+  2. JSON schema: matches `SpoolInterpretation` JSON Schema
+  3. status enum: status ∈ {completed, failed, abended, skipped, running}
+  4. failureCategory enum: failureCategory ∈ FailureCategory enum or null
+  5. Field shape: non-empty summary/rootCause/suggestedFix;
                                        returnCode is string-or-null
-  6. Consistency                     — `status: completed` ⟹ failureCategory ∈ {null, "other"};
+  6. Consistency: `status: completed` ⟹ failureCategory ∈ {null, "other"};
                                        confidence ∈ [0, 1]
-  7. Explanation present             — non-empty `explanation` when status != "completed"
-  8. relatedDocs shape               — array of non-empty strings (possibly empty)
+  7. Explanation present: non-empty `explanation` when status != "completed"
+  8. relatedDocs shape: array of non-empty strings (possibly empty)
 
 Layers 7-8 are new in v2 with the seq2seq rebuild.
 """
@@ -92,7 +92,7 @@ def validate_spool_result(
     return_code = result.parsed.get("returnCode")
     confidence = result.parsed.get("confidence")
 
-    # Layer 3 — status enum
+    # Layer 3: status enum
     if status in statuses:
         result.passed_layers.add(3)
     else:
@@ -105,7 +105,7 @@ def validate_spool_result(
             )
         )
 
-    # Layer 4 — failureCategory enum (or null)
+    # Layer 4: failureCategory enum (or null)
     if failure_category is None or failure_category in failure_categories:
         result.passed_layers.add(4)
     else:
@@ -121,7 +121,7 @@ def validate_spool_result(
             )
         )
 
-    # Layer 5 — field shape
+    # Layer 5: field shape
     layer5_ok = True
     field_map = {"summary": summary, "rootCause": root_cause, "suggestedFix": suggested_fix}
     for fname in non_empty:
@@ -149,7 +149,7 @@ def validate_spool_result(
     if layer5_ok:
         result.passed_layers.add(5)
 
-    # Layer 6 — consistency
+    # Layer 6: consistency
     layer6_ok = True
     if status == "completed" and failure_category not in (None, "other"):
         result.errors.append(
@@ -175,7 +175,7 @@ def validate_spool_result(
     if layer6_ok:
         result.passed_layers.add(6)
 
-    # Layer 7 — explanation present when status != "completed"
+    # Layer 7: explanation present when status != "completed"
     explanation = result.parsed.get("explanation")
     if status == "completed":
         if explanation is None or (isinstance(explanation, str)):
@@ -204,7 +204,7 @@ def validate_spool_result(
                 )
             )
 
-    # Layer 8 — relatedDocs shape (array of non-empty strings; empty OK)
+    # Layer 8: relatedDocs shape (array of non-empty strings; empty OK)
     related_docs = result.parsed.get("relatedDocs", [])
     if not isinstance(related_docs, list):
         result.errors.append(

@@ -44,7 +44,7 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml runs     examples/<name>/
 .venv/bin/maatml plugins
 
-# Multi-GPU (CUDA) — HF Trainer / accelerate owns placement; rank-0 writes runs.jsonl
+# Multi-GPU (CUDA): HF Trainer / accelerate owns placement; rank-0 writes runs.jsonl
 accelerate launch -m maatml.cli train examples/<name>/
 # or:
 torchrun --nproc_per_node=N -m maatml.cli train examples/<name>/
@@ -68,8 +68,7 @@ See also [ROADMAP.md](ROADMAP.md) for v0.4 product surface and later tranches.
 
 MaatML is a **plugin-based training/fine-tuning framework** (experimentation →
 production). Core owns architectures, registries, device profiles, generic
-prepare/train/eval harnesses, and guards. **Examples own task semantics** —
-validators, metrics, predictors, tokenizers, generators, sanitizer rules, and
+prepare/train/eval harnesses, and guards. **Examples own task semantics**: validators, metrics, predictors, tokenizers, generators, sanitizer rules, and
 seed builders live under `examples/*/…_plugin/` and register via
 `model.yml` `plugins:`.
 

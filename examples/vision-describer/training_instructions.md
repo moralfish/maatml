@@ -1,4 +1,4 @@
-# Vision Result Describer — training instructions
+# Vision Result Describer: training instructions
 
 ## 1. Purpose
 
@@ -7,7 +7,7 @@ short, grounded English sentence for UIs, logs, and accessibility captions.
 
 ## 2. Base model
 
-`google/flan-t5-small` (~80M params). Encoder–decoder fits “structured text
+`google/flan-t5-small` (~80M params). Encoder-decoder fits “structured text
 in → short JSON out” without chat-template overhead. Upgrade path is a
 `model_id` swap to `google/flan-t5-base` if gates miss on small.
 
@@ -37,7 +37,7 @@ Linearized vision JSON after `linearize_vision_result()`:
 
 ## 6. Dataset
 
-Synthetic rows from `scripts/build_seeds.py` / `maatml datagen` — prediction-like
+Synthetic rows from `scripts/build_seeds.py` / `maatml datagen`: prediction-like
 noise on confidences and coordinates, gated by the task validator. Split by
 `family` (0.8 / 0.1 / 0.1). Benchmark anchors pin one scene × pose variant set
 to the test split.
@@ -85,7 +85,7 @@ See `model.yml` `evaluation.gates`.
 
 ## 15. Test prompt set
 
-`datasets/samples/benchmark_samples.jsonl` — fixed anchors per scene label.
+`datasets/samples/benchmark_samples.jsonl`: fixed anchors per scene label.
 
 ## 16. Composition
 

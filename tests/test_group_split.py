@@ -12,7 +12,7 @@ def test_family_group_does_not_straddle(tmp_path: Path) -> None:
     mdir = tmp_path / "model"
     (mdir / "datasets" / "samples").mkdir(parents=True)
     seeds = mdir / "datasets" / "samples" / "seed_samples.jsonl"
-    # Two families, three samples each — enough that a per-sample hash
+    # Two families, three samples each, enough that a per-sample hash
     # would often split a family, but group-hash must keep them together.
     rows = []
     for family in ("alpha", "beta", "gamma", "delta"):

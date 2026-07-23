@@ -1,10 +1,10 @@
 # MaatML Roadmap
 
 MaatML is a **machine learning models framework from experimentation to
-production**: data pipelines (validator-gated seed generation and ingestion) →
+production**: data pipelines (validator-checked seed generation and ingestion) →
 training → evaluation → export → deploy, with plugins that **optimize, distill,
 and distribute** models to run anywhere. Purpose: task-specific domain language
-models with a small footprint — from a multi-gigabyte base model to a small
+models with a small footprint, from a multi-gigabyte base model to a small
 subject-matter expert. Correctness is checked outside the model via validators
 (the Maat weighing thesis).
 
@@ -20,7 +20,15 @@ triggers/cron, no shell/python steps, no remote executors). Source-mutating
 operations (`datagen`, `ingest`, planned `distill`) stay explicit and outside
 the default runner.
 
+**Claims rule:** the guarantee register ("gates", "cannot", "never") ships only
+together with the mechanism that enforces it and a test that proves it. Exit
+criteria in this file are testable assertions; wording that cannot be tested
+does not belong in them.
+
 ## Status
+
+Version numbers are assigned only when a tranche ships. Planned tranches below
+are ordered but unversioned.
 
 | Tranche | Theme | Status |
 |---|---|---|
@@ -30,40 +38,32 @@ the default runner.
 | v0.4 | Product surface (export / deploy / flywheel) | Done |
 | v0.5 | Serving + multimodal | Done |
 | v0.5.1 | Truth and safety | Done |
-| v0.6 | Fixed lifecycle runner (`maatml run`) | Planned |
-| v0.7 | Distill + reviewed flywheel | Planned |
-| v0.8 | Slim artifact distribution | Planned |
 
 ## Non-goals
 
-- Prefect-style scheduling / triggers / remote executors
 - Arbitrary shell or Python pipeline steps
-- Workspace-level multi-model DAGs (possible later)
-- Distributed compute beyond existing accelerate / torchrun training
 - Broad model zoo competing with Axolotl / LLaMA-Factory / Unsloth
-- GUI
 
 Completed release detail lives in [CHANGELOG.md](CHANGELOG.md). This file
 carries outcomes, dependencies, and measurable exit criteria.
 
-## v0.2 — Experiment layer
+## v0.2: Experiment layer
 
 Infrastructure everything else consumes.
 
-- **Run registry** — `output/runs.jsonl`, per-run checkpoint dirs, `maatml runs`,
+- **Run registry**: `output/runs.jsonl`, per-run checkpoint dirs, `maatml runs`,
   replace mtime-based `_latest_checkpoint`
-- **Resume** — `maatml train --resume [auto|PATH]`
-- **Tracking passthrough** — `training.report_to` / `run_name` → HF
+- **Tracking passthrough**: `training.report_to` / `run_name` → HF
   `TrainingArguments` (W&B / TensorBoard if installed)
-- **Per-head loss logging** — generic `loss_<head>` from `multi_head`
-- **Adapter-only artifacts** — `training.lora.save_mode: merged|adapter|both`
+- **Per-head loss logging**: generic `loss_<head>` from `multi_head`
+- **Adapter-only artifacts**: `training.lora.save_mode: merged|adapter|both`
 - **Tokenize-once cache** + `group_by_length`
-- **Format adapters** — `alpaca` / `sharegpt` as format plugins; multi-turn
+- **Format adapters**: `alpaca` / `sharegpt` as format plugins; multi-turn
   loss masking in `causal_sft`
-- **Eval gates** — `evaluation.gates:` + `maatml evaluate --gate` (non-zero exit)
-- **Hygiene** — wire or remove dead `dataset.group_by`
+- **Eval gates**: `evaluation.gates:` + `maatml evaluate --gate` (non-zero exit)
+- **Hygiene**: wire or remove dead `dataset.group_by`
 
-## v0.3 — Methods + scale
+## v0.3: Methods + scale
 
 - QLoRA / quantized bases (`[cuda]` extra, bitsandbytes; CUDA-only)
 - DPO / ORPO via TRL (`[pref]` extra); preference pairs mintable from validator
@@ -73,28 +73,28 @@ Infrastructure everything else consumes.
 - Multi-GPU via accelerate / torchrun (rank-0 run-registry writes)
 - HPO / sweep hooks (`--set` overrides, `maatml sweep`)
 
-## v0.4 — Product surface
+## v0.4: Product surface
 
-- **Export** — `maatml export --format gguf|mlx|safetensors` + manifest from
+- **Export**: `maatml export --format gguf|mlx|safetensors` + manifest from
   `PackagingSpec`; post-export parity gate on pinned benchmarks
-- **Checksums / revision pinning** — `maatml verify` (sha256 integrity);
+- **Checksums / revision pinning**: `maatml verify` (sha256 integrity);
   `training.model_revision`. Cryptographic *signing* is deferred (see Later)
-- **Data flywheel** — `maatml datagen` / `ingest`; shared gated builder;
+- **Data flywheel**: `maatml datagen` / `ingest`; shared gated builder;
   optional OpenAI-compatible teacher behind the validator gate (`[teacher]`)
-- **Docs site** — mkdocs-material (`[docs]`), plugin-author guide
+- **Docs site**: mkdocs-material (`[docs]`), plugin-author guide
 
-## v0.5 — Serving + multimodal
+## v0.5: Serving + multimodal
 
 Shipped in 0.5.0 (see [CHANGELOG.md](CHANGELOG.md)).
 
-- **Serving** — `maatml serve` (`/health`, `/info`, `/predict`;
+- **Serving**: `maatml serve` (`/health`, `/info`, `/predict`;
   `/predict?validate=1` re-runs the registered validator when configured)
-- **Vision** — `vision_multitask` + ONNX export (`[vision]`)
-- **Vision-language** — `vlm_sft` (SmolVLM; vLLM-servable; `[vllm]` Linux-only)
-- **Captioning** — `examples/vision-describer` (seq2seq over vision JSON)
-- **Trusted Publishing** — PyPI OIDC publish workflow
+- **Vision**: `vision_multitask` + ONNX export (`[vision]`)
+- **Vision-language**: `vlm_sft` (SmolVLM; vLLM-servable; `[vllm]` Linux-only)
+- **Captioning**: `examples/vision-describer` (seq2seq over vision JSON)
+- **Trusted Publishing**: PyPI OIDC publish workflow
 
-## v0.5.1 — Truth and safety (Done)
+## v0.5.1: Truth and safety (Done)
 
 The thesis is "ships with a contract"; make the public claims true before
 building on them.
@@ -104,27 +104,195 @@ building on them.
 - Support-ticket-triage gained a real validator plugin (`triage_plugin`:
   JSON → schema → `category → team` routing contract → summary quality) +
   `evaluation.gates` + a fixed benchmark + tests. It was the only reference
-  example without a validator ✅
+  example without a validator 
 - jcl-validator and spool-interpreter promoted their README target tables into
   enforced `evaluation.gates` in `model.yml`, so **every** example now gates
-  before the strict `--gate` change and the v0.6 runner depend on them ✅
+  before the strict `--gate` change and the lifecycle runner depend on them 
 - `evaluate --gate` with no gates configured now fails (exit non-zero) instead
-  of passing vacuously — a behavior change (exit code 0 → non-zero), noted in
-  CHANGELOG ✅
+  of passing vacuously, a behavior change (exit code 0 → non-zero), noted in
+  CHANGELOG 
 - Manifest `weights_dtype` verified from the actual exported tensors, with the
   declared value kept as `weights_dtype_declared` and a `weights_dtype_verified`
-  flag ✅
+  flag 
 - Serve: dropped the wildcard CORS default (opt-in `--cors` /
-  `MAATML_SERVE_CORS`); added a request-body size cap (`--max-body-bytes`) ✅
+  `MAATML_SERVE_CORS`); added a request-body size cap (`--max-body-bytes`) 
 - CI: Python 3.13 in the test matrix; a `[ml]` CPU `ml-smoke` job running
-  `prepare → train --smoke → evaluate` on triage ✅. **Follow-up (maintainer):**
+  `prepare → train --smoke → evaluate` on triage . **Follow-up (maintainer):**
   publish-workflow rehearsal against TestPyPI needs a TestPyPI trusted-publisher
   configured first (OIDC), so it is left as a maintainer setup step.
 
-**Exit criteria:** README's flagship validator claim is true; `--gate` cannot
-pass with zero gates; flagship example has tests. **Met.**
+## Truth and safety II: gates tell the truth (Planned)
 
-## v0.6 — Fixed lifecycle runner: `maatml run` (Planned)
+**Tracking:** #13
+
+Every place the validator contract can quietly
+degrade, every command that can destroy user data, a security floor for serve
+and plugin execution, and config honesty. Small diffs, high stakes. This
+tranche is what makes the README's three-stage gating sentence true as written.
+
+**Depends on:** v0.5.1.
+
+**Gating is real at all three stages**
+
+- `datagen` fails closed when no `evaluation.validator` is configured
+  (reuse the `GateConfigError` pattern); explicit `--allow-ungated` escape
+  hatch marks the summary line and dataset card `UNGATED` (test)
+- `serve --enforce`: validation failures return HTTP 422; `?validate=1`
+  remains as annotation mode. README / docs index / lifecycle keep the
+  "gates serving" wording only once this ships (test)
+- Sanitize tags apply on **all** format paths (`alpaca` / `sharegpt` /
+  preference) or the command errors on an unsupported combination; the
+  dataset card records what actually ran, not what was declared (test)
+- `ingest`: rows missing the gold field are rejected or separately counted
+  (`skipped_unvalidated`); `--map` errors when a source column matches zero
+  input rows (test)
+- Serve validator call shape resolved once at startup (no TypeError fallback
+  that silently weakens validation to a raw-output call)
+- A configured `evaluation.validator` that does not resolve to a registered
+  validator is an error at evaluate / datagen time (`GateConfigError`
+  pattern), not a silent downgrade to JSON-parse-only scoring
+
+**No command destroys user data**
+
+- `scaffold` refuses to overwrite an existing `model.yml` or seed corpus
+  without `--force` (test)
+- `datagen` writes seed files atomically (temp + `os.replace`) and refuses to
+  truncate a non-empty seed file on a zero-accepted run (test)
+- `runs.jsonl`: single-write appends; readers skip-and-warn unparseable lines
+  (quarantine to `runs.jsonl.corrupt`) instead of failing every consumer (test)
+
+**Broken as shipped → working**
+
+- `--resume auto|RUN_ID` resolves the newest `checkpoint-*`
+  (`get_last_checkpoint`) instead of the run root
+
+**Security floor**
+
+- serve 500s return a generic message; tracebacks go to the server log only
+  (client tracebacks solely under `--debug`); warn on non-loopback bind
+- Trust boundary documented in README + SECURITY.md + docs/plugins.md:
+  running any command against a model folder executes its `plugins:`, including `validate` and `plan`; add `validate --no-plugins` for schema and
+  path checks without code execution
+- Tokenized cache loads with `weights_only=True` (or moves to JSON), no
+  pickle sink
+- GGUF converter resolved from explicit config/env only (drop the generic
+  `convert.py` PATH / cwd lookup)
+- Vision predictors reject absolute and `..` image paths and confine reads to
+  the model directory
+
+**Config honesty**
+
+- `--set` overrides re-validate (`validate_assignment` or re-parse after
+  apply), the CLI can no longer bypass schema constraints it advertises (test)
+- Known-keys warning pass for `dataset:` / `evaluation:` sections; `evaluate`
+  prints "no validator configured, scoring JSON parse only" when that is
+  what is happening
+- docs/serving.md describes `verify` as corruption detection (listed files
+  match their recorded sha256), not tamper evidence, guarantee wording
+  returns when injected-file detection and signing ship
+
+**Exit criteria:** the README three-stage gating sentence is true as worded,
+each stage backed by a test (datagen fail-closed; serve `--enforce` → 422;
+eval `--gate` already covered); `scaffold` and `datagen` cannot remove user
+content without `--force` (tests); a torn last line in `runs.jsonl` is
+quarantined and `maatml runs` still lists prior runs (test); `--resume auto`
+resumes to completion from an interrupted smoke run that saved a mid-run
+checkpoint (CI test; the smoke overlay sets `save_steps` low enough to
+checkpoint within the smoke budget); `--set` of a schema-invalid value exits
+non-zero (test); serve 500 response bodies contain no traceback (test).
+
+## Silent-failure hardening + test floor (Planned)
+
+**Tracking:** #14
+
+The remaining "looks green, did nothing" paths, and
+tests for the parts of the codebase that had none, the trainers (4 of 6
+architectures) and the CLI.
+
+**Depends on:** Truth and safety II.
+
+**Honest numbers**
+
+- Per-class eval report: drop fabricated values (recall was a literal `1.0`,
+  F1 a literal `0.0`), report `pass_rate` / `n`, or compute real P/R/F1
+- seq2seq brace repair becomes opt-in and is recorded in `Report.extras`
+  whenever it fires, so pass rates stay measurements
+- `evaluate` defaults its token budget from `packaging.max_input_tokens`
+  (parity with serve and export `--parity`); truncated-input count logged
+- `evaluation.metrics` as a list: run all entries, or reject more than one
+  until multi-metric support exists (test)
+
+**Coercion → loud failure**
+
+- Fractional epochs honored (float) in seq2seq / multi_head (parity with the
+  SFT config); precision values validated at parse time
+- Unknown gold labels counted and failed (or reported) instead of silently
+  mapping to index 0 / `none`; bool heads honor declared label order
+- seq2seq missing or falsy targets: error or counted skip, no training on
+  the literal string `"{}"` (test)
+- Preference rows: `json.dumps` for structured chosen/rejected, not Python
+  `repr` (test); warn when chosen == rejected
+- DPO / ORPO honors `lora.save_mode` (reuse `_save_sft_artifacts`)
+- Format adapters reject or count degenerate rows (empty instruction or
+  content, zero-message conversations) instead of silently emitting them
+- `multi_head` legacy JCL fallback fires only when legacy keys are actually
+  present; absent or malformed `training.heads` is an error again
+- Teacher failures counted and reported (first real exception logged); abort
+  after K consecutive failures instead of burning the attempts cap
+- Degenerate group keys (one group covering ~the whole corpus) refuse to
+  split silently: hard error, or per-row fallback with a loud warning;
+  teacher / ingest rows get per-row group identity
+- Benchmark pinning checks group keys against seed split assignment (no
+  family in both train and test)
+- Trainer bodies mark the run record `aborted` on any exception (fallible
+  work moved inside the finish handler); `running` records with no checkpoint
+  skipped by resume resolution
+- Val-set tokenize cache keyed on val.jsonl content too
+- Sweep survives a failed trial (record, continue, non-zero exit at the end);
+  rank only trials sharing the chosen metric, with ranking direction taken
+  from the metric definition, not the first trial
+- Sanitizer: warn when length-preserving truncation fires (once per rule);
+  validate fixed replacements fit at rule load
+- `datagen` append dedups by content / sample_id (reuse ingest `_row_id`);
+  stale reject reports overwritten
+- Plugin lifecycle: one owner for model-plugin loading (idempotent, no
+  double top-level execution); per-entry-point failure surfacing in
+  `maatml plugins` and in `Unknown … plugin` errors; drop the
+  wipe-on-empty-TRAINERS rediscovery heuristic; `Validator` Protocol matches
+  the real call sites (one call shape across harness / serve / datagen)
+- Known user-error classes in the CLI (missing file, unparseable model.yml,
+  absent seed corpus) print a one-line actionable message; full tracebacks
+  only under `--debug`
+
+**Test floor**
+
+- CLI: `typer.testing.CliRunner` suite covering `evaluate --gate` exit codes,
+  `verify` on a tampered manifest, `scaffold` refusal, per-command argument
+  parsing (torch-free)
+- Trainers: torch-gated unit tests for config parsing / label masking /
+  tokenization across all four trainers; the ml CI job runs
+  `pytest examples/` so the vision end-to-end test actually executes; `-rs`
+  on the matrix run so skips are visible
+- Shared `tests/conftest.py` registry snapshot/restore behind a public
+  reset API (tests stop reaching into `_entries`)
+- macOS: `macos-latest` torch-free job (free on a public repo, catches
+  import / path / CLI regressions); optional weekly scheduled MPS `[ml]`
+  smoke. CI optimization, not a claims item, local development already
+  exercises MPS continuously
+- `gh-action-pypi-publish` pinned to a commit SHA (Dependabot keeps it
+  bumped)
+
+**Exit criteria:** each of the four previously-untested trainer modules has at
+least one torch-gated unit test exercising config parsing or label masking;
+the CliRunner suite covers `evaluate --gate` exit codes, `verify` on a
+tampered manifest, and `scaffold` refusal; the ml job runs pytest with the
+vision e2e green; preparing a datagen-produced corpus yields non-empty
+val/test splits (regression for the degenerate-group fix); CI includes a
+macOS job.
+
+## Fixed lifecycle runner: `maatml run` (Planned)
+
+**Tracking:** #15
 
 ```
 seed corpus
@@ -139,63 +307,102 @@ Explicit source ops (`datagen` / `ingest` / later `distill`) append to the seed
 corpus and stay **outside** the default runner; changing seeds makes `prepare`
 stale.
 
-**Depends on:** v0.5.1 (so gates are meaningful).
+**Depends on:** Truth and safety II + Silent-failure hardening (every step the
+runner chains must fail loud first; `runs.jsonl` must tolerate a torn line).
 
-- **`maatml run <model-dir>`** — executes stale steps in order:
+- **`maatml run <model-dir>`**: executes stale steps in order:
   prepare → train → evaluate (gates enforced) → export → verify.
   Flags: `--smoke`, `--force`, `--from STEP`, `--until STEP`, `--dry-run`,
   `--device`, `--set` (overrides feed the fingerprint)
+- **Smoke-tier gates**: the `smoke:` overlay may override `evaluation.gates`;
+  a smoke-gated run is marked as such in the run record and manifest, so a
+  green smoke line stays distinguishable from a real gate pass
 - **Fingerprints = idempotence, not speed.** Each step hashes effective config
   after smoke/overrides, declared input assets, prepared/eval data, checkpoint
   or manifest content, MaatML version / git SHA, plugin source hashes,
   device/profile, and exporter identity. Stored atomically in
   `output/pipeline.json`. Skip only when the fingerprint matches, the prior
   step completed, and expected outputs still verify. Train's fingerprint
-  populates `RunRecord.spec_hash`
-- **`maatml plan` becomes `run --dry-run`** — per-step fresh/stale status with
+  populates `RunRecord.spec_hash`. `--set` values are validated (Truth and
+  safety II) before they enter a fingerprint
+- **`maatml plan` becomes `run --dry-run`**: per-step fresh/stale status with
   the reason (which hash changed)
 - Typed config where the runner fingerprints it (step sections), rather than a
-  big-bang config rewrite
+  big-bang config rewrite. The typed surface includes `evaluation.validator`
+  and gate keys
 
 **Exit criteria:** `maatml run examples/support-ticket-triage/ --smoke` goes
-seeds → verified export in one command in CI; re-run with no changes does no
-work.
+seeds → verified export in one command in CI using smoke-tier gates, with the
+run record marked smoke-gated; re-run with no changes does no work; a run with
+a misspelled `evaluation.validator` exits non-zero; `run --set` with a
+schema-invalid value exits non-zero and leaves `output/pipeline.json`
+unchanged.
 
-## v0.7 — Distill + reviewed flywheel (Planned)
+## Distill + reviewed flywheel + serve contract (Planned)
 
-**Depends on:** v0.5.1 (real validators) and preferably v0.6 (runner staleness).
+**Tracking:** #16
 
-- **`maatml distill`** — teacher responses for an unlabeled prompt pool; every
+**Depends on:** Truth and safety II + Silent-failure hardening (hardened
+`TeacherClient` / `build_gated_corpus` / ingest), and preferably the lifecycle
+runner (staleness).
+
+- **`maatml distill`**: teacher responses for an unlabeled prompt pool; every
   row validator-gated before entering the seed corpus (reuse `TeacherClient`,
   `build_gated_corpus`, ingest field-mapping). Typed stage config (prompt
-  source, teacher model/revision, retry/budget limits, output, provenance) —
-  no new untyped `dict[str, Any]` surface. Accepted rows carry teacher
+  source, teacher model/revision, retry/budget limits, output, provenance), no new untyped `dict[str, Any]` surface. Accepted rows carry teacher
   model/revision, prompt hash, source, family; rejection reports retained;
   offline replay supported. Worked example on triage
-- **Serve capture** — opt-in, sanitized, size/retention-capped, local.
+- **Serve capture**: opt-in, sanitized, size/retention-capped, local.
   Captured model predictions are **not** automatically gold; human/teacher
   correction and explicit approval are required before ingestion. Approved
-  rows fold into seeds and make `prepare` stale — the retrain loop is
-  `serve --capture` → review → `ingest` → `run`
-- **Preference minting CLI** — surface `mint_preference_pairs` as an optional
+  rows fold into seeds and make `prepare` stale, the retrain loop is
+  `serve --capture` → review → `ingest` → `run`. Capture requires the serve
+  auth token (below)
+- **Serve contract** (promoted from Later: `--capture` and non-loopback binds
+  need auth, and `--enforce` from Truth and safety II pairs with enforcement
+  during generation):
+  - serve auth token (required for `--capture`, recommended for non-loopback
+    binds)
+  - jsonschema-constrained decoding at serve time via a constrained-decoding
+    logits processor (outlines or lm-format-enforcer, behind a serve extra);
+    generative architectures only; structure enforced *during* generation
+    instead of only rejected after
+  - bounded retry-with-feedback: on validation failure, feed the error back
+    to the model and re-ask once; retries counted and reported, never silent
+- **Preference minting CLI**: surface `mint_preference_pairs` as an optional
   source operation (not a default `run` step) feeding `dpo` / `orpo`
 
-**Exit criteria:** no teacher or captured output enters training without
-validation plus explicit acceptance; distillation is replayable offline from
-provenance.
+**Exit criteria:** a validator-rejected teacher row is absent from the
+produced seed corpus (test); `ingest` rejects a captured row lacking explicit
+approval (test); `serve --capture` without the auth token refuses to start
+(test); distill replay with network disabled reproduces the accepted corpus
+(CI); a serve request failing validation under `--enforce` returns 422 with
+the retry count in the response metadata (test).
 
-## v0.8 — Slim artifact distribution (Planned)
+## Slim artifact distribution (Planned)
 
-**Depends on:** v0.5.1 (honest manifests) and preferably v0.6 (verified export
-as a runner step).
+**Tracking:** #17
 
-- **Canonical bundle digest** — stable digest from identity + formats + sorted
+**Depends on:** v0.5.1 (verified manifest dtype), and preferably the lifecycle
+runner (verified export as a runner step). `verify`'s own blind spots close
+inside this tranche, before publish/pull builds on it.
+
+- **`verify` closes its blind spots first**: distribution multiplies bundles
+  in the wild, so the verb it rests on must be exact:
+  - files present in the export dir but absent from `manifest.json` are
+    verification errors (injected-file detection)
+  - `export --parity` writes its artifacts outside the bundle or re-emits the
+    manifest afterwards, a documented flag must not invalidate the bundle it
+    documents
+  - with these shipped, docs may describe `verify` as integrity checking of
+    the full bundle contents; tamper evidence still waits for signing (Later)
+- **Canonical bundle digest**: stable digest from identity + formats + sorted
   file hashes in `manifest.json`
 - **`maatml publish` / `pull`** with two backends: `local` (network-free
   reference, tested in CPU-free CI) and `hf` (Hub, `[hub]` extra); verify
   before upload and after download; immutable references; credentials
   delegated to native Hub auth
-- **Auto `MODEL_CARD.md` at export** — recorded eval/gates + *explicitly
+- **Auto `MODEL_CARD.md` at export**: recorded eval/gates + *explicitly
   declared* license metadata only; export must not network-lookup or infer a
   license
 
@@ -203,16 +410,28 @@ as a runner step).
 ledger, `verify --require-signature`.
 
 **Exit criteria:** `export → verify → publish → pull → verify` round-trips
-through the local backend in CPU-free CI preserving the digest.
+through the local backend in CPU-free CI preserving the digest; a file
+injected into a bundle after export fails `verify` (test).
 
-## Later / pre-1.0
+## Later
 
 - Precomputed top-k logit KD (teacher is training-only; eval/serve keep
   trusting validators); online KD CUDA-only and optional
+- QAT (torchao) for the edge path: post-hoc GGUF/MLX/ONNX quantization loses
+  accuracy that quantization-aware training recovers
 - Signing (`verify --require-signature`, fail closed), OCI backend, promotion
   channels
-- OpenAI-compatible `/v1/chat/completions`; jsonschema-constrained decoding;
-  serve auth token
+- OpenAI-compatible `/v1/chat/completions`
+- lm-eval-harness bridge: declare a public-benchmark smoke suite in
+  `model.yml` next to task gates, for regression numbers alongside the
+  validators
+- Validator adapters: run Guardrails Hub or plain Pydantic validators inside
+  the MaatML validator contract
+- SetFit-style few-shot classifier path: ~8 labels/class at low compute (per
+  published SetFit results), as a cheap entry point before a full
+  `multi_head_classifier` fine-tune
+- `maatml render-config`: effective config with all defaults and overrides
+  materialized (pairs with the known-keys warnings from Truth and safety II)
 - Quantized export (GGUF `--outtype` levels, ONNX int8); generic core ONNX
   exporter (promote out of the vision plugin)
 - 1.0: frozen config / plugin / manifest APIs, migration guarantees,
@@ -223,5 +442,11 @@ through the local backend in CPU-free CI preserving the digest.
 - Ship `py.typed`; `maatml doctor`; `runs --compare`
 - Scaffold creation path for plugin-owned `vision_multitask` / `vlm_sft`;
   add missing scaffold tests for `seq2seq` / `multi_head_classifier`
-- Windows CPU-free CI job; reconcile any stray `requirements*.txt` with
-  pyproject extras; remove or fold orphaned root docs (`maatml.md`)
+- Windows CPU-free CI job; reconcile `requirements*.txt` with pyproject extras
+  (jsonschema is declared core but unused by `src/`, decide: document as a
+  plugin-contract dependency, or move to an extra)
+- docs/index.md vision install line gains the `[ml]` extra
+  (`pip install "maatml[ml,vision]"`), matching README
+- Quickstart: step 4 is a smoke-grade rehearsal (`max_steps: 4`); say so and
+  set gate expectations, or raise the default config until it earns the gates
+- Remove or fold orphaned root docs (`maatml.md`)

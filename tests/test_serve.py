@@ -1,4 +1,4 @@
-"""Tests for ``maatml serve`` — fake predictor, no torch required."""
+"""Tests for ``maatml serve``: fake predictor, no torch required."""
 from __future__ import annotations
 
 import json

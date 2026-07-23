@@ -1,4 +1,4 @@
-"""JCL example plugin — validators, metrics, predictor, sanitizer, transform."""
+"""JCL example plugin, validators, metrics, predictor, sanitizer, transform."""
 from __future__ import annotations
 
 from pathlib import Path

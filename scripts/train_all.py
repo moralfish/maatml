@@ -1,6 +1,6 @@
 """Train maatml models discovered under examples/.
 
-Uses the plugin registry — no hardcoded trainer imports.
+Uses the plugin registry, no hardcoded trainer imports.
 
 Usage:
     .venv/bin/python scripts/train_all.py

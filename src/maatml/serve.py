@@ -1,14 +1,14 @@
 """HTTP inference server for any maatml model folder.
 
-Uses stdlib ``ThreadingHTTPServer`` — no FastAPI/uvicorn — so the base install
+Uses stdlib ``ThreadingHTTPServer``: no FastAPI/uvicorn, so the base install
 stays light (important on JetPack). The predictor is loaded once at startup via
 the same registry path the eval harness uses.
 
 Endpoints:
 
-* ``GET /health`` — liveness + identity
-* ``GET /info`` — model summary + packaging hints
-* ``POST /predict`` — dataset-shaped JSON row → prediction
+* ``GET /health``: liveness + identity
+* ``GET /info``: model summary + packaging hints
+* ``POST /predict``: dataset-shaped JSON row → prediction
   (``?validate=1`` runs the registered validator when configured)
 """
 from __future__ import annotations
@@ -359,7 +359,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 self._send_json(413, {"error": str(exc)})
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
-            except Exception as exc:  # noqa: BLE001 — surface predict errors to client
+            except Exception as exc:  # noqa: BLE001  surface predict errors to client
                 self._send_json(
                     500,
                     {

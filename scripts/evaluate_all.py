@@ -1,6 +1,6 @@
 """Evaluate maatml models discovered under examples/.
 
-Uses the evaluation harness + plugin registry — no hardcoded evaluate_* imports.
+Uses the evaluation harness + plugin registry, no hardcoded evaluate_* imports.
 
 Usage:
     .venv/bin/python scripts/evaluate_all.py

@@ -78,7 +78,7 @@ def _build_backbone(name: str, pretrained: bool):
     else:
         raise ValueError(f"Unsupported backbone {name!r}")
     backbone = net.features
-    # Freeze BN running stats friendliness — leave trainable by default.
+    # Freeze BN running stats friendliness, leave trainable by default.
     return backbone, feat_dim
 
 

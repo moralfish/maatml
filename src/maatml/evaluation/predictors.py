@@ -1,7 +1,7 @@
 """Registered evaluation predictors (model load + per-row generation).
 
 Each predictor is a small class with ``setup(...)`` then ``predict(row) -> str``.
-Asset resolution uses ``maatml.evaluation.harness.resolve_eval_asset`` —
+Asset resolution uses ``maatml.evaluation.harness.resolve_eval_asset``: 
 never a hardcoded repo-root fallback.
 """
 from __future__ import annotations

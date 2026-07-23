@@ -2,8 +2,7 @@
 
 Six reference models share the identical folder layout and CLI, from a
 one-command support-ticket triage to a vLLM-servable vision-language model.
-Each is a standalone folder under `examples/` with its own `model.yml` —
-install `maatml` from PyPI, clone the repo for the seed data and plugins, and
+Each is a standalone folder under `examples/` with its own `model.yml`: install `maatml` from PyPI, clone the repo for the seed data and plugins, and
 point the CLI at the folder.
 
 | Model | Task | Architecture | Base |
@@ -16,7 +15,7 @@ point the CLI at the folder.
 | [Spool Interpreter](spool-interpreter.md) | `spool_interpretation` | `seq2seq` | flan-t5-base |
 
 New to MaatML? [Support Ticket Triage](support-ticket-triage.md) is the
-shortest path end to end — see the [5-minute quickstart](../getting-started.md).
+shortest path end to end, see the [5-minute quickstart](../getting-started.md).
 For the multimodal path, start with [Vision](vision.md) (trains a checkpoint)
 and [Vision Describer](vision-describer.md) (reads its output and captions it).
 [Vision VLM](vision-vlm.md) folds both into one vision-language model, servable

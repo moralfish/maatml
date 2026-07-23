@@ -41,7 +41,7 @@ def _group_key(row: dict, group_by: Optional[str] = None) -> str:
     """Stable group key for leakage-safe splitting.
 
     When ``dataset.group_by`` is set (e.g. ``family``), that field is tried
-    first. Otherwise — or if the preferred field is missing — fall back to
+    first. Otherwise, or if the preferred field is missing, fall back to
     ``family`` → ``source`` → ``sample_id``. Falling back past ``family``
     emits a one-shot warning so operators notice missing family tags.
     """

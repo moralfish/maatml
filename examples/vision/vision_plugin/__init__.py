@@ -1,4 +1,4 @@
-"""Vision multitask example plugin — trainer, eval, datagen, ONNX export."""
+"""Vision multitask example plugin, trainer, eval, datagen, ONNX export."""
 from __future__ import annotations
 
 from maatml.registry import (
@@ -10,7 +10,7 @@ from maatml.registry import (
 )
 
 from .datagen import synthetic_scenes_generator
-from .export_onnx import export_onnx  # noqa: F401 — registers @register_exporter("onnx")
+from .export_onnx import export_onnx  # noqa: F401  registers @register_exporter("onnx")
 from .metrics import compute_vision_metrics
 from .predictor import VisionMultitaskPredictor
 from .trainer import train_vision_multitask

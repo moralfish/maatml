@@ -16,7 +16,7 @@ pip install "maatml[ml]"
 ```
 
 `[ml]` pulls in the training stack (`torch`, `transformers`, `peft`, …). If you
-only need the CLI and library — no training — `pip install maatml` is enough.
+only need the CLI and library, no training, `pip install maatml` is enough.
 
 ## 2. Build the train / val / test splits
 
@@ -55,7 +55,7 @@ Checkpoints land under `output/checkpoints/<run_id>/`. List every run with
 maatml evaluate examples/support-ticket-triage/ --gate
 ```
 
-`--gate` exits non-zero if `evaluation.gates` in `model.yml` aren't met — the
+`--gate` exits non-zero if `evaluation.gates` in `model.yml` aren't met, the
 same check you'd wire into CI.
 
 ## 6. Serve it
@@ -77,14 +77,13 @@ response.
 
 ## What just happened
 
-One `model.yml` drove every stage above — prepare, train, evaluate, serve —
-through the same CLI. See [the validator-gated lifecycle](lifecycle.md) for why
+One `model.yml` drove every stage above (prepare, train, evaluate, serve) through the same CLI. See [the validator-gated lifecycle](lifecycle.md) for why
 that matters, and the [plugin author guide](plugins.md) for how to point this
 at your own task instead of support-ticket triage.
 
 ## Next steps
 
-- Browse the [other five examples](examples/index.md) — vision, a
+- Browse the [other five examples](examples/index.md): vision, a
   vLLM-servable vision-language model, and two mainframe-log models share this
   same folder layout.
 - Scaffold your own task:

@@ -1,4 +1,4 @@
-# Spool Interpreter — Training Instructions
+# Spool Interpreter: Training Instructions
 
 ## 1. Purpose
 
@@ -32,11 +32,11 @@ Architecture: flan-t5-base encoder-decoder (seq2seq).
 
 ## 2. Base model
 
-`google/flan-t5-base` — encoder-decoder, ~250M params. Instruction-tuned
+`google/flan-t5-base`: encoder-decoder, ~250M params. Instruction-tuned
 upstream which helps the structured-output task converge faster than vanilla
 t5-base. fp16 packaging targets ~600 MB on disk; INT8 quantization is deferred.
 
-Smoke profile keeps the same base — no scale ladder for seq2seq. Smoke
+Smoke profile keeps the same base, no scale ladder for seq2seq. Smoke
 trims epochs + dataset.
 
 ## 3. Training objective
@@ -59,7 +59,7 @@ typed `SpoolInterpretation`. The validator (§14) catches malformed output.
   "summary": "Job FAILED at step COPY01 with S0C7 (data exception).",
   "status": "failed",
   "returnCode": "S0C7",
-  "rootCause": "S0C7 on packed-decimal arithmetic — input field contains non-numeric data.",
+  "rootCause": "S0C7 on packed-decimal arithmetic, input field contains non-numeric data.",
   "suggestedFix": "Validate input data for packed-decimal fields before arithmetic; recompile with NUMPROC(NOPFD) for development; check upstream extract for trailing blanks.",
   "explanation": "The job entered step COPY01 normally and began processing the input dataset. On the third record the COBOL program attempted a COMPUTE on a packed-decimal field that contained spaces, triggering an S0C7 data exception. Execution halted immediately; subsequent steps were flushed.",
   "relatedDocs": ["abend-s0c7", "cobol-data-exception", "numproc-options"],
@@ -69,11 +69,11 @@ typed `SpoolInterpretation`. The validator (§14) catches malformed output.
 ```
 
 New in v2:
-- `explanation` — 2-4 sentence narrative walking through the chain of events
+- `explanation`: 2-4 sentence narrative walking through the chain of events
   that led to the outcome. Distinct from `summary` (which is a 1-sentence
   recap). Required when `status != "completed"`; optional otherwise.
-- `relatedDocs` — string array of internal doc keys per failure category
-  (e.g. `abend-s0c7`, `dataset-not-cataloged`). Keys, not URLs — the
+- `relatedDocs`: string array of internal doc keys per failure category
+  (e.g. `abend-s0c7`, `dataset-not-cataloged`). Keys, not URLs, the
   frontend maps them to actual help links at render time.
 
 ## 5. Bounded vocabulary
@@ -91,7 +91,7 @@ bounded enum.
 
 ## 6. Dataset format
 
-JSONL — each row:
+JSONL, each row:
 
 ```json
 {
@@ -145,7 +145,7 @@ file list stays uniform with the other two models.
 
 ## 10. Training method
 
-**Full fine-tune** — no LoRA. flan-t5-base at 250 M parameters fine-tunes
+**Full fine-tune**: no LoRA. flan-t5-base at 250 M parameters fine-tunes
 comfortably on a 16-32 GB Mac. The resulting safetensors merge straight
 into the package (no LoRA-adapter merge step).
 
@@ -184,7 +184,7 @@ Smoke overrides reduce to `epochs: 1, max_steps: 8, batch_size: 2`.
 ## 13. Tokenizer
 
 flan-t5's SentencePiece tokenizer ships with the base model. No custom
-pre-tokenizer (unlike JCL — spool transcripts are conventional text). The
+pre-tokenizer (unlike JCL, spool transcripts are conventional text). The
 SentencePiece model is included in the package as `tokenizer.json` (via
 `AutoTokenizer.save_pretrained(use_fast=True)`).
 
@@ -224,7 +224,7 @@ Required gates (test split):
 
 ## 16. Test prompt set
 
-`examples/spool-interpreter/datasets/samples/test_prompt_set.jsonl` — fixed
+`examples/spool-interpreter/datasets/samples/test_prompt_set.jsonl`: fixed
 anchors that survive corpus regeneration. Covers every `failureCategory`
 plus two `completed` samples.
 
@@ -232,7 +232,7 @@ plus two `completed` samples.
 
 Not separately materialised. Repair-style data (malformed transcripts that
 should still parse to a coherent interpretation) lives inline in the
-synthetic templates — each category has 1-2 templates that exercise
+synthetic templates, each category has 1-2 templates that exercise
 truncated / noisy spool fragments.
 
 ## 18. Artifact requirements

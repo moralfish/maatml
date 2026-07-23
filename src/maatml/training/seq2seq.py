@@ -5,8 +5,8 @@ request text optionally prefixed with ``dataset.source_prefix``; target
 is the serialised ``dataset.target_field`` value.
 
 Public surface:
-  - ``Seq2SeqConfig`` — typed config built from ``model.yml::training``
-  - ``train_seq2seq_model(model_def, ...)`` — entry point invoked by the CLI
+  - ``Seq2SeqConfig``: typed config built from ``model.yml::training``
+  - ``train_seq2seq_model(model_def, ...)``: entry point invoked by the CLI
 """
 from __future__ import annotations
 

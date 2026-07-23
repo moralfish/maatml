@@ -1,4 +1,4 @@
-"""``vlm_sft`` trainer — SmolVLM / Idefics3 LoRA SFT with frozen vision tower."""
+"""``vlm_sft`` trainer, SmolVLM / Idefics3 LoRA SFT with frozen vision tower."""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,4 @@
-"""Vision example tests — pure-python by default; torch/PIL optional."""
+"""Vision example tests, pure-python by default; torch/PIL optional."""
 from __future__ import annotations
 
 import json

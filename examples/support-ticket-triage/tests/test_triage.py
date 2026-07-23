@@ -1,4 +1,4 @@
-"""Support-ticket-triage tests — dependency-free (no torch required)."""
+"""Support-ticket-triage tests, dependency-free (no torch required)."""
 from __future__ import annotations
 
 import json
@@ -71,7 +71,7 @@ def test_validator_rejects_misrouted(plugin) -> None:
     result = validate_triage(json.dumps(misrouted), schema_path=SCHEMA)
     assert not result.ok
     assert any(e.code == "misrouted" for e in result.errors)
-    # The schema layer still passes — this is a contract failure, not a shape one.
+    # The schema layer still passes, this is a contract failure, not a shape one.
     assert 2 in result.passed_layers
 
 

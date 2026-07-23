@@ -11,7 +11,7 @@ minor for retrain/data/config changes, patch for metadata-only edits.
 
 - **Cross-platform local inference**: Mac, Windows, Linux with 16 GB RAM minimum.
 - **Final artefact**: safetensors checkpoint (encoder + classifier heads sidecar).
-- **Disk footprint**: ~150–200 MB.
+- **Disk footprint**: ~150-200 MB.
 
 ## Output shape
 
@@ -68,7 +68,7 @@ maatml evaluate examples/jcl-validator/
 Expand the seed corpus by hand-authoring rows in
 `datasets/samples/seed_samples.jsonl` (each row:
 `{sample_id, source, category, request, expected_validation_result, split?}`)
-and re-running `maatml prepare` before training — or regenerate via
+and re-running `maatml prepare` before training, or regenerate via
 `examples/jcl-validator/scripts/build_seeds.py`.
 
 ## Quality gates
@@ -82,5 +82,5 @@ and re-running `maatml prepare` before training — or regenerate via
 | `valid_flag_accuracy` | ≥ 0.95 |
 | `line_within_3_accuracy` | ≥ 0.70 |
 
-`line_within_3` allows ±3 lines of slack on the predicted error line — practical
+`line_within_3` allows ±3 lines of slack on the predicted error line, a practical
 UI tolerance.

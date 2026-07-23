@@ -7,9 +7,9 @@ registry before tokenization; optional ``dataset.tokenizer`` loads a
 custom tokenizer.json.
 
 Public surface:
-  - ``MultiHeadConfig`` — typed config from ``model.yml::training``
-  - ``train_multi_head(model_def, ...)`` — CLI entry point
-  - ``_resolve_path`` / ``parse_heads`` — shared by trainer + predictor
+  - ``MultiHeadConfig``: typed config from ``model.yml::training``
+  - ``train_multi_head(model_def, ...)``: CLI entry point
+  - ``_resolve_path`` / ``parse_heads``: shared by trainer + predictor
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-# JCL Validator — Training Instructions
+# JCL Validator: Training Instructions
 
 ## 1. Purpose
 
@@ -16,11 +16,11 @@ consumers. Architecture: multi-head BERT classifier.
 
 ## 2. Base model
 
-`answerdotai/ModernBERT-base` — encoder-only, 8K native context. The 8K
+`answerdotai/ModernBERT-base`: encoder-only, 8K native context. The 8K
 context handles realistic JCL decks without truncation; the model is
 small enough that full fine-tune (no LoRA) fits on a developer laptop.
 
-Smoke profile keeps the same base — there's no scale ladder for the
+Smoke profile keeps the same base; there's no scale ladder for the
 classifier. Smoke just trims epochs + dataset.
 
 ## 3. Training objective
@@ -35,7 +35,7 @@ Four classification heads sharing the BERT encoder:
 | `line_localization` | per-token classification | each token classified as `error_line` / `not_error_line`; runtime takes the first-error-line span |
 
 Loss = weighted sum across heads. Default weights `{validity: 1.0,
-error_code: 1.0, severity: 0.5, line: 0.3}` — `validity` and `error_code`
+error_code: 1.0, severity: 0.5, line: 0.3}`: `validity` and `error_code`
 dominate; `severity` is easier (4 of 8 codes are always `error`) so it
 gets less weight; `line_localization` is the hardest and noisiest, so it
 gets the smallest weight to avoid drowning the other heads.
@@ -63,7 +63,7 @@ The model produces logits per head; the runtime stitches them into the
 ```
 
 The classifier emits one error at most per pass (matching the multi-head
-shape — single primary code). For multi-error JCL the model still picks
+shape, single primary code). For multi-error JCL the model still picks
 the dominant code; future iterations can chain inferences for additional
 errors.
 
@@ -82,7 +82,7 @@ the node's thresholds.
 From `examples/jcl-validator/datasets/node_contracts.json`:
 
 - `severities`: `["error", "warning", "info", "none"]`
-- `error_codes`: 8 values — `missing_dd`, `invalid_job_card`,
+- `error_codes`: 8 values, `missing_dd`, `invalid_job_card`,
   `unresolved_symbolic_parameter`, `continuation_error`,
   `invalid_exec_statement`, `invalid_dataset_reference_structure`,
   `other`, `none`
@@ -91,7 +91,7 @@ From `examples/jcl-validator/datasets/node_contracts.json`:
 
 ## 6. Dataset format
 
-Same JSONL shape the v1 corpus used — no regeneration needed. Each row:
+Same JSONL shape the v1 corpus used, no regeneration needed. Each row:
 
 ```json
 {
@@ -110,7 +110,7 @@ Same JSONL shape the v1 corpus used — no regeneration needed. Each row:
 ```
 
 The classifier dataset class flattens this into per-head targets at load
-time — `validity` from `valid`, `error_code` from `errors[0].code`,
+time, `validity` from `valid`, `error_code` from `errors[0].code`,
 `severity` from `errors[0].severity`, `line` token-level via the
 character-offset-to-token mapping. Sample-level fields stay in the JSONL
 for evaluation.
@@ -124,7 +124,7 @@ for evaluation.
 | Stage | Samples |
 |---|---|
 | Smoke | 100-200 |
-| MVP | 1000+ (current corpus is 1003 — sufficient) |
+| MVP | 1000+ (current corpus is 1003, sufficient) |
 | Internal | 2000+ |
 | Stronger | 5000+ |
 
@@ -133,14 +133,14 @@ if eval gates miss.
 
 ## 9. System prompt
 
-N/A — classifier doesn't take a system prompt. The model sees the raw
+N/A, classifier doesn't take a system prompt. The model sees the raw
 sanitised JCL via the custom JCL tokenizer (§13). `prompt_spec.json`
 stays in the package for documentation purposes and so the manifest
 file list is uniform with the other two models.
 
 ## 10. Training method
 
-**Full fine-tune** — no LoRA. ModernBERT-base is small enough that full
+**Full fine-tune**: no LoRA. ModernBERT-base is small enough that full
 fine-tune of 150 MB params fits comfortably on a 16-32 GB Mac. The
 resulting safetensors merge straight into the package (no LoRA-adapter
 step). Cleaner downstream when we revisit ONNX export.
@@ -181,7 +181,7 @@ Smoke overrides reduce to `epochs: 1, max_steps: 6, batch_size: 2`.
 
 ## 13. Custom JCL tokenizer
 
-`jcl_plugin/tokenizer.py` — two stages:
+`jcl_plugin/tokenizer.py`: two stages:
 
 1. **Pre-tokenizer (column-aware)**: see `COLUMN_RULES.md` for the
    normative spec. Strips columns 73-80 (sequence numbers, ignored by
@@ -199,7 +199,7 @@ fixture test on ~20 hand-authored JCL strings locks the expected output.
 ## 14. Validation requirements
 
 The existing 6-layer `maatml.validation.jcl_validator` JSON gate stays
-unchanged — the runtime produces JSON matching the v1 schema. Layers:
+unchanged, the runtime produces JSON matching the v1 schema. Layers:
 JSON parse → schema → severity enum → code enum → field shape →
 consistency.
 
@@ -217,17 +217,17 @@ Required gates (test split):
 | `line_within_3_accuracy` | ≥0.70 |
 | `p95_latency_ms` | <500 |
 
-`p95_latency_ms` is new in v2 — required to validate the <500 ms target.
+`p95_latency_ms` is new in v2, required to validate the <500 ms target.
 
 ## 16. Test prompt set
 
-`examples/jcl-validator/datasets/samples/test_prompt_set.jsonl` — fixed
+`examples/jcl-validator/datasets/samples/test_prompt_set.jsonl`: fixed
 anchors that survive corpus regeneration. Eight benchmark JCL decks
 across the eight error codes plus two valid samples.
 
 ## 17. Repair dataset
 
-Not applicable — classifier doesn't have the generative model's failure
+Not applicable, classifier doesn't have the generative model's failure
 mode of producing structurally-broken output. Repair-style data lives in
 the synthetic corpus directly (each error category has its own
 templates).

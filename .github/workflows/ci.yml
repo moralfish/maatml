@@ -55,7 +55,7 @@ jobs:
     # Exercises the real training stack on CPU end to end: prepare -> smoke
     # train -> evaluate the validator + metrics on support-ticket-triage. The
     # rest of CI is intentionally torch-free; this is the one job that proves
-    # the [ml] path and the flagship example's gates plumbing actually run.
+    # the [ml] path and the example's gates plumbing actually run.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

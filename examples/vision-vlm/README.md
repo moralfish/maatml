@@ -7,7 +7,7 @@ fine-tuned to look at a synthetic scene and emit one short factual description:
 {"description": "A checkerboard background with two circles and a star; the figure stands with arms raised and a wide stance."}
 ```
 
-The safetensors export is an HF-format directory — **vLLM loads it directly**
+The safetensors export is an HF-format directory; **vLLM loads it directly**
 (`vllm serve <export-dir>`). Locally (Mac/CPU) use `maatml serve` with the
 transformers backend; on Linux/Jetson use the vLLM deploy kit.
 
@@ -58,7 +58,7 @@ python examples/vision-vlm/scripts/client_openai.py path/to.png --maatml http://
 pip install "maatml[vllm]"
 ./examples/vision-vlm/scripts/serve_vllm.sh examples/vision-vlm/output/export/<run_id>
 
-# Jetson Orin (container — recommended)
+# Jetson Orin (container: recommended)
 USE_JETSON_CONTAINER=1 ./examples/vision-vlm/scripts/serve_vllm.sh \
   examples/vision-vlm/output/export/<run_id>
 

@@ -100,7 +100,7 @@ def build_manifest(
         "weights_dtype_verified": observed_dtype is not None,
     }
     if len(observed_all) > 1:
-        # Mixed-precision export — surface every dtype rather than hide it.
+        # Mixed-precision export, surface every dtype rather than hide it.
         hints["weights_dtypes_observed"] = observed_all
     if extra_runtime_hints:
         hints.update(extra_runtime_hints)

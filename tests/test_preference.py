@@ -48,7 +48,7 @@ def test_mint_preference_pairs_with_list_candidates() -> None:
         [
             ["OK: yes", "NO: nope"],
             ["bad", "OK: fine"],
-            ["OK: a", "OK: b"],  # skipped — no reject
+            ["OK: a", "OK: b"],  # skipped, no reject
         ],
         validator,
     )

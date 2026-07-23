@@ -1,4 +1,4 @@
-"""Spool example plugin — validator, metrics, sanitizer (uses core seq2seq)."""
+"""Spool example plugin, validator, metrics, sanitizer (uses core seq2seq)."""
 from __future__ import annotations
 
 from pathlib import Path

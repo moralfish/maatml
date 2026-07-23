@@ -3,10 +3,10 @@
 One MobileNetV3-Large checkpoint that jointly predicts:
 
 - **scene** classification (background style)
-- **object detection** (colored shapes — CenterNet-style, NMS-free ONNX)
+- **object detection** (colored shapes, CenterNet-style, NMS-free ONNX)
 - **pose** estimation (single stick figure, 12 keypoints)
 
-Trained on deterministic synthetic scenes (PIL) — fully offline, no Hub downloads.
+Trained on deterministic synthetic scenes (PIL), fully offline, no Hub downloads.
 Deploy with `maatml export --format onnx` and `maatml serve`.
 
 ## Output shape
@@ -79,7 +79,7 @@ Endpoints: `GET /health`, `GET /info`, `POST /predict` (`?validate=1` optional).
 
 1. Copy the export directory to the device.
 2. Install NVIDIA's `onnxruntime-gpu` wheel for your JetPack.
-3. Run `maatml serve … --checkpoint <export-dir>` — providers prefer TensorRT → CUDA → CPU.
+3. Run `maatml serve … --checkpoint <export-dir>`: providers prefer TensorRT → CUDA → CPU.
 4. Optional power-user path: `./deploy/build_engine.sh` (`trtexec --fp16`) for a standalone engine.
 
 Int8 calibration is out of scope for this example.

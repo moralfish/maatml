@@ -1,7 +1,7 @@
 # maatml architecture overview
 
 MaatML is a **training and fine-tuning framework** for task-specific language
-models — from experimentation to production. Each model is a self-describing
+models, from experimentation to production. Each model is a self-describing
 folder with a `model.yml` that drives prepare → train → evaluate.
 
 **Design rule:** core owns architectures; examples own task semantics.
@@ -17,7 +17,7 @@ folder with a `model.yml` that drives prepare → train → evaluate.
 | vision-describer | short caption from vision JSON | seq2seq | flan-t5-small |
 
 Each example folder carries `model.yml`, optional `*_plugin/`, `datasets/`,
-`scripts/`, and `output/` (prepared splits, checkpoints, eval — gitignored).
+`scripts/`, and `output/` (prepared splits, checkpoints, eval, gitignored).
 
 ## Workflow
 
@@ -43,7 +43,7 @@ architecture=causal_sft                         → training/sft_base.py
 ```
 
 Task validators / metrics / sanitizers register from example
-`plugins: [./jcl_plugin]` (or `./spool_plugin`) packages — not from core
+`plugins: [./jcl_plugin]` (or `./spool_plugin`) packages, not from core
 entry points.
 
 ## Package layout

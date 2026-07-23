@@ -2,7 +2,7 @@
 
 Predictors emit raw text; validators gate structure; metrics plugins score
 semantics. Asset paths (schema, contracts, prompt_spec, tokenizer) resolve
-from ``model_def`` / explicit kwargs / ``checkpoint_dir`` — never from a
+from ``model_def`` / explicit kwargs / ``checkpoint_dir``: never from a
 hardcoded repo-relative fallback.
 """
 from __future__ import annotations
@@ -493,7 +493,7 @@ def run_evaluation(
     gates_payload: Optional[dict[str, Any]] = None
     passed: Optional[bool] = None
     if enforce_gates:
-        # Raises GateConfigError when no gates are configured — enforcement must
+        # Raises GateConfigError when no gates are configured, enforcement must
         # never pass vacuously.
         gate_spec = resolve_gate_spec(model_def)
         gates_payload = check_gates(metrics, gate_spec)

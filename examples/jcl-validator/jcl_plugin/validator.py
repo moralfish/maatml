@@ -2,12 +2,12 @@
 
 Six layers:
 
-  1. JSON parse                       — text → dict
-  2. JSON schema                      — matches `JclValidationResult` JSON Schema
-  3. Severity enum                    — every error.severity ∈ {error, warning, info}
-  4. Code enum                        — every error.code ∈ ErrorCategory enum
-  5. Field shape                      — line ≥ 1, message non-empty, max 5 errors
-  6. Consistency                      — `valid: false` ⟺ `errors` non-empty;
+  1. JSON parse: text → dict
+  2. JSON schema: matches `JclValidationResult` JSON Schema
+  3. Severity enum: every error.severity ∈ {error, warning, info}
+  4. Code enum: every error.code ∈ ErrorCategory enum
+  5. Field shape: line ≥ 1, message non-empty, max 5 errors
+  6. Consistency: `valid: false` ⟺ `errors` non-empty;
                                        `confidence` ∈ [0, 1]
 
 Returns a gate result so callers (per-task evaluator, seed-row gating) can
@@ -44,7 +44,7 @@ def validate_jcl_result(
     strip_fences: bool = True,
 ) -> ValidationResult:
     """Run all 6 layers against a model output. `user_prompt` is unused
-    today (kept for API symmetry with other task validators) — JCL
+    today (kept for API symmetry with other task validators): JCL
     has no prompt-side safety classifier."""
     del user_prompt  # API symmetry
     schema = _load_json(schema_path)
@@ -88,7 +88,7 @@ def validate_jcl_result(
     codes = set(contracts.get("error_codes", []))
     max_errors = int(contracts.get("max_errors_per_result", 5))
 
-    # Layer 3 — severity enum
+    # Layer 3: severity enum
     layer3_ok = True
     for i, e in enumerate(errors):
         sev = e.get("severity")
@@ -105,7 +105,7 @@ def validate_jcl_result(
     if layer3_ok:
         result.passed_layers.add(3)
 
-    # Layer 4 — code enum
+    # Layer 4: code enum
     layer4_ok = True
     for i, e in enumerate(errors):
         code = e.get("code")
@@ -122,7 +122,7 @@ def validate_jcl_result(
     if layer4_ok:
         result.passed_layers.add(4)
 
-    # Layer 5 — field shape
+    # Layer 5: field shape
     layer5_ok = True
     if len(errors) > max_errors:
         result.errors.append(
@@ -159,7 +159,7 @@ def validate_jcl_result(
     if layer5_ok:
         result.passed_layers.add(5)
 
-    # Layer 6 — consistency
+    # Layer 6: consistency
     layer6_ok = True
     if not isinstance(valid_flag, bool):
         result.errors.append(

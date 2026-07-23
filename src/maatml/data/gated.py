@@ -35,7 +35,7 @@ def build_gated_corpus(
         attempts += 1
         try:
             row = generate_fn()
-        except Exception as exc:  # noqa: BLE001 — treat generate errors as rejects
+        except Exception as exc:  # noqa: BLE001  treat generate errors as rejects
             rejected.append({"error": str(exc), "_generate_failed": True})
             if on_reject is not None:
                 on_reject({"error": str(exc)}, exc)

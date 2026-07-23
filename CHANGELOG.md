@@ -35,7 +35,7 @@ for the Python package and per-model versions under `examples/`.
   when a model declares no `evaluation.gates`, instead of passing vacuously.
   Scripts relying on the old exit-0 must add a `gates:` block or drop `--gate`.
 - **Security:** `maatml serve` no longer sends a wildcard
-  `Access-Control-Allow-Origin: *` by default — cross-origin access is now
+  `Access-Control-Allow-Origin: *` by default, cross-origin access is now
   opt-in.
 
 ## [0.5.0] - 2026-07-22
@@ -164,4 +164,4 @@ for the Python package and per-model versions under `examples/`.
 - Reference models: JCL Validator (ModernBERT multi-head classifier) and Spool
   Interpreter (flan-t5 seq2seq), versioned at `0.1.0`
 - Group-aware (`family`) dataset splits and family-stamped seed corpora
-- CI: lint (ruff/mypy), Python 3.10–3.12 test matrix, wheel standalone install job
+- CI: lint (ruff/mypy), Python 3.10-3.12 test matrix, wheel standalone install job

@@ -8,7 +8,7 @@ factual description:
 {"description": "A striped scene contains two circles and a square, with the centered figure raising both arms."}
 ```
 
-The model is **standalone** — train, evaluate, export, and serve it on its
+The model is **standalone**: train, evaluate, export, and serve it on its
 own. A tiny stdlib client chains it with a running vision server.
 
 ## Output shape
@@ -56,13 +56,13 @@ maatml verify examples/vision-describer/output/export/<run_id>
 
 ## Compose with the vision model
 
-Terminal A — vision (ONNX or torch checkpoint):
+Terminal A, vision (ONNX or torch checkpoint):
 
 ```bash
 maatml serve examples/vision --port 8080
 ```
 
-Terminal B — describer:
+Terminal B, describer:
 
 ```bash
 maatml serve examples/vision-describer --port 8081
