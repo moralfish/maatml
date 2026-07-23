@@ -52,12 +52,14 @@ jobs:
           maatml validate examples/vision-vlm
 
   ml-smoke:
-    # Exercises the real training stack on CPU end to end: prepare -> smoke
-    # train -> evaluate the validator + metrics on support-ticket-triage. The
-    # rest of CI is intentionally torch-free; this is the one job that proves
-    # the [ml] path and the example's gates plumbing actually run.
+    # Proves the real [ml] path runs end to end on CPU: prepare -> smoke train
+    # -> evaluate exercises trainer construction, LoRA, checkpoint save, the
+    # predictor, and the triage validator + metrics on the real
+    # torch/transformers/peft stack. It swaps in a tiny random base model so it
+    # proves the wiring in seconds instead of downloading and training
+    # Qwen3-0.6B; it does not assert output quality (no --gate).
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -69,15 +71,18 @@ jobs:
           # CPU wheel only — avoids pulling the multi-GB CUDA build.
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[dev,ml]"
-      - name: Smoke train + evaluate triage on CPU
+      - name: Smoke train + evaluate triage on CPU (tiny model)
         env:
           HF_HUB_DISABLE_TELEMETRY: "1"
           TOKENIZERS_PARALLELISM: "false"
         run: |
+          # Tiny random Llama (a few MB, shares q_proj/v_proj with Qwen so the
+          # triage LoRA config applies) keeps this a proof of the pipeline, not
+          # a full train. The example's model.yml still targets Qwen3-0.6B.
+          TINY=hf-internal-testing/tiny-random-LlamaForCausalLM
           maatml prepare  examples/support-ticket-triage/
-          maatml train    examples/support-ticket-triage/ --smoke --device cpu
-          # No --gate: a 2-step smoke model will not meet the gates. This still
-          # exercises the triage validator + metrics on a real checkpoint.
+          maatml train    examples/support-ticket-triage/ --smoke --device cpu \
+            --set training.model_id="$TINY"
           maatml evaluate examples/support-ticket-triage/ --device cpu
 
   standalone:
