@@ -59,6 +59,28 @@ class Report(BaseModel):
         return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
+class GateConfigError(ValueError):
+    """Raised when gate enforcement is requested but no gates are configured."""
+
+
+def resolve_gate_spec(model_def: Any) -> dict[str, float]:
+    """Return the configured gate minima, or raise if none are set.
+
+    ``evaluate --gate`` (and ``enforce_gates=True``) must not pass vacuously: a
+    model with no ``evaluation.gates`` has nothing to enforce, so requesting
+    enforcement against an empty spec is a configuration error rather than a
+    silent success.
+    """
+    evaluation = getattr(model_def, "evaluation", None)
+    gate_spec = evaluation.get("gates") if isinstance(evaluation, dict) else None
+    if not (isinstance(gate_spec, dict) and gate_spec):
+        raise GateConfigError(
+            "gate enforcement requested but no evaluation.gates are configured. "
+            "Add a gates: block to model.yml (see any example) or drop --gate."
+        )
+    return {str(k): float(v) for k, v in gate_spec.items()}
+
+
 def check_gates(
     metrics: dict[str, float],
     gates: dict[str, float],
@@ -470,11 +492,12 @@ def run_evaluation(
 
     gates_payload: Optional[dict[str, Any]] = None
     passed: Optional[bool] = None
-    if enforce_gates and model_def is not None:
-        gate_spec = (model_def.evaluation or {}).get("gates") or {}
-        if isinstance(gate_spec, dict) and gate_spec:
-            gates_payload = check_gates(metrics, {str(k): float(v) for k, v in gate_spec.items()})
-            passed = bool(gates_payload["passed"])
+    if enforce_gates:
+        # Raises GateConfigError when no gates are configured — enforcement must
+        # never pass vacuously.
+        gate_spec = resolve_gate_spec(model_def)
+        gates_payload = check_gates(metrics, gate_spec)
+        passed = bool(gates_payload["passed"])
 
     report = Report(
         model_id=identity_id,

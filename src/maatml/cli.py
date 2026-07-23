@@ -271,9 +271,16 @@ def cmd_evaluate(
     _boot_plugins(md)
     # Ensure predictor registrations are loaded.
     from .evaluation import predictors as _predictors  # noqa: F401
-    from .evaluation.harness import run_evaluation
+    from .evaluation.harness import GateConfigError, resolve_gate_spec, run_evaluation
     from .evaluation.runner import write_markdown_summary
     from .runs import get_run, update_run_gates
+
+    # Fast-fail before the (expensive) checkpoint load if --gate has nothing to enforce.
+    if gate:
+        try:
+            resolve_gate_spec(md)
+        except GateConfigError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--gate") from exc
 
     ckpt = resolve_checkpoint(md, checkpoint)
     md.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -403,6 +410,19 @@ def cmd_serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
     port: int = typer.Option(8080, "--port", help="Bind port"),
     device: str = typer.Option("auto", "--device"),
+    cors: Optional[str] = typer.Option(
+        None,
+        "--cors",
+        help=(
+            "Enable CORS for this origin ('*' or e.g. https://app.example.com). "
+            "Off by default; also reads MAATML_SERVE_CORS."
+        ),
+    ),
+    max_body_bytes: int = typer.Option(
+        1_048_576,
+        "--max-body-bytes",
+        help="Reject POST bodies larger than this many bytes (default 1 MiB).",
+    ),
 ) -> None:
     """Serve a checkpoint or export bundle as a JSON inference API.
 
@@ -413,8 +433,17 @@ def cmd_serve(
     _boot_plugins(md)
     from .serve import run_server
 
+    cors_origin = cors if cors is not None else os.environ.get("MAATML_SERVE_CORS")
     try:
-        run_server(md, checkpoint=checkpoint, host=host, port=port, device=device)
+        run_server(
+            md,
+            checkpoint=checkpoint,
+            host=host,
+            port=port,
+            device=device,
+            cors_origin=cors_origin,
+            max_body_bytes=max_body_bytes,
+        )
     except (FileNotFoundError, KeyError, ImportError, RuntimeError) as exc:
         console.print(f"[red]serve failed[/] {exc}")
         raise typer.Exit(code=1) from exc

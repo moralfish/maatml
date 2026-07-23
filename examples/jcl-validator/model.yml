@@ -47,6 +47,14 @@ evaluation:
   validator: jcl
   metrics: jcl
   predictor: jcl_classifier
+  # Enforced contract for `maatml evaluate --gate`
+  gates:
+    json_parse_rate: 0.95
+    schema_conformance_rate: 0.90
+    valid_flag_accuracy: 0.95
+    severity_accuracy: 0.85
+    code_accuracy: 0.85
+    line_within_3_accuracy: 0.70
 
 training:
   model_id: answerdotai/ModernBERT-base

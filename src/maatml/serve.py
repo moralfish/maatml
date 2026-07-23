@@ -30,6 +30,14 @@ from .runs import resolve_checkpoint
 from .scaffold import normalize_architecture
 from .validation.base import ValidationResult, strip_fences
 
+# Reject request bodies larger than this by default (1 MiB). Predict rows are
+# small JSON; anything larger is almost certainly abuse or a mistake.
+DEFAULT_MAX_BODY_BYTES = 1_048_576
+
+
+class RequestTooLarge(Exception):
+    """Request body exceeded the configured size cap (maps to HTTP 413)."""
+
 
 @dataclass
 class ServeContext:
@@ -43,6 +51,11 @@ class ServeContext:
     schema_path: Path | None = None
     contracts_path: Path | None = None
     prompt_spec_path: Path | None = None
+    # CORS is opt-in: when None, no Access-Control-Allow-Origin header is sent,
+    # so a browser on another origin cannot read responses. Set to "*" or a
+    # specific origin to enable cross-origin access deliberately.
+    cors_origin: str | None = None
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
     started_at: float = field(default_factory=time.time)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -87,6 +100,8 @@ def build_serve_context(
     *,
     checkpoint: str | Path | None = None,
     device: str = "auto",
+    cors_origin: str | None = None,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> ServeContext:
     """Load plugins, resolve checkpoint, instantiate and setup the predictor."""
     discover_plugins()
@@ -152,6 +167,8 @@ def build_serve_context(
         schema_path=schema_path,
         contracts_path=contracts_path,
         prompt_spec_path=prompt_spec_path,
+        cors_origin=cors_origin,
+        max_body_bytes=max_body_bytes,
     )
 
 
@@ -240,7 +257,8 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
-            self.send_header("Access-Control-Allow-Origin", "*")
+            if ctx.cors_origin:
+                self.send_header("Access-Control-Allow-Origin", ctx.cors_origin)
             self.end_headers()
             self.wfile.write(data)
 
@@ -248,6 +266,11 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
             length = int(self.headers.get("Content-Length") or 0)
             if length <= 0:
                 raise ValueError("POST body required (JSON object)")
+            if length > ctx.max_body_bytes:
+                raise RequestTooLarge(
+                    f"request body {length} bytes exceeds cap "
+                    f"{ctx.max_body_bytes} bytes"
+                )
             raw = self.rfile.read(length)
             try:
                 payload = json.loads(raw.decode("utf-8"))
@@ -259,9 +282,10 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
 
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            if ctx.cors_origin:
+                self.send_header("Access-Control-Allow-Origin", ctx.cors_origin)
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
 
         def do_GET(self) -> None:  # noqa: N802
@@ -331,6 +355,8 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 row = self._read_json_body()
                 result = _run_predict(ctx, row, do_validate=do_validate)
                 self._send_json(200, result)
+            except RequestTooLarge as exc:
+                self._send_json(413, {"error": str(exc)})
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
             except Exception as exc:  # noqa: BLE001 — surface predict errors to client
@@ -352,6 +378,8 @@ def serve_model(
     host: str = "127.0.0.1",
     port: int = 8080,
     device: str = "auto",
+    cors_origin: str | None = None,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     context: ServeContext | None = None,
 ) -> ThreadingHTTPServer:
     """Build context (unless provided) and return a ready ``ThreadingHTTPServer``.
@@ -360,7 +388,11 @@ def serve_model(
     that want an ephemeral port without blocking.
     """
     ctx = context or build_serve_context(
-        model_def, checkpoint=checkpoint, device=device
+        model_def,
+        checkpoint=checkpoint,
+        device=device,
+        cors_origin=cors_origin,
+        max_body_bytes=max_body_bytes,
     )
     handler = _make_handler(ctx)
     server = ThreadingHTTPServer((host, port), handler)
@@ -376,12 +408,20 @@ def run_server(
     host: str = "127.0.0.1",
     port: int = 8080,
     device: str = "auto",
+    cors_origin: str | None = None,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
 ) -> None:
     """Block serving until KeyboardInterrupt."""
     from rich.console import Console
 
     console = Console()
-    ctx = build_serve_context(model_def, checkpoint=checkpoint, device=device)
+    ctx = build_serve_context(
+        model_def,
+        checkpoint=checkpoint,
+        device=device,
+        cors_origin=cors_origin,
+        max_body_bytes=max_body_bytes,
+    )
     server = serve_model(
         model_def,
         checkpoint=checkpoint,

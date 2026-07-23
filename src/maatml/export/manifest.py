@@ -1,6 +1,9 @@
 """Export ``manifest.json`` build / verify helpers."""
 from __future__ import annotations
 
+import json
+import struct
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -17,6 +20,59 @@ def _file_entries(root: Path, files: list[Path]) -> list[dict[str, str]]:
     return entries
 
 
+def read_safetensors_dtypes(path: str | Path) -> list[str]:
+    """Return the dtype of every tensor in a ``.safetensors`` file.
+
+    Reads only the JSON header (a u64 length prefix + that many header bytes),
+    so it needs neither ``torch`` nor the ``safetensors`` package and works in
+    the CPU-free environment. Returns ``[]`` for anything it cannot parse.
+    """
+    try:
+        file_size = Path(path).stat().st_size
+        with open(path, "rb") as fh:
+            size_bytes = fh.read(8)
+            if len(size_bytes) < 8:
+                return []
+            (header_len,) = struct.unpack("<Q", size_bytes)
+            # The header must fit within the file after its 8-byte length
+            # prefix. Bounding here keeps a dummy/corrupt file from triggering a
+            # multi-gigabyte read (MemoryError) before we can reject it.
+            if header_len <= 0 or header_len > file_size - 8:
+                return []
+            header_bytes = fh.read(header_len)
+        if len(header_bytes) < header_len:
+            return []
+        header = json.loads(header_bytes.decode("utf-8"))
+    except (OSError, struct.error, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(header, dict):
+        return []
+    dtypes: list[str] = []
+    for key, spec in header.items():
+        if key == "__metadata__":
+            continue
+        if isinstance(spec, dict) and isinstance(spec.get("dtype"), str):
+            dtypes.append(spec["dtype"])
+    return dtypes
+
+
+def _observed_weights_dtype(files: list[Path]) -> tuple[Optional[str], list[str]]:
+    """Most-common tensor dtype across exported safetensors, and the full set.
+
+    Returns ``(dominant_dtype, sorted_unique_dtypes)`` normalised to lowercase
+    (``"F16"`` → ``"f16"``). ``dominant_dtype`` is ``None`` when no safetensors
+    file is present, i.e. the dtype could not be verified from tensors.
+    """
+    counts: Counter[str] = Counter()
+    for path in files:
+        if path.suffix == ".safetensors":
+            counts.update(dt.lower() for dt in read_safetensors_dtypes(path))
+    if not counts:
+        return None, []
+    dominant = counts.most_common(1)[0][0]
+    return dominant, sorted(counts)
+
+
 def build_manifest(
     *,
     model_def: ModelDefinition,
@@ -30,12 +86,22 @@ def build_manifest(
 ) -> dict[str, Any]:
     """Assemble an export manifest (inspired by legacy ``.fm`` manifests)."""
     pkg = packaging or model_def.packaging
+    observed_dtype, observed_all = _observed_weights_dtype(files)
     hints: dict[str, Any] = {
         "formats": list(formats),
         "max_input_tokens": pkg.max_input_tokens,
         "expected_latency_ms": pkg.expected_latency_ms,
-        "weights_dtype": pkg.weights_dtype,
+        # `weights_dtype` is the verified dtype when it can be read from the
+        # exported tensors, and falls back to the declared hint otherwise.
+        # `weights_dtype_declared` always records what packaging claimed, and
+        # `weights_dtype_verified` says whether the value came from the tensors.
+        "weights_dtype": observed_dtype or pkg.weights_dtype,
+        "weights_dtype_declared": pkg.weights_dtype,
+        "weights_dtype_verified": observed_dtype is not None,
     }
+    if len(observed_all) > 1:
+        # Mixed-precision export — surface every dtype rather than hide it.
+        hints["weights_dtypes_observed"] = observed_all
     if extra_runtime_hints:
         hints.update(extra_runtime_hints)
 

@@ -12,12 +12,15 @@ version: 0.1.0
 description: "LoRA SFT example: triage a support ticket into priority/category/team/summary JSON."
 base_model: Qwen/Qwen3-0.6B
 
+plugins: [./triage_plugin]
+
 dataset:
   format: jsonl_seed
   seed: 7
   schema: datasets/schema.json
   prompt_spec: datasets/prompt_spec.json
   seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/test_prompt_set.jsonl
   request_field: request
   target_field: expected_output
   user_placeholder: "<<USER_REQUEST>>"
@@ -27,7 +30,15 @@ dataset:
 
 evaluation:
   predictor: causal_sft
-  metrics: []
+  validator: triage
+  metrics: triage
+  # The routing gate (category → team) is the out-of-model contract; the
+  # accuracy gates are deliberately modest for a small LoRA on a tiny corpus.
+  gates:
+    json_parse_rate: 0.95
+    schema_conformance_rate: 0.90
+    routing_consistency_rate: 0.85
+    category_accuracy: 0.70
 
 training:
   model_id: Qwen/Qwen3-0.6B
