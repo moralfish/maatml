@@ -100,25 +100,26 @@ laptop and deploy to the edge or vLLM.
 
 ## CLI overview
 
-Each command takes a model folder (containing `model.yml`) as its first
-argument. Outputs land under `<model-folder>/output/` (gitignored).
+Most commands take a model folder (containing `model.yml`) as their first
+argument. Outputs land under `<model-folder>/output/` (gitignored). Run
+`maatml <command> --help` for the full flag list.
 
-```
-maatml prepare  <model-dir>                                   # builds output/prepared/{train,val,test}.jsonl
-maatml train    <model-dir> [--smoke] [--resume auto|PATH] [--set K=V]
-maatml sweep    <model-dir> --param K=a,b [--metric NAME] [--smoke] [--max-trials N]
-maatml evaluate <model-dir> [--checkpoint X] [--gate]         # writes output/eval/<run>.{json,md}
-maatml export   <model-dir> [--checkpoint X] [--format safetensors|gguf|mlx|onnx] [--parity]
-maatml verify   <export-dir-or-manifest>                      # sha256 check vs manifest.json
-maatml serve    <model-dir> [--checkpoint X] [--host HOST] [--port N]  # JSON inference API
-maatml datagen  <model-dir> [--target N] [--teacher]          # validator-gated seed generation
-maatml ingest   <model-dir> --input PATH [--map field=col] [--sanitize tag]
-maatml runs     <model-dir>                                   # list training runs
-maatml plan     <model-dir>                                   # prints the prepare/train/eval/export plan
-maatml plugins                                                # list discovered trainers/validators/metrics
-maatml scaffold <dir> --architecture causal_sft|dpo [--name X]
-maatml validate <model-dir>                                   # check model.yml + registered plugins
-```
+| Command | What it does |
+| --- | --- |
+| `prepare` | Build `train`/`val`/`test` splits from the seed corpus |
+| `train` | Fine-tune the model (`--smoke`, `--resume auto\|PATH`, `--set K=V`) |
+| `sweep` | Offline grid HPO over `--param K=a,b` |
+| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss |
+| `export` | Deployable bundle + `manifest.json` (`--format`, `--parity`) |
+| `verify` | Recompute sha256 of an export against its `manifest.json` |
+| `serve` | JSON inference API; `--enforce` rejects invalid outputs (HTTP 422) |
+| `datagen` | Validator-gated seed generation (`--teacher`, `--allow-ungated`) |
+| `ingest` | Import external samples (`--map field=col`, `--sanitize tag`) |
+| `runs` | List recorded training runs |
+| `plan` | Print the prepare, train, evaluate, export plan |
+| `plugins` | List discovered trainers, validators, and metrics |
+| `scaffold` | Create a new model folder (`--architecture`, `--force`) |
+| `validate` | Check `model.yml` and paths (`--no-plugins` skips plugin code) |
 
 Multi-GPU (CUDA): `accelerate launch -m maatml.cli train <model-dir>/` or
 `torchrun --nproc_per_node=N -m maatml.cli train <model-dir>/`.
@@ -133,8 +134,6 @@ with `training.model_revision`.
 
 Docs: [maatml.pages.dev](https://maatml.pages.dev) · Roadmap: [ROADMAP.md](ROADMAP.md) ·
 In-repo docs: `docs/` (`pip install "maatml[docs]"` then `mkdocs serve`).
-
-Run `maatml <command> --help` for options.
 
 ## End-to-end example (Support Ticket Triage)
 
