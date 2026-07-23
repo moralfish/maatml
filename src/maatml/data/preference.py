@@ -90,6 +90,12 @@ def prepare_preference_jsonl(
     cfg = get_dataset_cfg(model_def)
     if "seed_samples" not in cfg:
         raise ValueError("model.yml `dataset:`/`data:` must declare `seed_samples`")
+    if cfg.get("sanitize"):
+        raise ValueError(
+            "dataset.sanitize is set but the preference format does not sanitize "
+            "(rows carry prompt/chosen/rejected, not a flat request field). "
+            "Remove dataset.sanitize or use the jsonl_seed format."
+        )
     seed_path = model_def.resolve(cfg["seed_samples"])
     rows = [normalize_preference(raw) for raw in iter_jsonl(seed_path)]
     bench_rows: list[dict] = []

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 import secrets
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .config import ModelDefinition
 from .device import is_main_process
@@ -67,27 +68,68 @@ def _append_record(model_def: ModelDefinition, record: RunRecord) -> None:
         return
     path = runs_path(model_def)
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Build the full line first and write once, so a crash or a concurrent
+    # append cannot leave a torn record (body with no newline).
+    line = json.dumps(record.model_dump(mode="json"), sort_keys=True)
     with open(path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(record.model_dump(mode="json"), sort_keys=True))
-        f.write("\n")
+        f.write(line + "\n")
+
+
+def _quarantine_corrupt(path: Path, lines: list[str]) -> None:
+    """Append never-before-seen unparseable lines to a sidecar corrupt file.
+
+    Dedup-guarded because ``list_runs`` runs on every read: it must not append
+    the same bad line repeatedly, and it must never rewrite ``runs.jsonl``.
+    """
+    corrupt_path = path.with_name(path.name + ".corrupt")
+    try:
+        seen: set[str] = set()
+        if corrupt_path.is_file():
+            with open(corrupt_path, "r", encoding="utf-8") as f:
+                seen = {ln.strip() for ln in f}
+        new = [ln for ln in lines if ln not in seen]
+        if not new:
+            return
+        with open(corrupt_path, "a", encoding="utf-8") as f:
+            for ln in new:
+                f.write(ln + "\n")
+    except OSError:
+        pass
 
 
 def list_runs(model_def: ModelDefinition) -> list[RunRecord]:
-    """Return all run records (latest entry per ``run_id`` wins)."""
+    """Return all run records (latest entry per ``run_id`` wins).
+
+    A line that cannot be parsed (a torn record from a crash mid-write, or
+    manual corruption) is skipped with a warning and recorded in
+    ``runs.jsonl.corrupt`` rather than raising and bricking every consumer.
+    """
     path = runs_path(model_def)
     if not path.is_file():
         return []
     latest: dict[str, RunRecord] = {}
     order: list[str] = []
+    corrupt: list[str] = []
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for lineno, raw in enumerate(f, start=1):
+            line = raw.strip()
             if not line:
                 continue
-            rec = RunRecord.model_validate_json(line)
+            try:
+                rec = RunRecord.model_validate_json(line)
+            except (ValidationError, ValueError):
+                corrupt.append(line)
+                warnings.warn(
+                    f"skipping unparseable run record at {path}:{lineno}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
             if rec.run_id not in latest:
                 order.append(rec.run_id)
             latest[rec.run_id] = rec
+    if corrupt:
+        _quarantine_corrupt(path, corrupt)
     return [latest[rid] for rid in order]
 
 
@@ -215,14 +257,29 @@ def latest_incomplete_run(model_def: ModelDefinition) -> Optional[RunRecord]:
     return None
 
 
+def _last_trainer_checkpoint(root: Path) -> Optional[Path]:
+    """Newest ``checkpoint-*`` dir under a run root (HF Trainer resume target).
+
+    transformers.Trainer.train only auto-discovers the newest checkpoint when
+    ``resume_from_checkpoint`` is the bool ``True``; a string is treated as the
+    exact checkpoint dir. A run root holds only ``checkpoint-*`` subdirs, so we
+    must descend to the newest one ourselves.
+    """
+    from transformers.trainer_utils import get_last_checkpoint
+
+    found = get_last_checkpoint(str(root))
+    return Path(found) if found else None
+
+
 def resolve_resume_checkpoint(
     model_def: ModelDefinition,
     resume: Optional[str],
 ) -> Optional[Path]:
     """Resolve ``--resume auto|PATH`` to a checkpoint path for ``trainer.train``.
 
-    ``None`` / empty → fresh run (no resume). ``auto`` → latest incomplete run's
-    out_dir (Trainer picks the newest ``checkpoint-*``). Explicit path used as-is.
+    ``None`` / empty → fresh run (no resume). ``auto`` and a run_id both resolve
+    to the newest ``checkpoint-*`` directory under that run's out_dir. An
+    explicit path is used as-is.
     """
     if resume is None or resume == "":
         return None
@@ -232,13 +289,25 @@ def resolve_resume_checkpoint(
             raise FileNotFoundError(
                 f"No incomplete run to resume under {model_def.output_dir}"
             )
-        return Path(rec.out_dir)
+        root = Path(rec.out_dir)
+        ckpt = _last_trainer_checkpoint(root)
+        if ckpt is None:
+            raise FileNotFoundError(
+                f"Run {rec.run_id!r} at {root} has no checkpoint-* to resume from"
+            )
+        return ckpt
     path = Path(resume)
     if not path.is_absolute():
         # Allow run_id or path relative to model dir / checkpoints.
         as_run = get_run(model_def, resume)
         if as_run is not None:
-            return Path(as_run.out_dir)
+            root = Path(as_run.out_dir)
+            ckpt = _last_trainer_checkpoint(root)
+            if ckpt is None:
+                raise FileNotFoundError(
+                    f"Run {resume!r} at {root} has no checkpoint-* to resume from"
+                )
+            return ckpt
         cand = model_def.checkpoints_dir / resume
         if cand.exists():
             return cand

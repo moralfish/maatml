@@ -8,6 +8,71 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+Truth and safety II: make the "the same validator gates your data, evaluation,
+and live inference" claim true, stop data-destroying commands, add a serve and
+plugin security floor, and config honesty.
+
+### Added
+
+- **Serve enforcement:** `maatml serve --enforce` returns HTTP 422 when the
+  configured validator rejects a prediction (gates live inference).
+  `/predict?validate=1` stays a non-blocking annotation.
+- **Ungated datagen escape hatch:** `maatml datagen --allow-ungated` runs
+  without a validator and marks the run and a new `*.datagen_card.md` as
+  UNGATED; the summary line reports GATED / UNGATED.
+- **Untrusted-folder linting:** `maatml validate --no-plugins` checks schema and
+  paths without importing model-folder plugin code.
+- **Serve debug:** `maatml serve --debug` includes the exception and traceback
+  in 500 responses (off by default).
+- **Trust boundary** documented in README, SECURITY.md, and docs/plugins.md: a
+  model folder is executable code and every command that reads `model.yml`
+  (including `validate` and `plan`) runs its plugins.
+
+### Changed
+
+- **Behavior change:** `maatml datagen` now **fails** when no
+  `evaluation.validator` is configured, instead of silently accepting every
+  generated row. Pass `--allow-ungated` to keep the old accept-all behavior.
+- **Behavior change:** `maatml scaffold` **refuses** to overwrite an existing
+  `model.yml` or seed corpus; pass `--force` to regenerate.
+- **Behavior change:** `--set` overrides are now validated (semver, `gt=0`,
+  types); an invalid override exits non-zero instead of being applied silently.
+- `maatml ingest` counts rows missing the gold field as `skipped_unvalidated`
+  (instead of accepting them unvalidated) and errors when a `--map` source
+  column matches zero input rows.
+- `maatml evaluate` prints a notice when no validator is configured; a
+  configured-but-unresolvable `evaluation.validator` now errors instead of
+  silently degrading to JSON-parse-only scoring.
+- Declaring `dataset.sanitize` with the alpaca / sharegpt / preference formats
+  now errors (those paths cannot sanitize) rather than the dataset card falsely
+  claiming a sanitizer ran; the card reports only tags actually applied.
+- `maatml validate` warns on unrecognized `dataset:` / `evaluation:` keys.
+
+### Fixed
+
+- **Resume:** `maatml train --resume auto|<run_id>` now resolves to the newest
+  `checkpoint-*` directory (previously it passed the run root, which current
+  transformers rejects).
+- **Run registry:** a torn or unparseable line in `runs.jsonl` is skipped with a
+  warning and quarantined to `runs.jsonl.corrupt` instead of failing every
+  command that reads the registry; records are written in a single append.
+- **Seed safety:** `maatml datagen` writes seed files atomically and never
+  truncates a non-empty seed file when nothing was accepted.
+
+### Security
+
+- **Serve:** 500 responses no longer leak the exception message or traceback to
+  the client (server-side log only; opt in with `--debug`); a warning is printed
+  when binding a non-loopback host.
+- **Tokenized cache** loads with `torch.load(weights_only=True)`, closing a
+  pickle code-execution sink under `output/cache/`.
+- **GGUF export** resolves the convert script only from `MAATML_LLAMA_CONVERT`
+  or `extensions.gguf.convert_script`; it no longer searches `PATH` or the cwd
+  for a generic `convert.py`.
+- **Vision predictors** confine request-supplied image paths to the model
+  directory, rejecting absolute paths, `..` segments, and symlink escapes
+  (closes a serve-time arbitrary-file-read).
+
 ## [0.5.1] - 2026-07-23
 
 ### Added

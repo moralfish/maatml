@@ -27,6 +27,32 @@ def test_validate_model_dir() -> None:
     assert errors == [], errors
 
 
+def test_resolve_image_confined_to_model_dir(tmp_path) -> None:
+    """S5: request image paths must stay inside model_dir (no LFI at serve)."""
+    from vision_plugin.dataset import resolve_image_bytes_or_path
+
+    img = tmp_path / "images" / "ok.png"
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"PNGDATA")
+    assert resolve_image_bytes_or_path("images/ok.png", model_dir=tmp_path) == b"PNGDATA"
+
+    with pytest.raises(ValueError):
+        resolve_image_bytes_or_path("/etc/passwd", model_dir=tmp_path)
+    with pytest.raises(ValueError):
+        resolve_image_bytes_or_path("../secret.png", model_dir=tmp_path)
+    with pytest.raises(ValueError):
+        resolve_image_bytes_or_path("x.png", model_dir=None)
+    # A symlink inside model_dir pointing outside must be rejected: this is the
+    # case the containment check relies on .resolve() to catch.
+    import os
+
+    secret = tmp_path.parent / "secret.txt"
+    secret.write_text("s", encoding="utf-8")
+    os.symlink(secret, tmp_path / "images" / "evil")
+    with pytest.raises(ValueError):
+        resolve_image_bytes_or_path("images/evil", model_dir=tmp_path)
+
+
 def test_validator_accepts_expected_payload(plugin) -> None:
     from vision_plugin.validator import validate_vision_scene
 

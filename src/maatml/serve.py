@@ -13,7 +13,9 @@ Endpoints:
 """
 from __future__ import annotations
 
+import inspect
 import json
+import logging
 import threading
 import time
 import traceback
@@ -33,6 +35,10 @@ from .validation.base import ValidationResult, strip_fences
 # Reject request bodies larger than this by default (1 MiB). Predict rows are
 # small JSON; anything larger is almost certainly abuse or a mistake.
 DEFAULT_MAX_BODY_BYTES = 1_048_576
+
+logger = logging.getLogger("maatml.serve")
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
 
 
 class RequestTooLarge(Exception):
@@ -56,6 +62,15 @@ class ServeContext:
     # specific origin to enable cross-origin access deliberately.
     cors_origin: str | None = None
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES
+    # When True, a /predict whose validator rejects the output returns HTTP 422
+    # (the validator gates live inference) instead of 200 with valid:false.
+    enforce: bool = False
+    # When True, 500 responses include the exception message and traceback.
+    # Off by default so internals never leak to unauthenticated clients.
+    debug: bool = False
+    # Subset of {user_prompt, schema_path, contracts_path} the validator accepts,
+    # resolved once at startup; None means it accepts anything (**kwargs).
+    validator_params: frozenset[str] | None = None
     started_at: float = field(default_factory=time.time)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -95,6 +110,25 @@ def _resolve_predictor_name(model_def: ModelDefinition) -> str:
     )
 
 
+def _resolve_validator_params(validator: Any) -> frozenset[str] | None:
+    """Return the accepted subset of the known validator kwargs, resolved once.
+
+    Returns None when the validator takes ``**kwargs`` (accepts anything) or its
+    signature cannot be introspected. This replaces a per-request try/except
+    TypeError fallback that could silently drop kwargs and weaken validation.
+    """
+    known = ("user_prompt", "schema_path", "contracts_path")
+    try:
+        sig = inspect.signature(validator)
+    except (TypeError, ValueError):
+        return None
+    params = list(sig.parameters.values())
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return None
+    names = {p.name for p in params}
+    return frozenset(k for k in known if k in names)
+
+
 def build_serve_context(
     model_def: ModelDefinition,
     *,
@@ -102,6 +136,8 @@ def build_serve_context(
     device: str = "auto",
     cors_origin: str | None = None,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    enforce: bool = False,
+    debug: bool = False,
 ) -> ServeContext:
     """Load plugins, resolve checkpoint, instantiate and setup the predictor."""
     discover_plugins()
@@ -158,6 +194,12 @@ def build_serve_context(
     if isinstance(val_name, str) and val_name:
         validator = VALIDATORS.require(val_name)
 
+    if enforce and validator is None:
+        raise ValueError(
+            "serve --enforce requires evaluation.validator in model.yml so live "
+            "inference can be gated; none is configured."
+        )
+
     return ServeContext(
         model_def=model_def,
         checkpoint_dir=checkpoint_dir,
@@ -169,6 +211,9 @@ def build_serve_context(
         prompt_spec_path=prompt_spec_path,
         cors_origin=cors_origin,
         max_body_bytes=max_body_bytes,
+        enforce=enforce,
+        debug=debug,
+        validator_params=_resolve_validator_params(validator) if validator else None,
     )
 
 
@@ -230,16 +275,19 @@ def _run_predict(
             user_prompt = row.get(request_field)
             if not isinstance(user_prompt, str):
                 user_prompt = None
-            kwargs: dict[str, Any] = {"user_prompt": user_prompt}
+            raw_str = raw if isinstance(raw, str) else json.dumps(raw)
+            available: dict[str, Any] = {"user_prompt": user_prompt}
             if ctx.schema_path is not None:
-                kwargs["schema_path"] = ctx.schema_path
+                available["schema_path"] = ctx.schema_path
             if ctx.contracts_path is not None:
-                kwargs["contracts_path"] = ctx.contracts_path
-            try:
-                result = ctx.validator(raw if isinstance(raw, str) else json.dumps(raw), **kwargs)
-            except TypeError:
-                # Some validators are methods / callables with different signatures.
-                result = ctx.validator(raw if isinstance(raw, str) else json.dumps(raw))
+                available["contracts_path"] = ctx.contracts_path
+            # Call the validator with exactly the kwargs its signature accepts,
+            # resolved once at startup; no silent TypeError fallback.
+            if ctx.validator_params is None:
+                kwargs = available
+            else:
+                kwargs = {k: v for k, v in available.items() if k in ctx.validator_params}
+            result = ctx.validator(raw_str, **kwargs)
             payload.update(_validation_payload(result))
     return payload
 
@@ -348,25 +396,31 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": f"Unknown path {path!r}"})
                 return
             qs = parse_qs(parsed.query)
-            do_validate = any(
+            # Under --enforce the validator gates every /predict regardless of
+            # whether the client asked for validation.
+            do_validate = ctx.enforce or any(
                 v.lower() in ("1", "true", "yes") for v in qs.get("validate", [])
             )
             try:
                 row = self._read_json_body()
                 result = _run_predict(ctx, row, do_validate=do_validate)
-                self._send_json(200, result)
+                status = 200
+                if ctx.enforce and result.get("valid") is False:
+                    status = 422
+                self._send_json(status, result)
             except RequestTooLarge as exc:
                 self._send_json(413, {"error": str(exc)})
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
-            except Exception as exc:  # noqa: BLE001  surface predict errors to client
-                self._send_json(
-                    500,
-                    {
-                        "error": str(exc),
-                        "traceback": traceback.format_exc(),
-                    },
-                )
+            except Exception as exc:  # noqa: BLE001
+                # Never leak internals to the client. Log the full traceback
+                # server-side; include it in the response only under --debug.
+                logger.exception("predict failed")
+                body: dict[str, Any] = {"error": "internal server error"}
+                if ctx.debug:
+                    body["error"] = str(exc)
+                    body["traceback"] = traceback.format_exc()
+                self._send_json(500, body)
 
     return Handler
 
@@ -380,6 +434,8 @@ def serve_model(
     device: str = "auto",
     cors_origin: str | None = None,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    enforce: bool = False,
+    debug: bool = False,
     context: ServeContext | None = None,
 ) -> ThreadingHTTPServer:
     """Build context (unless provided) and return a ready ``ThreadingHTTPServer``.
@@ -393,6 +449,8 @@ def serve_model(
         device=device,
         cors_origin=cors_origin,
         max_body_bytes=max_body_bytes,
+        enforce=enforce,
+        debug=debug,
     )
     handler = _make_handler(ctx)
     server = ThreadingHTTPServer((host, port), handler)
@@ -410,6 +468,8 @@ def run_server(
     device: str = "auto",
     cors_origin: str | None = None,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    enforce: bool = False,
+    debug: bool = False,
 ) -> None:
     """Block serving until KeyboardInterrupt."""
     from rich.console import Console
@@ -421,6 +481,8 @@ def run_server(
         device=device,
         cors_origin=cors_origin,
         max_body_bytes=max_body_bytes,
+        enforce=enforce,
+        debug=debug,
     )
     server = serve_model(
         model_def,
@@ -430,9 +492,15 @@ def run_server(
         device=device,
         context=ctx,
     )
+    if host not in _LOOPBACK_HOSTS:
+        console.print(
+            f"[yellow]warning[/] binding non-loopback host {host!r}; there is no "
+            "authentication. Expose only on a trusted network."
+        )
     console.print(
         f"[green]serving[/] {model_def.identity} ({model_def.architecture}) "
         f"ckpt={ctx.checkpoint_dir} device={ctx.device}"
+        + (" [bold]enforce[/]" if enforce else "")
     )
     console.print(f"  GET  http://{host}:{port}/health")
     console.print(f"  GET  http://{host}:{port}/info")

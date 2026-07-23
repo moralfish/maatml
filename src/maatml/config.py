@@ -41,7 +41,7 @@ class PackagingSpec(BaseModel):
     ``confidence_thresholds`` is a plain dict so the YAML stays light.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     max_input_tokens: int = Field(gt=0, default=2048)
     expected_latency_ms: int = Field(gt=0, default=2000)
@@ -55,7 +55,9 @@ class PackagingSpec(BaseModel):
 class ModelDefinition(BaseModel):
     """Top-level schema for `models/<name>/model.yml`."""
 
-    model_config = ConfigDict(extra="forbid")
+    # validate_assignment so CLI --set overrides (setattr) run the same
+    # validators as load, instead of silently bypassing semver / gt=0 / types.
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     name: str = Field(..., description="Folder name; e.g. 'jcl-validator'")
     model_id: str = Field(..., description="Stable model identifier; e.g. 'jcl-validator'")
@@ -189,11 +191,15 @@ def get_dataset_cfg(md: ModelDefinition) -> dict[str, Any]:
     return merged
 
 
-def load_model_def(model_dir: str | Path) -> ModelDefinition:
+def load_model_def(model_dir: str | Path, *, load_plugins: bool = True) -> ModelDefinition:
     """Read `<model_dir>/model.yml` and return a populated ModelDefinition.
 
     The returned object's `model_dir` attribute is set to the absolute path of
     the folder so `resolve(...)` and `output_dir` etc. work correctly.
+
+    When ``load_plugins`` is False, any ``plugins:`` declared in model.yml are
+    NOT imported. A model folder is executable code, so this is how a command
+    can read the schema without running the folder's Python.
     """
     model_dir = Path(model_dir).resolve()
     if not model_dir.is_dir():
@@ -214,9 +220,35 @@ def load_model_def(model_dir: str | Path) -> ModelDefinition:
     object.__setattr__(md, "model_dir", model_dir)
 
     # Load any folder-local / module plugins declared in model.yml.
-    if md.plugins:
+    if load_plugins and md.plugins:
         from .registry import load_model_plugins
 
         load_model_plugins(model_dir, md.plugins)
 
     return md
+
+
+# Known keys for the untyped dataset:/evaluation: sections. Kept in sync with
+# the readers in data/, training/, export/ and scaffold's section builders. A
+# typo produces a warning (never a hard failure), so plugins can still extend.
+_DATASET_KNOWN_KEYS = frozenset({
+    "format", "request_field", "raw_field", "target_field", "target_key_order",
+    "group_by", "seed_samples", "schema", "split_ratios", "seed", "sanitize",
+    "prompt_spec", "source_prefix", "user_placeholder", "text_transform",
+    "tokenizer", "generator", "benchmark_samples", "contracts", "template_dir",
+    "sources", "base_model_name_or_path",
+})
+_EVALUATION_KNOWN_KEYS = frozenset({"predictor", "validator", "metrics", "gates"})
+
+
+def config_key_warnings(md: ModelDefinition) -> list[str]:
+    """Warn on unrecognized dataset:/evaluation: keys. Never fails validation."""
+    warns: list[str] = []
+    for key in md.dataset or {}:
+        if key not in _DATASET_KNOWN_KEYS:
+            warns.append(f"dataset.{key}: unrecognized key, ignored by known stages")
+    ev = md.evaluation if isinstance(md.evaluation, dict) else {}
+    for key in ev:
+        if key not in _EVALUATION_KNOWN_KEYS:
+            warns.append(f"evaluation.{key}: unrecognized key, ignored by known stages")
+    return warns

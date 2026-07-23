@@ -27,6 +27,30 @@ def test_validate_model_dir() -> None:
     assert errors == [], errors
 
 
+def test_resolve_image_confined_to_model_dir(tmp_path) -> None:
+    """S5: request image paths must stay inside model_dir (no LFI at serve)."""
+    from vlm_plugin.predictor import _resolve_image_bytes
+
+    img = tmp_path / "images" / "ok.png"
+    img.parent.mkdir(parents=True)
+    img.write_bytes(b"PNGDATA")
+    assert _resolve_image_bytes("images/ok.png", model_dir=tmp_path) == b"PNGDATA"
+
+    with pytest.raises(ValueError):
+        _resolve_image_bytes("/etc/passwd", model_dir=tmp_path)
+    with pytest.raises(ValueError):
+        _resolve_image_bytes("../secret.png", model_dir=tmp_path)
+    with pytest.raises(ValueError):
+        _resolve_image_bytes("x.png", model_dir=None)
+    import os
+
+    secret = tmp_path.parent / "secret.txt"
+    secret.write_text("s", encoding="utf-8")
+    os.symlink(secret, tmp_path / "images" / "evil")
+    with pytest.raises(ValueError):
+        _resolve_image_bytes("images/evil", model_dir=tmp_path)
+
+
 def test_describe_deterministic(plugin) -> None:
     from vlm_plugin.describe import describe, extract_gt
 

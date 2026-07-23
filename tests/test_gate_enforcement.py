@@ -40,3 +40,37 @@ def test_every_example_declares_gates(example: str) -> None:
     md = load_model_def(REPO_ROOT / "examples" / example)
     spec = resolve_gate_spec(md)  # raises if the example has no gates
     assert spec and all(isinstance(v, float) for v in spec.values())
+
+
+# --- G6: validator resolution -----------------------------------------------
+
+
+def test_resolve_validator_none_is_noop() -> None:
+    from maatml.evaluation.harness import _noop_validate, resolve_validator
+
+    assert resolve_validator(None) is _noop_validate
+
+
+def test_resolve_validator_registered_returns_callable() -> None:
+    from maatml.evaluation.harness import resolve_validator
+    from maatml.registry import VALIDATORS
+
+    fn = lambda raw, **k: None  # noqa: E731
+    VALIDATORS.register("g6_dummy", fn, source="test")
+    assert resolve_validator("g6_dummy") is fn
+
+
+def test_resolve_validator_unresolvable_raises() -> None:
+    from maatml.evaluation.harness import resolve_validator
+
+    with pytest.raises(GateConfigError) as exc:
+        resolve_validator("g6_missing_name")
+    assert "g6_missing_name" in str(exc.value)
+    assert "registered" in str(exc.value)
+
+
+def test_resolve_validator_callable_passthrough() -> None:
+    from maatml.evaluation.harness import resolve_validator
+
+    f = lambda raw, **k: None  # noqa: E731
+    assert resolve_validator(f) is f

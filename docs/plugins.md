@@ -36,6 +36,12 @@ evaluation:
 `load_model_plugins` imports the package (or `.py` file); side-effect
 registrations run at import time.
 
+> **Trust boundary.** These imports run arbitrary Python at load time. Because
+> every command reads `model.yml`, even `maatml validate` and `maatml plan`
+> execute a folder's plugins. Only point maatml at model folders you trust, or
+> use `maatml validate --no-plugins` to check schema and paths without importing
+> plugin code.
+
 ## Generators (`maatml datagen`)
 
 A generator is a factory:

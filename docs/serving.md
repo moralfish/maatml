@@ -57,8 +57,11 @@ maatml evaluate examples/vision-vlm --gate
 ## Verifying an export
 
 Every export writes a `manifest.json`. `maatml verify <export-dir>` recomputes
-the sha256 of each listed file, so you can confirm an artifact is intact, and
-unchanged since export, before you ship it.
+the sha256 of each file listed in the manifest and checks it against the
+recorded value, so you can catch truncated, corrupted, or partially copied
+artifacts before you ship. This detects accidental corruption, not tampering:
+anyone who can rewrite a file can also recompute its hash in `manifest.json`, so
+treat `verify` as an integrity check, not a signature.
 
 ```bash
 maatml export examples/support-ticket-triage/

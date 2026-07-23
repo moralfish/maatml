@@ -88,3 +88,32 @@ def test_pick_metric() -> None:
     key2, val2 = pick_metric({"accuracy": 0.9})
     assert key2 == "accuracy"
     assert val2 == 0.9
+
+
+def test_overrides_reject_invalid_packaging(tmp_path: Path) -> None:
+    """C1: --set must not bypass PackagingSpec gt=0 constraint."""
+    target = tmp_path / "c1a"
+    scaffold_model(target, architecture="causal_sft", name="c1a")
+    md = load_model_def(target)
+    with pytest.raises(ValueError):
+        apply_overrides(md, ["packaging.max_input_tokens=-5"])
+
+
+def test_overrides_reject_invalid_semver(tmp_path: Path) -> None:
+    """C1: --set must not bypass the version semver validator."""
+    target = tmp_path / "c1b"
+    scaffold_model(target, architecture="causal_sft", name="c1b")
+    md = load_model_def(target)
+    with pytest.raises(ValueError):
+        apply_overrides(md, ["version=notsemver"])
+
+
+def test_overrides_valid_still_apply(tmp_path: Path) -> None:
+    """C1: valid overrides still work after enabling validate_assignment."""
+    target = tmp_path / "c1c"
+    scaffold_model(target, architecture="causal_sft", name="c1c")
+    md = load_model_def(target)
+    apply_overrides(md, ["packaging.max_input_tokens=4096"])
+    assert md.packaging.max_input_tokens == 4096
+    apply_overrides(md, ["architecture=seq2seq"])
+    assert md.architecture == "seq2seq"

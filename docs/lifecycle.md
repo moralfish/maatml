@@ -13,7 +13,7 @@ together, and it is the main thing general fine-tuning tools leave to you.
                     │   validator   │   (per task, registered by a plugin)
                     └───────┬───────┘
           ┌─────────────────┼─────────────────┐
-     gates data        gates eval        gates serving
+     gates data        gates eval        guards serving
           │                 │                 │
           ▼                 ▼                 ▼
        datagen           evaluate      serve ?validate=1
@@ -27,7 +27,9 @@ together, and it is the main thing general fine-tuning tools leave to you.
   `evaluation.gates`; `--gate` exits non-zero on failure, so it drops straight
   into CI.
 - **Serving:** `maatml serve` re-runs the *same* validator inline when a
-  request hits `/predict?validate=1`, so the contract holds in production too.
+  request hits `/predict?validate=1`. It annotates each response with the
+  validator result by default, and with `--enforce` it rejects failing outputs
+  (HTTP 422), so the contract can hold in production too.
 
 The payoff: a MaatML model ships with a contract, not just weights.
 

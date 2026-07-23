@@ -28,7 +28,7 @@ from typing import Any, Optional
 import typer
 from rich.console import Console
 
-from .config import get_dataset_cfg, load_model_def
+from .config import config_key_warnings, get_dataset_cfg, load_model_def
 from .overrides import (
     apply_overrides,
     expand_param_grid,
@@ -154,7 +154,10 @@ def cmd_train(
     """Fine-tune the model declared by <model-dir>/model.yml."""
     md = load_model_def(model_dir)
     if set_overrides:
-        apply_overrides(md, set_overrides)
+        try:
+            apply_overrides(md, set_overrides)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--set") from exc
     _boot_plugins(md)
     arch = normalize_architecture(md.architecture)
     trainer = TRAINERS.get(md.architecture) or TRAINERS.require(arch)
@@ -204,9 +207,12 @@ def cmd_sweep(
 
     for i, trial_map in enumerate(grid):
         md = _clone_model_def(base)
-        if set_overrides:
-            apply_overrides(md, set_overrides)
-        apply_overrides(md, overrides_from_mapping(trial_map))
+        try:
+            if set_overrides:
+                apply_overrides(md, set_overrides)
+            apply_overrides(md, overrides_from_mapping(trial_map))
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--set/--param") from exc
         trial_meta = {"index": i, "params": trial_map}
         console.print(
             f"[cyan]sweep[/] trial {i + 1}/{len(grid)} params={trial_map}"
@@ -271,7 +277,12 @@ def cmd_evaluate(
     _boot_plugins(md)
     # Ensure predictor registrations are loaded.
     from .evaluation import predictors as _predictors  # noqa: F401
-    from .evaluation.harness import GateConfigError, resolve_gate_spec, run_evaluation
+    from .evaluation.harness import (
+        GateConfigError,
+        resolve_gate_spec,
+        resolve_validator,
+        run_evaluation,
+    )
     from .evaluation.runner import write_markdown_summary
     from .runs import get_run, update_run_gates
 
@@ -292,6 +303,15 @@ def cmd_evaluate(
             f"No predictor for architecture={md.architecture!r}; "
             "set evaluation.predictor in model.yml"
         )
+    if validator is None:
+        console.print("[yellow]no validator configured, scoring JSON parse only[/]")
+    else:
+        # Fail before the expensive checkpoint load if a validator is configured
+        # but does not resolve (plugins are already loaded via _boot_plugins).
+        try:
+            resolve_validator(validator)
+        except GateConfigError as exc:
+            raise typer.BadParameter(str(exc), param_hint="evaluation.validator") from exc
 
     report = run_evaluation(
         checkpoint_dir=ckpt,
@@ -423,6 +443,18 @@ def cmd_serve(
         "--max-body-bytes",
         help="Reject POST bodies larger than this many bytes (default 1 MiB).",
     ),
+    enforce: bool = typer.Option(
+        False,
+        "--enforce",
+        help="Return HTTP 422 when the configured validator rejects a prediction "
+        "(gate live inference). Off by default (annotate only).",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Include the exception message and traceback in 500 responses. "
+        "Off by default so internals never leak to clients.",
+    ),
 ) -> None:
     """Serve a checkpoint or export bundle as a JSON inference API.
 
@@ -443,8 +475,10 @@ def cmd_serve(
             device=device,
             cors_origin=cors_origin,
             max_body_bytes=max_body_bytes,
+            enforce=enforce,
+            debug=debug,
         )
-    except (FileNotFoundError, KeyError, ImportError, RuntimeError) as exc:
+    except (FileNotFoundError, KeyError, ImportError, RuntimeError, ValueError) as exc:
         console.print(f"[red]serve failed[/] {exc}")
         raise typer.Exit(code=1) from exc
 
@@ -463,11 +497,17 @@ def cmd_datagen(
         help="Use OpenAI-compatible teacher (MAATML_TEACHER_* env); requires [teacher]",
     ),
     append: bool = typer.Option(True, "--append/--no-append"),
+    allow_ungated: bool = typer.Option(
+        False,
+        "--allow-ungated",
+        help="Permit datagen with no evaluation.validator; the run and dataset "
+        "card are marked UNGATED (rows are NOT validator-gated).",
+    ),
 ) -> None:
     """Generate validator-gated seed rows via a registered generator or teacher."""
     md = load_model_def(model_dir)
     _boot_plugins(md)
-    from .data.datagen import run_datagen
+    from .data.datagen import DatagenConfigError, run_datagen
 
     try:
         result = run_datagen(
@@ -477,15 +517,24 @@ def cmd_datagen(
             out_path=out,
             use_teacher=teacher,
             append=append,
+            allow_ungated=allow_ungated,
         )
+    except DatagenConfigError as exc:
+        console.print(f"[red]datagen refused[/] {exc}")
+        raise typer.Exit(code=1) from exc
     except (KeyError, ImportError) as exc:
         console.print(f"[red]datagen failed[/] {exc}")
         raise typer.Exit(code=1) from exc
+    status = "GATED" if result["gated"] else "UNGATED"
     console.print(
-        f"[green]datagen[/] generator={result['generator']} "
+        f"[green]datagen[/] status={status} generator={result['generator']} "
         f"accepted={result['accepted']} rejected={result['rejected']} "
         f"out={result['out_path']}"
     )
+    if result["protected_existing"]:
+        console.print(
+            "[yellow]note[/] nothing accepted; existing seed file left unchanged"
+        )
 
 
 @app.command("ingest")
@@ -527,7 +576,9 @@ def cmd_ingest(
         raise typer.Exit(code=1) from exc
     console.print(
         f"[green]ingest[/] accepted={result['accepted']} "
-        f"rejected={result['rejected']} seeds={result['seeds_path']}"
+        f"rejected={result['rejected']} "
+        f"skipped_unvalidated={result['skipped_unvalidated']} "
+        f"seeds={result['seeds_path']}"
     )
 
 
@@ -562,25 +613,49 @@ def cmd_scaffold(
         help="Registered trainer architecture (e.g. causal_sft, seq2seq, classifier, dpo)",
     ),
     name: Optional[str] = typer.Option(None, "--name", help="Model name (default: folder name)"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Overwrite an existing model.yml and seed_samples.jsonl",
+    ),
 ) -> None:
     """Create a new model folder with model.yml, datasets, and README."""
     discover_plugins()
-    path = scaffold_model(target_dir, architecture=architecture, name=name)
+    try:
+        path = scaffold_model(
+            target_dir, architecture=architecture, name=name, force=force
+        )
+    except FileExistsError as exc:
+        console.print(f"[red]scaffold refused[/] {exc}")
+        raise typer.Exit(code=1) from exc
     console.print(f"[green]scaffolded[/] {path}")
 
 
 @app.command("validate")
 def cmd_validate(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    no_plugins: bool = typer.Option(
+        False,
+        "--no-plugins",
+        help="Validate schema and paths without importing trainer or model "
+        "plugin code (a model folder is executable code).",
+    ),
 ) -> None:
     """Validate model.yml paths, architecture registration, and dataset.format."""
-    errors = validate_model_dir(model_dir)
+    errors = validate_model_dir(model_dir, load_plugins=not no_plugins)
     if errors:
         console.print("[red]validate failed[/]")
         for err in errors:
             console.print(f"  - {err}")
         raise typer.Exit(code=1)
-    md = load_model_def(model_dir)
+    md = load_model_def(model_dir, load_plugins=not no_plugins)
+    for warn in config_key_warnings(md):
+        console.print(f"[yellow]warning[/] {warn}")
+    if no_plugins:
+        console.print(
+            "[dim]architecture and dataset.format not verified (--no-plugins)[/]"
+        )
     console.print(f"[green]OK[/] {md.identity} ({md.architecture})")
 
 

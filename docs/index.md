@@ -5,10 +5,12 @@ vision-language**, and takes them from experimentation to production through one
 declarative `model.yml`: **prepare → train → evaluate → export → serve**.
 
 **What makes it different:** correctness is checked *outside* the model by
-[validators](lifecycle.md). The same validator gates your synthetic **data**,
-your **evaluation**, and your **live inference**, so a MaatML model ships with a
-contract, not just weights. That validator-gated *data → eval → serving* loop,
-now across modalities, is what general fine-tuning tools leave out.
+[validators](lifecycle.md). The same validator gates your synthetic **data** and
+your **evaluation**, and guards your **live inference**: `maatml serve` runs it
+on every response, reporting the result by default and rejecting outputs that
+fail under `--enforce`. So a MaatML model ships with a contract, not just
+weights. That validator-gated *data → eval → serving* loop, now across
+modalities, is what general fine-tuning tools leave out.
 
 **Install from PyPI** (not from source):
 

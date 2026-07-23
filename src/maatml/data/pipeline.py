@@ -161,10 +161,15 @@ def prepare_rows(
     seed_label: str = "",
     benchmark_rows: Optional[list[dict]] = None,
     benchmark_label: Optional[str] = None,
+    sanitize_applied: Optional[list[str]] = None,
 ) -> dict:
     """Split already-loaded rows and write train/val/test + dataset card.
 
     Shared by ``jsonl_seed`` and format adapters (alpaca / sharegpt).
+
+    ``sanitize_applied`` is the list of sanitizer tags actually run on the rows
+    (the card reports these, not the declared config, so it never claims a
+    sanitizer ran when it did not).
     """
     cfg = get_dataset_cfg(model_def)
     out = Path(out_dir) if out_dir else model_def.prepared_dir
@@ -211,7 +216,7 @@ def prepare_rows(
             f"group_by: {group_by or '(default family→source→sample_id)'}",
             f"Sources: {dict(source_counts)}",
             f"Families: {dict(family_counts) if family_counts else '{}'}",
-            f"Sanitize: {list(cfg.get('sanitize') or []) or 'none'}",
+            f"Sanitize: {list(sanitize_applied) if sanitize_applied else 'none'}",
         ],
     )
 
@@ -267,4 +272,5 @@ def prepare(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
         seed_label=str(seed_path),
         benchmark_rows=bench_rows or None,
         benchmark_label=bench_label,
+        sanitize_applied=sanitize_tags,
     )

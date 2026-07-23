@@ -11,6 +11,8 @@ import json
 import re
 from typing import Any, Optional
 
+from pydantic import ValidationError
+
 from .config import ModelDefinition
 
 _OVERRIDE_RX = re.compile(r"^([^=]+)=(.*)$", re.DOTALL)
@@ -121,7 +123,12 @@ def apply_overrides(
                     raise ValueError(
                         f"Nested packaging overrides beyond one level unsupported: {key!r}"
                     )
-                object.__setattr__(pkg, leaf[0], value)
+                try:
+                    setattr(pkg, leaf[0], value)
+                except ValidationError as exc:
+                    raise ValueError(
+                        f"invalid override {key!r}: {exc.errors()[0]['msg']}"
+                    ) from exc
             else:
                 raise ValueError(
                     f"Unknown override path {key!r}; "
@@ -130,7 +137,12 @@ def apply_overrides(
         else:
             if not hasattr(model_def, head) or head in ("model_dir",):
                 raise ValueError(f"Unknown ModelDefinition field {key!r}")
-            setattr(model_def, head, value)
+            try:
+                setattr(model_def, head, value)
+            except ValidationError as exc:
+                raise ValueError(
+                    f"invalid override {key!r}: {exc.errors()[0]['msg']}"
+                ) from exc
     return model_def
 
 

@@ -234,3 +234,163 @@ def test_body_size_cap_returns_413(
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+# --- G2 / G5 / S1 -----------------------------------------------------------
+
+
+class _FailPredictor(_FakePredictor):
+    def predict(self, row: dict) -> str:
+        self.last_row = row
+        return json.dumps({"echo": row.get("request", ""), "ok": False})
+
+
+class _BoomPredictor(_FakePredictor):
+    def predict(self, row: dict) -> str:
+        raise RuntimeError("kaboom")
+
+
+def _md_with_predictor(tmp_path, pred_cls, *, pred_name, with_validator=True):
+    discover_plugins(force=True)
+    PREDICTORS.register(pred_name, pred_cls, source="test")
+    if with_validator:
+        VALIDATORS.register("fake_echo", _fake_validator, source="test")
+    model_dir = tmp_path / "toy"
+    model_dir.mkdir()
+    ckpt = model_dir / "output" / "checkpoints" / "smoke"
+    ckpt.mkdir(parents=True)
+    (ckpt / "model.safetensors").write_bytes(b"x")
+    evaluation = {"predictor": pred_name}
+    if with_validator:
+        evaluation["validator"] = "fake_echo"
+    md = ModelDefinition(
+        name="toy-serve",
+        model_id="toy-serve",
+        version="0.1.0",
+        architecture="causal_sft",
+        evaluation=evaluation,
+    )
+    object.__setattr__(md, "model_dir", model_dir)
+    return md, ckpt
+
+
+def test_serve_enforce_blocks_invalid(tmp_path: Path) -> None:
+    md, ckpt = _md_with_predictor(tmp_path, _FailPredictor, pred_name="fail_echo")
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", enforce=True)
+    server, base, thread = _serve(md, ctx)
+    try:
+        status, body = _http_json("POST", f"{base}/predict", {"request": "x"})
+        assert status == 422
+        assert body["valid"] is False
+        assert body["errors"]
+        assert "output" in body and "latency_ms" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_serve_enforce_allows_valid(tmp_path: Path) -> None:
+    md, ckpt = _md_with_predictor(tmp_path, _FakePredictor, pred_name="ok_echo")
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", enforce=True)
+    server, base, thread = _serve(md, ctx)
+    try:
+        status, body = _http_json("POST", f"{base}/predict", {"request": "x"})
+        assert status == 200
+        assert body["valid"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_serve_enforce_requires_validator(tmp_path: Path) -> None:
+    md, ckpt = _md_with_predictor(
+        tmp_path, _FakePredictor, pred_name="ok_novalidator", with_validator=False
+    )
+    with pytest.raises(ValueError, match="requires evaluation.validator"):
+        build_serve_context(md, checkpoint=ckpt, device="cpu", enforce=True)
+
+
+def test_serve_500_hides_traceback_by_default(tmp_path: Path) -> None:
+    md, ckpt = _md_with_predictor(tmp_path, _BoomPredictor, pred_name="boom")
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu")
+    server, base, thread = _serve(md, ctx)
+    try:
+        status, body = _http_json("POST", f"{base}/predict", {"request": "x"})
+        assert status == 500
+        assert body["error"] == "internal server error"
+        assert "traceback" not in body
+        assert "kaboom" not in json.dumps(body)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_serve_500_debug_includes_traceback(tmp_path: Path) -> None:
+    md, ckpt = _md_with_predictor(tmp_path, _BoomPredictor, pred_name="boom2")
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", debug=True)
+    server, base, thread = _serve(md, ctx)
+    try:
+        status, body = _http_json("POST", f"{base}/predict", {"request": "x"})
+        assert status == 500
+        assert body["error"] == "kaboom"
+        assert "traceback" in body
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+_strict_seen: dict = {}
+
+
+def _strict_validator(raw_output, user_prompt=None):  # no **kwargs, no schema_path
+    _strict_seen["user_prompt"] = user_prompt
+    result = ValidationResult(raw_output=raw_output, n_layers=1, required_layers={1})
+    result.passed_layers.add(1)
+    return result
+
+
+def test_serve_strict_validator_signature_through_server(tmp_path: Path) -> None:
+    """G5 end-to-end: a validator whose signature omits schema_path is called
+    with only the kwargs it accepts (no TypeError fallback dropping user_prompt),
+    even when a schema is resolved."""
+    _strict_seen.clear()
+    md, ckpt = _md_with_predictor(
+        tmp_path, _FakePredictor, pred_name="strict_pred", with_validator=False
+    )
+    (ckpt / "schema.json").write_text("{}", encoding="utf-8")  # so schema_path resolves
+    from maatml.registry import VALIDATORS as _V
+
+    _V.register("strict_val", _strict_validator, source="test")
+    md.evaluation["validator"] = "strict_val"
+
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu")
+    assert ctx.schema_path is not None
+    assert ctx.validator_params == frozenset({"user_prompt"})
+    server, base, thread = _serve(md, ctx)
+    try:
+        status, body = _http_json("POST", f"{base}/predict?validate=1", {"request": "hi"})
+        assert status == 200
+        assert body["valid"] is True
+        assert _strict_seen["user_prompt"] == "hi"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_resolve_validator_params_subset_and_kwargs() -> None:
+    from maatml.serve import _resolve_validator_params
+
+    def strict(raw, user_prompt=None, schema_path=None):  # noqa: ANN001
+        return None
+
+    assert _resolve_validator_params(strict) == frozenset({"user_prompt", "schema_path"})
+
+    def loose(raw, **kw):  # noqa: ANN001
+        return None
+
+    assert _resolve_validator_params(loose) is None

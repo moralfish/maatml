@@ -4,9 +4,28 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from maatml.config import ModelDefinition
 from maatml.data.ingest import ingest_samples
+from maatml.registry import VALIDATORS
 from maatml.utils.io import iter_jsonl, write_jsonl
+
+
+def _model(model_dir, *, evaluation=None):
+    md = ModelDefinition(
+        name="toy",
+        model_id="toy",
+        architecture="causal_sft",
+        dataset={
+            "seed_samples": "datasets/samples/seed_samples.jsonl",
+            "request_field": "request",
+            "target_field": "target",
+        },
+        evaluation=evaluation or {},
+    )
+    object.__setattr__(md, "model_dir", model_dir)
+    return md
 
 
 def test_ingest_jsonl_to_seeds(tmp_path: Path) -> None:
@@ -62,3 +81,42 @@ def test_ingest_jsonl_to_seeds(tmp_path: Path) -> None:
     assert rows[-1]["source"].startswith("ingest:")
     reject = json.loads(Path(result["reject_path"]).read_text(encoding="utf-8"))
     assert reject["rejected"] == 1
+
+
+def test_ingest_map_unmatched_source_errors(tmp_path: Path) -> None:
+    """G4: a --map source column matching zero input rows is a config error."""
+    model_dir = tmp_path / "model"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    inp = tmp_path / "incoming.jsonl"
+    write_jsonl(inp, [{"a": 1, "b": 2}, {"a": 3, "b": 4}])
+    md = _model(model_dir)
+    with pytest.raises(ValueError, match="zero input rows"):
+        ingest_samples(md, inp, field_map={"request": "text"})
+
+
+def test_ingest_skips_unvalidated_when_validator_configured(tmp_path: Path) -> None:
+    """G4: with a validator configured, a row missing gold is counted and
+    excluded (skipped_unvalidated), never silently accepted."""
+
+    class _Res:
+        ok = True
+
+    VALIDATORS.register("ing_ok", lambda raw, **k: _Res(), source="test")
+
+    model_dir = tmp_path / "model"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    inp = tmp_path / "incoming.jsonl"
+    write_jsonl(
+        inp,
+        [
+            {"sample_id": "a", "request": "x", "target": {"y": 1}},  # has gold
+            {"sample_id": "b", "request": "z"},  # missing gold
+        ],
+    )
+    md = _model(model_dir, evaluation={"validator": "ing_ok"})
+    result = ingest_samples(md, inp, append=False)
+    assert result["accepted"] == 1
+    assert result["skipped_unvalidated"] == 1
+    assert result["rejected"] == 0
+    rows = list(iter_jsonl(md.resolve("datasets/samples/seed_samples.jsonl")))
+    assert [r["sample_id"] for r in rows] == ["a"]

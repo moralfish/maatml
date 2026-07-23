@@ -11,10 +11,12 @@ single declarative `model.yml`: **prepare → train → evaluate → export → 
 Licensed under **Apache-2.0**.
 
 **What makes it different:** correctness is checked *outside* the model by
-**validators**. The same validator gates your synthetic **data**, your
-**evaluation**, and your **live inference**, so a MaatML model ships with a
-contract, not just weights. That validator-gated *data → eval → serving* loop,
-now across modalities, is what general fine-tuning tools leave out.
+**validators**. The same validator gates your synthetic **data** and your
+**evaluation**, and guards your **live inference**: `maatml serve` runs it on
+every response, reporting the result by default and rejecting outputs that fail
+under `--enforce`. So a MaatML model ships with a contract, not just weights.
+That validator-gated *data → eval → serving* loop, now across modalities, is
+what general fine-tuning tools leave out.
 
 Site: [maatml.pages.dev](https://maatml.pages.dev) ·
 PyPI: [`maatml`](https://pypi.org/project/maatml/) ·
@@ -204,6 +206,17 @@ src/maatml/                 # core framework (architectures, CLI, harnesses)
 scripts/                    # batch train/eval/validate
 tests/                      # core unit tests
 ```
+
+## Trust boundary
+
+A model folder is executable code, not just data. Any `plugins:` entry in
+`model.yml` is imported as Python the moment the folder is loaded, and every
+command that reads `model.yml`, including `maatml validate` and `maatml plan`,
+loads the folder. Running any `maatml` command against a folder therefore runs
+that folder's code with your privileges. Only run `maatml` on model folders you
+trust, the same way you would only run a script you trust. Use
+`maatml validate --no-plugins` to check the schema and paths without importing
+plugin code.
 
 ## Development
 

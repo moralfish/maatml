@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from maatml.config import load_model_def
 from maatml.data.formats import normalize_alpaca, normalize_sharegpt, prepare_alpaca
 from maatml.registry import FORMATS, discover_plugins
@@ -89,3 +91,30 @@ dataset:
         any_row = next(iter_jsonl(md.prepared_dir / "val.jsonl"))
     assert "messages" in any_row
     assert any_row["messages"][0]["role"] in ("user", "system")
+
+
+def test_alpaca_sanitize_declared_raises(tmp_path: Path) -> None:
+    """G3: declaring sanitize on a format that cannot sanitize must error,
+    not silently skip while the dataset card claims it ran."""
+    discover_plugins()
+    mdir = tmp_path / "alpaca-san"
+    (mdir / "datasets" / "samples").mkdir(parents=True)
+    write_jsonl(
+        mdir / "datasets" / "samples" / "seed_samples.jsonl",
+        [{"instruction": "q", "input": "", "output": "a", "sample_id": "id-0", "family": "f"}],
+    )
+    (mdir / "model.yml").write_text(
+        """name: alpaca-san
+model_id: alpaca-san
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  format: alpaca
+  seed_samples: datasets/samples/seed_samples.jsonl
+  sanitize: [jcl]
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    with pytest.raises(ValueError, match="does not sanitize"):
+        prepare_alpaca(md)

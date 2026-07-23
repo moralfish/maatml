@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from maatml.config import load_model_def
 from maatml.data.preference import (
     mint_preference_pairs,
@@ -112,3 +114,30 @@ dataset:
     total = sum(result["split_counts"].values())
     assert total == 8
     assert result["split_counts"]["train"] >= 1
+
+
+def test_preference_sanitize_declared_raises(tmp_path: Path) -> None:
+    """G3: the preference format cannot sanitize prompt/chosen/rejected, so a
+    declared sanitize tag must raise rather than be silently ignored."""
+    discover_plugins()
+    mdir = tmp_path / "pref-san"
+    (mdir / "datasets" / "samples").mkdir(parents=True)
+    write_jsonl(
+        mdir / "datasets" / "samples" / "seed_samples.jsonl",
+        [{"prompt": "q", "chosen": "c", "rejected": "r", "sample_id": "id-0", "family": "f"}],
+    )
+    (mdir / "model.yml").write_text(
+        """name: pref-san
+model_id: pref-san
+architecture: dpo
+version: 0.1.0
+dataset:
+  format: preference_jsonl
+  seed_samples: datasets/samples/seed_samples.jsonl
+  sanitize: [jcl]
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    with pytest.raises(ValueError, match="does not sanitize"):
+        prepare_preference_jsonl(md)

@@ -307,8 +307,14 @@ def scaffold_model(
     *,
     architecture: str,
     name: Optional[str] = None,
+    force: bool = False,
 ) -> Path:
-    """Create a model folder with model.yml, datasets, README, and .gitignore."""
+    """Create a model folder with model.yml, datasets, README, and .gitignore.
+
+    Refuses to overwrite an existing ``model.yml`` or seed corpus unless
+    ``force`` is set, so a mistaken re-scaffold cannot destroy hand-edited
+    config or a curated seed file.
+    """
     discover_plugins()
     arch = normalize_architecture(architecture)
     if TRAINERS.get(arch) is None and TRAINERS.get(architecture) is None:
@@ -320,6 +326,17 @@ def scaffold_model(
     target_dir = Path(target_dir).resolve()
     folder_name = name or target_dir.name
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    seed_path = target_dir / "datasets" / "samples" / "seed_samples.jsonl"
+    if not force:
+        clash = [str(p) for p in (target_dir / "model.yml", seed_path) if p.exists()]
+        if clash:
+            raise FileExistsError(
+                "refusing to overwrite existing "
+                + ", ".join(clash)
+                + ". Pass --force to regenerate (this replaces model.yml and the "
+                "seed corpus)."
+            )
 
     training = _training_defaults(architecture)
     smoke = {
@@ -359,7 +376,6 @@ def scaffold_model(
 
     samples_dir = target_dir / "datasets" / "samples"
     samples_dir.mkdir(parents=True, exist_ok=True)
-    seed_path = samples_dir / "seed_samples.jsonl"
     seed_path.write_text(
         json.dumps(_seed_row(architecture), ensure_ascii=False) + "\n",
         encoding="utf-8",
@@ -384,9 +400,17 @@ def scaffold_model(
     return target_dir
 
 
-def validate_model_dir(model_dir: Path | str) -> list[str]:
-    """Validate a model folder; return a list of error strings (empty = OK)."""
-    discover_plugins()
+def validate_model_dir(model_dir: Path | str, *, load_plugins: bool = True) -> list[str]:
+    """Validate a model folder; return a list of error strings (empty = OK).
+
+    When ``load_plugins`` is False the model.yml schema and declared paths are
+    still checked, but no trainer or model-folder plugin code is imported, and
+    the architecture / dataset.format registration checks are skipped (the
+    registries are intentionally empty). This lets ``maatml validate`` lint an
+    untrusted folder without executing its plugins.
+    """
+    if load_plugins:
+        discover_plugins()
     model_dir = Path(model_dir).resolve()
     errors: list[str] = []
 
@@ -394,7 +418,7 @@ def validate_model_dir(model_dir: Path | str) -> list[str]:
         return [f"missing model.yml under {model_dir}"]
 
     try:
-        md = load_model_def(model_dir)
+        md = load_model_def(model_dir, load_plugins=load_plugins)
     except Exception as exc:  # noqa: BLE001
         return [f"failed to load model.yml: {exc}"]
 
@@ -402,6 +426,10 @@ def validate_model_dir(model_dir: Path | str) -> list[str]:
         md.validate_paths()
     except FileNotFoundError as exc:
         errors.append(str(exc))
+
+    if not load_plugins:
+        # Registration checks need the (unloaded) plugin registries; skip them.
+        return errors
 
     arch = normalize_architecture(md.architecture)
     if TRAINERS.get(arch) is None and TRAINERS.get(md.architecture) is None:

@@ -32,12 +32,25 @@ def _resolve_image_bytes(value: Any, *, model_dir: Optional[Path] = None) -> byt
             return base64.b64decode(value, validate=False)
         except Exception:  # noqa: BLE001
             pass
-    path = Path(value)
-    if not path.is_file() and model_dir is not None:
-        path = Path(model_dir) / value
-    if not path.is_file():
+    # Otherwise treat as a filesystem path, confined to model_dir. This runs on
+    # client-controlled input at serve time, so reject absolute and '..' paths.
+    if model_dir is None:
+        raise ValueError(
+            f"image path {value!r} given but no model_dir to resolve it against"
+        )
+    rel = Path(value)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(
+            f"unsafe image path {value!r}: must be relative to the model "
+            "directory with no '..' segments"
+        )
+    root = Path(model_dir).resolve()
+    resolved = (root / rel).resolve()
+    if resolved != root and root not in resolved.parents:
+        raise ValueError(f"unsafe image path {value!r}: escapes the model directory")
+    if not resolved.is_file():
         raise FileNotFoundError(f"Image not found: {value}")
-    return path.read_bytes()
+    return resolved.read_bytes()
 
 
 def _to_pil(data: bytes):

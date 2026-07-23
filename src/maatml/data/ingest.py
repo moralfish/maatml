@@ -68,6 +68,11 @@ def ingest_samples(
 
     fmap = dict(field_map or {})
     rows_in = _read_input(input_path)
+    for dest, src in fmap.items():
+        if not any(src in r for r in rows_in):
+            raise ValueError(
+                f"--map {dest}={src}: source column {src!r} matches zero input rows"
+            )
     mapped = [_apply_field_map(r, fmap) for r in rows_in]
 
     sanitizer = None
@@ -98,6 +103,7 @@ def ingest_samples(
 
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
+    skipped_unvalidated: list[dict[str, Any]] = []
     provenance = f"ingest:{input_path.name}"
 
     for row in mapped:
@@ -113,7 +119,12 @@ def ingest_samples(
             rejected.append({**sample, "_reject_reason": "duplicate"})
             continue
 
-        if validate_fn is not None and target_field in sample:
+        if validate_fn is not None:
+            # A validator is configured: a row with no gold target cannot be
+            # gated, so it is counted and excluded, never silently accepted.
+            if target_field not in sample:
+                skipped_unvalidated.append({**sample, "_skip_reason": "missing_target"})
+                continue
             gold = sample[target_field]
             raw = gold if isinstance(gold, str) else json.dumps(gold)
             try:
@@ -145,8 +156,10 @@ def ingest_samples(
         "input_sha256": sha256_file(input_path) if input_path.is_file() else None,
         "accepted": len(accepted),
         "rejected": len(rejected),
+        "skipped_unvalidated": len(skipped_unvalidated),
         "total_seeds": len(out_rows),
         "rejected_rows": rejected,
+        "skipped_unvalidated_rows": skipped_unvalidated,
     }
     write_json(reject_path, report)
     return {
@@ -154,5 +167,6 @@ def ingest_samples(
         "reject_path": str(reject_path),
         "accepted": len(accepted),
         "rejected": len(rejected),
+        "skipped_unvalidated": len(skipped_unvalidated),
         "total_seeds": len(out_rows),
     }
