@@ -8,6 +8,8 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-23
+
 ### Added
 
 - **Triage contract:** `examples/support-ticket-triage` ships a real validator
