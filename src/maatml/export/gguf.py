@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import importlib
-import shutil
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,30 +15,37 @@ from .manifest import build_manifest, write_manifest
 
 _INSTALL_HINT = (
     "GGUF export requires llama.cpp convert tooling. "
-    "Install llama.cpp and ensure `convert_hf_to_gguf.py` (or the "
-    "`llama_cpp.convert` module) is on PATH / PYTHONPATH, then retry."
+    "Set MAATML_LLAMA_CONVERT (or extensions.gguf.convert_script in model.yml) "
+    "to the path of convert_hf_to_gguf.py, or install a `llama_cpp.convert` "
+    "module on PYTHONPATH, then retry."
 )
 
 
-def _find_convert_script() -> Optional[Path]:
-    """Locate a known HF→GGUF conversion entry point if present."""
-    candidates = (
-        "convert_hf_to_gguf.py",
-        "convert-hf-to-gguf.py",
-        "convert.py",
-    )
-    for name in candidates:
-        found = shutil.which(name)
-        if found:
-            return Path(found)
-    # Also check common local clone locations relative to cwd.
-    for rel in (
-        Path("llama.cpp") / "convert_hf_to_gguf.py",
-        Path("llama.cpp") / "convert-hf-to-gguf.py",
-    ):
-        if rel.is_file():
-            return rel.resolve()
-    return None
+def _find_convert_script(model_def: ModelDefinition) -> Optional[Path]:
+    """Return an explicitly configured HF->GGUF convert script, or None.
+
+    Security: never search PATH or the cwd for a script named convert*.py; a
+    generic lookup would execute whatever convert.py happens to be found first.
+    The operator names the script via MAATML_LLAMA_CONVERT or
+    extensions.gguf.convert_script in model.yml (resolved against the model dir).
+    """
+    raw = os.environ.get("MAATML_LLAMA_CONVERT")
+    if not raw:
+        ext = getattr(model_def, "extensions", None) or {}
+        gguf_cfg = ext.get("gguf") if isinstance(ext, dict) else None
+        if isinstance(gguf_cfg, dict):
+            raw = gguf_cfg.get("convert_script")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = model_def.resolve(str(raw))
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"MAATML_LLAMA_CONVERT / extensions.gguf.convert_script points to "
+            f"{path}, which is not a file."
+        )
+    return path.resolve()
 
 
 def _try_module_convert(model_dir: Path, out_path: Path) -> bool:
@@ -79,7 +86,7 @@ def export_gguf(
     export_safetensors_bundle(model_def, checkpoint_dir, out_dir, run_id=run_id)
 
     gguf_path = out_dir / f"{model_def.name}.gguf"
-    script = _find_convert_script()
+    script = _find_convert_script(model_def)
     converted = False
     if script is not None:
         cmd = [sys.executable, str(script), str(out_dir), "--outfile", str(gguf_path)]

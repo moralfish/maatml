@@ -310,13 +310,16 @@ def _load_or_build_tokenized_cache(
     cache_path: Path,
     build_fn,
 ) -> list[dict]:
-    """Load tokenized rows from ``cache_path`` or build + torch.save them."""
+    """Load tokenized rows from ``cache_path`` or build + torch.save them.
+
+    The cache payload is plain lists/dicts of ints, so it loads with
+    ``weights_only=True``. We never fall back to a full pickle load: the cache
+    lives under a world-writable output dir, and an unpickle there would be a
+    code-execution sink.
+    """
     if cache_path.is_file():
         try:
-            try:
-                cached = torch.load(cache_path, map_location="cpu", weights_only=False)
-            except TypeError:
-                cached = torch.load(cache_path, map_location="cpu")
+            cached = torch.load(cache_path, map_location="cpu", weights_only=True)
             if isinstance(cached, list) and len(cached) == len(rows):
                 return cached
         except Exception:  # noqa: BLE001

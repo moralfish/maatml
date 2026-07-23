@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -41,6 +43,32 @@ def write_jsonl(path: str | Path, rows: Iterable[dict]) -> Path:
         for row in rows:
             f.write(json.dumps(row, sort_keys=True))
             f.write("\n")
+    return p
+
+
+def write_jsonl_atomic(path: str | Path, rows: Iterable[dict]) -> Path:
+    """Write rows to path atomically via a temp file plus os.replace.
+
+    The temp file is created in the destination directory so os.replace is a
+    same-filesystem rename. Readers never observe a partially written file, and
+    a crash mid-write leaves the previous file intact. On any error the temp
+    file is removed and the original destination is untouched.
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, sort_keys=True))
+                f.write("\n")
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return p
 
 

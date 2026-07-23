@@ -257,6 +257,26 @@ def _noop_validate(
     return result
 
 
+def resolve_validator(validator: Any) -> Callable[..., ValidationResult]:
+    """Resolve a configured validator, or fall back to JSON-parse-only.
+
+    ``validator=None`` is the ONLY path to the no-contract ``_noop_validate``
+    scorer (a causal-SFT model that declares no validator). A configured name
+    that does not resolve to a registered validator is a configuration error,
+    not a reason to silently degrade to bare JSON parsing.
+    """
+    if validator is None:
+        return _noop_validate
+    if isinstance(validator, str) and VALIDATORS.get(validator) is None:
+        known = ", ".join(VALIDATORS.names()) or "(none)"
+        raise GateConfigError(
+            f"evaluation.validator={validator!r} does not resolve to a registered "
+            f"validator (known: {known}). Fix the plugins: list in model.yml, or "
+            "remove evaluation.validator to score JSON-parse-only."
+        )
+    return _resolve_callable("validator", validator, VALIDATORS)
+
+
 def _category_buckets(row_results: list[RowEval]) -> dict[str, dict[str, float]]:
     per_category: dict[str, dict[str, int]] = {}
     for item in row_results:
@@ -375,17 +395,15 @@ def run_evaluation(
             prompt_spec_path=resolved_prompt,
         )
 
-    if validator is None:
-        validate_fn: Callable[..., ValidationResult] = _noop_validate
-    else:
-        validate_fn = _resolve_callable("validator", validator, VALIDATORS)
-        # Task validators need schema when declared; contracts are optional
-        # (text models like JCL/spool declare them; vision may not).
-        if resolved_schema is None:
-            raise FileNotFoundError(
-                "Evaluator requires a schema file. Set data/dataset.schema in "
-                "model.yml, pass schema_path=, or place schema.json under the checkpoint."
-            )
+    validate_fn: Callable[..., ValidationResult] = resolve_validator(validator)
+    # A real validator (name or callable) needs a schema when declared; the
+    # noop path does not. contracts are optional (text models like JCL/spool
+    # declare them; vision may not).
+    if validator is not None and resolved_schema is None:
+        raise FileNotFoundError(
+            "Evaluator requires a schema file. Set data/dataset.schema in "
+            "model.yml, pass schema_path=, or place schema.json under the checkpoint."
+        )
 
     metrics_callable: Optional[Callable[..., dict[str, float]]] = None
     if metrics_fn is not None:

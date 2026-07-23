@@ -11,6 +11,8 @@ from maatml.runs import (
     latest_completed_run,
     list_runs,
     resolve_checkpoint,
+    resolve_resume_checkpoint,
+    runs_path,
     start_run,
 )
 
@@ -74,3 +76,60 @@ def test_finish_unknown_run_raises(tmp_path: Path) -> None:
     md = _md(tmp_path)
     with pytest.raises(KeyError):
         finish_run(md, "missing-id", "completed")
+
+
+# --- D3: torn-line tolerance -------------------------------------------------
+
+
+def test_list_runs_skips_corrupt_line(tmp_path: Path) -> None:
+    md = _md(tmp_path)
+    rec = start_run(md)
+    finish_run(md, rec.run_id, "completed")
+    # Simulate a torn/partial record from a crash mid-write.
+    with open(runs_path(md), "a", encoding="utf-8") as f:
+        f.write('{"run_id": "torn\n')
+
+    with pytest.warns(RuntimeWarning):
+        runs = list_runs(md)
+    assert len(runs) == 1
+    assert runs[0].run_id == rec.run_id
+    corrupt = runs_path(md).with_name("runs.jsonl.corrupt")
+    assert corrupt.is_file()
+    assert '{"run_id": "torn' in corrupt.read_text(encoding="utf-8")
+
+
+def test_append_writes_single_line(tmp_path: Path) -> None:
+    md = _md(tmp_path)
+    start_run(md)
+    text = runs_path(md).read_text(encoding="utf-8")
+    assert text.count("\n") == 1
+    assert text.endswith("\n")
+
+
+# --- B1: resume resolves to the newest checkpoint-* --------------------------
+
+
+def test_resolve_resume_auto_returns_newest_checkpoint(tmp_path: Path) -> None:
+    pytest.importorskip("transformers")
+    md = _md(tmp_path)
+    rec = start_run(md)  # status running
+    (Path(rec.out_dir) / "checkpoint-5").mkdir(parents=True)
+    (Path(rec.out_dir) / "checkpoint-40").mkdir(parents=True)
+    assert resolve_resume_checkpoint(md, "auto") == Path(rec.out_dir) / "checkpoint-40"
+
+
+def test_resolve_resume_by_run_id_returns_newest_checkpoint(tmp_path: Path) -> None:
+    pytest.importorskip("transformers")
+    md = _md(tmp_path)
+    rec = start_run(md)
+    (Path(rec.out_dir) / "checkpoint-5").mkdir(parents=True)
+    (Path(rec.out_dir) / "checkpoint-40").mkdir(parents=True)
+    assert resolve_resume_checkpoint(md, rec.run_id) == Path(rec.out_dir) / "checkpoint-40"
+
+
+def test_resolve_resume_auto_no_checkpoint_raises(tmp_path: Path) -> None:
+    pytest.importorskip("transformers")
+    md = _md(tmp_path)
+    start_run(md)  # running, but no checkpoint-* saved yet
+    with pytest.raises(FileNotFoundError):
+        resolve_resume_checkpoint(md, "auto")

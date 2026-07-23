@@ -8,6 +8,17 @@ Security fixes are applied to the latest **0.x** release of maatml.
 | ------- | --------- |
 | 0.x     | Yes       |
 
+## Trust model
+
+maatml treats a model folder as trusted, executable code. `plugins:` entries in
+`model.yml` are imported when the folder is loaded, so every subcommand that
+reads `model.yml`, including `maatml validate`, `maatml plan`, `maatml prepare`,
+`maatml train`, `maatml evaluate`, `maatml export`, and `maatml serve`, can
+execute code shipped in that folder. Do not run maatml against model folders
+from untrusted sources. There is no sandbox; a model folder has the same power
+as any local Python package you choose to import. `maatml validate --no-plugins`
+checks the schema and paths without importing plugin code.
+
 ## Reporting a Vulnerability
 
 Please **do not** open a public GitHub issue for security reports.
