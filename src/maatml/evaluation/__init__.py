@@ -1,4 +1,4 @@
-"""Evaluation package — harness, predictors, and report helpers."""
+"""Evaluation package, harness, predictors, and report helpers."""
 
 from __future__ import annotations
 

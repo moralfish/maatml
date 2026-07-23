@@ -17,7 +17,7 @@ from .constants import KEYPOINT_NAMES, SCENE_LABELS, SHAPE_LABELS
 
 
 def _rng(seed: int) -> Any:
-    """Return a seeded random.Random (stdlib — no numpy required for synth)."""
+    """Return a seeded random.Random (stdlib, no numpy required for synth)."""
     import random
 
     return random.Random(seed)

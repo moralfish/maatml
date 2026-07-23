@@ -1,4 +1,4 @@
-"""Lazy trainer registration — importable without torch / transformers.
+"""Lazy trainer registration, importable without torch / transformers.
 
 Heavy trainer modules pull ML deps at import time (notably ``sft_base``).
 CLI commands like ``scaffold`` / ``plugins`` / ``validate`` only need the

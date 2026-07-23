@@ -1,4 +1,4 @@
-"""Vision-describer tests — dependency-free (no torch required)."""
+"""Vision-describer tests, dependency-free (no torch required)."""
 from __future__ import annotations
 
 import json

@@ -1,4 +1,4 @@
-"""Spool evaluation metrics — status/category/RC accuracy + layer pass rates."""
+"""Spool evaluation metrics, status/category/RC accuracy + layer pass rates."""
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

@@ -46,7 +46,7 @@ SEEDS_PATH = DATASETS / "samples" / "seed_samples.jsonl"
 
 
 # Category quotas for a ~1000-sample corpus. Sized so each error code has
-# enough support to avoid mode collapse — with too few samples per minor
+# enough support to avoid mode collapse, with too few samples per minor
 # code, classifiers / generators collapse to a dominant label. 100+
 # samples per error code is a practical floor; valid stays moderate at
 # 200 so we don't bias the

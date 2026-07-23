@@ -6,10 +6,10 @@ The causal-SFT trainers follow this pattern:
   - 3-message conversations: system + user + assistant
   - Assistant content is a serialised JSON object (per-task schema)
   - Loss masked over system+user; unmasked over assistant + closing `<|im_end|>`
-  - bf16 autocast on MPS/CUDA (weights stay fp32 — autocast does the work)
+  - bf16 autocast on MPS/CUDA (weights stay fp32, autocast does the work)
   - Merged safetensors + tokenizer + prompt_spec saved to `output/checkpoints/`
 
-What varies per task: the sample-shape adapter — i.e. which field on the
+What varies per task: the sample-shape adapter, i.e. which field on the
 sample dict carries the gold JSON. Each task module passes
 `target_field` and `request_field` to `train_sft` and gets the same
 TrainingArguments outer loop.
@@ -53,7 +53,7 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl, read_json, sha256_file, stable_hash
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
-from .sft_config import (  # noqa: F401 — re-export public config surface
+from .sft_config import (  # noqa: F401  re-export public config surface
     LoraSettings,
     QuantizationSettings,
     SFTTrainConfig,
@@ -65,7 +65,7 @@ console = Console()
 
 # ---------------------------------------------------------------------------
 # Tokenization helpers (robust against transformers 5.x apply_chat_template
-# return-shape quirks — always go through render-to-text → tokenize)
+# return-shape quirks, always go through render-to-text → tokenize)
 # ---------------------------------------------------------------------------
 
 

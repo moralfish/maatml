@@ -126,7 +126,7 @@ def compute_vision_metrics(row_results: Sequence[Any]) -> dict[str, float]:
     # Collect detections per class across the whole set for mAP.
     preds_by_cls: dict[str, list[tuple[float, list[float]]]] = {c: [] for c in SHAPE_LABELS}
     gts_by_cls: dict[str, list[list[float]]] = {c: [] for c in SHAPE_LABELS}
-    # For image-level mAP we accumulate all preds/gts with image ids — simple
+    # For image-level mAP we accumulate all preds/gts with image ids, simple
     # VOC-style: concatenate all boxes per class (approx for synthetic small sets).
     per_image_aps: list[float] = []
 

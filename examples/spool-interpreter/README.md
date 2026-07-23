@@ -64,7 +64,7 @@ maatml evaluate examples/spool-interpreter/
 Expand the seed corpus by hand-authoring rows in
 `datasets/samples/seed_samples.jsonl` (each row:
 `{sample_id, source, category, request, expected_interpretation, split?}`)
-and re-running `maatml prepare` before training — or regenerate via
+and re-running `maatml prepare` before training, or regenerate via
 `examples/spool-interpreter/scripts/build_seeds.py`.
 
 ## Quality gates

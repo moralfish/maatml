@@ -1,11 +1,11 @@
 """Custom JCL tokenizer for the ModernBERT classifier.
 
-Two stages — see `COLUMN_RULES.md` for the normative column-aware rules:
+Two stages, see `COLUMN_RULES.md` for the normative column-aware rules:
 
-1. `pre_tokenize_jcl(text)` — column-aware pre-tokenizer that strips
+1. `pre_tokenize_jcl(text)`: column-aware pre-tokenizer that strips
    columns 73+, emits `<COL1>` line-start markers, preserves continuation
    markers, drops blank lines.
-2. `train_jcl_tokenizer(corpus_path, out_path)` — one-shot BPE training
+2. `train_jcl_tokenizer(corpus_path, out_path)`: one-shot BPE training
    using the `tokenizers` library. Pass a JSONL corpus with `request`
    fields; outputs a HuggingFace `tokenizer.json` for the classifier.
 

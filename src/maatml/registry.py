@@ -57,7 +57,7 @@ class _Registry:
         return [self._entries[k] for k in sorted(self._entries)]
 
     def clear(self) -> None:
-        """Test helper — wipe registrations."""
+        """Test helper, wipe registrations."""
         self._entries.clear()
 
 
@@ -264,7 +264,7 @@ def discover_plugins(*, force: bool = False) -> None:
                     loaded()
                 except TypeError:
                     pass
-    except Exception:  # noqa: BLE001 — discovery must not abort CLI startup
+    except Exception:  # noqa: BLE001  discovery must not abort CLI startup
         pass
 
     _discovered = True

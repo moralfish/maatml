@@ -1,4 +1,4 @@
-"""Support-ticket-triage example plugin — validator + metrics.
+"""Support-ticket-triage example plugin, validator + metrics.
 
 The triage model uses the built-in ``causal_sft`` predictor; this package only
 adds the task's out-of-model contract (validator) and its scoring (metrics).

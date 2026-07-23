@@ -110,7 +110,7 @@ def apply_overrides(
                     )
                 setattr(model_def, head, value)
         elif rest:
-            # e.g. packaging.max_input_tokens — only packaging is a nested model
+            # e.g. packaging.max_input_tokens, only packaging is a nested model
             if head == "packaging":
                 pkg = model_def.packaging
                 if not hasattr(pkg, rest.split(".")[0]):
@@ -138,7 +138,7 @@ def parse_param_values(spec: str) -> tuple[str, list[Any]]:
     """Parse ``KEY=v1,v2,v3`` into ``(key, [coerced values])``.
 
     Commas inside JSON brackets are preserved (``training.lora.target_modules=["q","v"]``
-    is a single value — prefer separate ``--param`` entries for grids).
+    is a single value, prefer separate ``--param`` entries for grids).
     """
     key, raw = parse_override(spec)
     # Split on commas not inside [], {}, or quotes.

@@ -1,4 +1,4 @@
-"""Vision-VLM tests — pure-python by default; torch optional."""
+"""Vision-VLM tests, pure-python by default; torch optional."""
 from __future__ import annotations
 
 import json

@@ -102,7 +102,7 @@ def _copy_weight_shards(ckpt: Path, dest_dir: Path) -> list[Path]:
                     shard_dest = _copy_if_exists(shard_path, dest_dir)
                     if shard_dest is not None:
                         copied.append(shard_dest)
-            except Exception:  # noqa: BLE001 — best-effort shard copy
+            except Exception:  # noqa: BLE001  best-effort shard copy
                 pass
     # Catch remaining *.safetensors not listed above (multi-shard without index match).
     for path in sorted(ckpt.glob("*.safetensors")):

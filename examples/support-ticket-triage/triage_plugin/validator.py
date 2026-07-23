@@ -3,8 +3,8 @@
 Layers:
   1. JSON parse
   2. JSON Schema (structure, required fields, enums)
-  3. Routing contract — category must route to the mandated team
-  4. Summary quality — non-empty, single line, <= MAX_SUMMARY_WORDS words
+  3. Routing contract: category must route to the mandated team
+  4. Summary quality: non-empty, single line, <= MAX_SUMMARY_WORDS words
 
 Layer 3 is the one a plain schema cannot express: it ties two fields together
 by a task rule. That is where the validator earns its keep.
@@ -41,7 +41,7 @@ def validate_triage(
     )
     text = strip_model_fences(raw_output) if strip_fences else raw_output.strip()
 
-    # Layer 1 — JSON
+    # Layer 1: JSON
     try:
         parsed = json.loads(text)
         if not isinstance(parsed, dict):
@@ -54,7 +54,7 @@ def validate_triage(
         )
         return result
 
-    # Layer 2 — schema (structure + enums + required fields)
+    # Layer 2: schema (structure + enums + required fields)
     try:
         schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
         jsonschema.validate(instance=result.parsed, schema=schema)
@@ -68,7 +68,7 @@ def validate_triage(
                 location="/".join(str(p) for p in exc.absolute_path) or None,
             )
         )
-    except Exception as exc:  # noqa: BLE001 — malformed schema file, etc.
+    except Exception as exc:  # noqa: BLE001  malformed schema file, etc.
         result.errors.append(
             ValidationError(layer=2, code="schema_error", message=str(exc))
         )
@@ -77,7 +77,7 @@ def validate_triage(
     team = result.parsed.get("team")
     summary = result.parsed.get("summary")
 
-    # Layer 3 — routing contract (category → team)
+    # Layer 3: routing contract (category → team)
     expected_team = ROUTING.get(category) if isinstance(category, str) else None
     if expected_team is None:
         # Unknown/……invalid category is a schema (layer 2) failure; don't
@@ -105,7 +105,7 @@ def validate_triage(
             )
         )
 
-    # Layer 4 — summary quality
+    # Layer 4: summary quality
     if isinstance(summary, str) and summary.strip():
         words = summary.split()
         if len(words) <= MAX_SUMMARY_WORDS and "\n" not in summary:

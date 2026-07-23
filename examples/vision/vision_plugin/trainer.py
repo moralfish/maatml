@@ -1,4 +1,4 @@
-"""``vision_multitask`` trainer — plain torch loop with maatml run registry."""
+"""``vision_multitask`` trainer, plain torch loop with maatml run registry."""
 from __future__ import annotations
 
 import time

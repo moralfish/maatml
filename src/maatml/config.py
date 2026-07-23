@@ -70,7 +70,7 @@ class ModelDefinition(BaseModel):
     description: str = ""
     base_model: Optional[str] = None
 
-    # Nested sections — dicts so each stage typechecks its own subset.
+    # Nested sections, dicts so each stage typechecks its own subset.
     data: dict[str, Any] = Field(default_factory=dict)
     # Preferred over ``data:`` going forward; empty falls back to ``data:``.
     dataset: dict[str, Any] = Field(default_factory=dict)
@@ -97,7 +97,7 @@ class ModelDefinition(BaseModel):
 
     @property
     def identity(self) -> str:
-        """``name@version`` — used as default checkpoint run name."""
+        """``name@version``: used as default checkpoint run name."""
         return f"{self.name}@{self.version}"
 
     def resolve(self, rel: str | Path) -> Path:
@@ -107,12 +107,12 @@ class ModelDefinition(BaseModel):
 
     @property
     def output_dir(self) -> Path:
-        """`models/<name>/output/` — root of all generated artifacts."""
+        """`models/<name>/output/`: root of all generated artifacts."""
         return self.model_dir / "output"
 
     @property
     def prepared_dir(self) -> Path:
-        """`models/<name>/output/prepared/` — train/val/test JSONL splits."""
+        """`models/<name>/output/prepared/`: train/val/test JSONL splits."""
         return self.output_dir / "prepared"
 
     @property

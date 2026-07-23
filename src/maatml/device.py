@@ -21,7 +21,7 @@ class DeviceProfile:
     dataloader_workers: int
     allow_grad_checkpointing: bool
     weights_dtype_policy: str  # "fp32_master" | "native"
-    allow_quantized_load: bool  # bitsandbytes / QLoRA — CUDA only
+    allow_quantized_load: bool  # bitsandbytes / QLoRA, CUDA only
 
     def empty_cache(self) -> None:
         """Release allocator caches when the backend supports it."""
@@ -97,7 +97,7 @@ def is_distributed() -> bool:
 
 
 def is_main_process() -> bool:
-    """Rank-0 (or single-process) — use for run-registry / metadata writes."""
+    """Rank-0 (or single-process): use for run-registry / metadata writes."""
     if not is_distributed():
         return True
     for key in ("RANK", "LOCAL_RANK"):

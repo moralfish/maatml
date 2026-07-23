@@ -16,7 +16,7 @@ class LoraSettings(BaseModel):
     target_modules: list[str] = Field(
         default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj"]
     )
-    # merged (default) | adapter | both — see train_sft artifact save path.
+    # merged (default) | adapter | both, see train_sft artifact save path.
     save_mode: str = "merged"
 
 
@@ -36,7 +36,7 @@ class QuantizationSettings(BaseModel):
 
 
 class SFTTrainConfig(BaseModel):
-    """Generic SFT training config — same shape for all three tasks."""
+    """Generic SFT training config, same shape for all three tasks."""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -3,10 +3,10 @@
 Layers:
   1. JSON parse
   2. JSON Schema
-  3. Field shape — non-empty description string
-  4. Conciseness — ≤ MAX_DESCRIPTION_WORDS words, single sentence-ish
-  5. Scene grounding — description mentions the request's scene label (when parsable)
-  6. Object grounding — description reflects detection counts when objects exist
+  3. Field shape: non-empty description string
+  4. Conciseness: ≤ MAX_DESCRIPTION_WORDS words, single sentence-ish
+  5. Scene grounding: description mentions the request's scene label (when parsable)
+  6. Object grounding: description reflects detection counts when objects exist
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ def validate_vision_describer(
     )
     text = strip_model_fences(raw_output) if strip_fences else raw_output.strip()
 
-    # Layer 1 — JSON
+    # Layer 1: JSON
     try:
         parsed = json.loads(text)
         if not isinstance(parsed, dict):
@@ -80,7 +80,7 @@ def validate_vision_describer(
         )
         return result
 
-    # Layer 2 — schema
+    # Layer 2: schema
     try:
         schema = json.loads(Path(schema_path).read_text(encoding="utf-8"))
         jsonschema.validate(instance=result.parsed, schema=schema)
@@ -92,7 +92,7 @@ def validate_vision_describer(
 
     description = result.parsed.get("description") if result.parsed else None
 
-    # Layer 3 — field shape
+    # Layer 3: field shape
     if isinstance(description, str) and description.strip():
         result.passed_layers.add(3)
     else:
@@ -105,7 +105,7 @@ def validate_vision_describer(
             )
         )
 
-    # Layer 4 — conciseness
+    # Layer 4: conciseness
     if isinstance(description, str):
         words = description.split()
         if len(words) <= MAX_DESCRIPTION_WORDS and description.count(".") <= 2:
@@ -123,7 +123,7 @@ def validate_vision_describer(
                 )
             )
 
-    # Layer 5 — scene grounding (skip-pass when request unparsable)
+    # Layer 5: scene grounding (skip-pass when request unparsable)
     scene = _scene_from_request(user_prompt)
     if scene is None:
         result.passed_layers.add(5)
@@ -139,7 +139,7 @@ def validate_vision_describer(
             )
         )
 
-    # Layer 6 — object grounding
+    # Layer 6: object grounding
     counts = _counts_from_request(user_prompt)
     if counts is None:
         result.passed_layers.add(6)

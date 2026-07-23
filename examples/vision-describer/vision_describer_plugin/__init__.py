@@ -1,4 +1,4 @@
-"""Vision-describer example plugin — validator, metrics, generator."""
+"""Vision-describer example plugin, validator, metrics, generator."""
 from __future__ import annotations
 
 from maatml.registry import register_generator, register_metrics, register_validator

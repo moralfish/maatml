@@ -23,4 +23,4 @@
 - [ ] Commits are DCO signed-off (`Signed-off-by:`)
 - [ ] Tests updated for behavior changes
 - [ ] Docs updated if user-facing
-- [ ] Model version bump considered (major / minor / patch — see CONTRIBUTING.md)
+- [ ] Model version bump considered (major / minor / patch, see CONTRIBUTING.md)

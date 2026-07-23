@@ -1,4 +1,4 @@
-# JCL column rules — normative spec for the custom pre-tokenizer
+# JCL column rules: normative spec for the custom pre-tokenizer
 
 This document is the normative spec for `jcl_plugin.tokenizer`
 (Python, training-time). Downstream inference runtimes that need column-aware
@@ -14,7 +14,7 @@ frequency, oblivious to JCL's column-sensitive grammar:
   delimiter), else it's invalid.
 - **Columns 3-10**: name field (statement label).
 - **Columns 12+**: operation + operands.
-- **Column 72**: continuation marker — if non-blank, this statement
+- **Column 72**: continuation marker, if non-blank, this statement
   continues on the next line.
 - **Columns 73-80**: sequence numbers, traditionally ignored by the JCL
   parser.
@@ -53,13 +53,13 @@ Lines shorter than 72 columns pass through unchanged.
 
 If column 72 is non-blank, emit a `<CONT>` token at end-of-line **after**
 the column-72 character. The character itself is preserved (it carries
-information — typically `X` or `&`).
+information, typically `X` or `&`).
 
 ```
 //STEP1   EXEC PGM=IEBGENER,PARM=('FIRSTPART',                          X
 ```
 
-becomes (logically — actual tokens emitted by the BPE differ)
+becomes (logically, actual tokens emitted by the BPE differ)
 
 ```
 //STEP1   EXEC PGM=IEBGENER,PARM=('FIRSTPART',                          X <CONT>
