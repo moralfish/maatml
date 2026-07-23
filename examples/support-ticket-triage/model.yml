@@ -51,6 +51,9 @@ training:
   warmup_ratio: 0.0
   seed: 7
   precision: bf16
+  # Qwen3 pads its embedding matrix (151936) larger than the tokenizer vocab
+  # (151669); the extra rows are unused, so reuse them as-is (no resize).
+  embedding_strategy: reuse
   grad_checkpointing: false
   eval_steps: 9999
   save_steps: 50
