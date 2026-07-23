@@ -8,6 +8,8 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-23
+
 Truth and safety II: make the "the same validator gates your data, evaluation,
 and live inference" claim true, stop data-destroying commands, add a serve and
 plugin security floor, and config honesty.

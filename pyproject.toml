@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maatml"
-version = "0.5.1"
+version = "0.6.0"
 description = "A machine learning models framework from experimentation to production: data, training, evaluation, export, and deploy pipelines for small task-specific language models"
 readme = "README.md"
 keywords = [
