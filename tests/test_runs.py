@@ -133,3 +133,18 @@ def test_resolve_resume_auto_no_checkpoint_raises(tmp_path: Path) -> None:
     start_run(md)  # running, but no checkpoint-* saved yet
     with pytest.raises(FileNotFoundError):
         resolve_resume_checkpoint(md, "auto")
+
+
+def test_resume_skips_running_records_with_no_checkpoint(tmp_path: Path) -> None:
+    """A run that died before its first save must not hide a resumable one."""
+    pytest.importorskip("transformers")
+    from maatml.runs import latest_incomplete_run
+
+    md = _md(tmp_path)
+    resumable = start_run(md)
+    (Path(resumable.out_dir) / "checkpoint-10").mkdir(parents=True)
+    stale = start_run(md)  # running, killed before any checkpoint-*
+
+    assert Path(stale.out_dir).exists()
+    assert latest_incomplete_run(md).run_id == resumable.run_id
+    assert resolve_resume_checkpoint(md, "auto") == Path(resumable.out_dir) / "checkpoint-10"

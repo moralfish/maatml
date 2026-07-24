@@ -47,7 +47,13 @@ class _Registry:
         entry = self._entries.get(name)
         if entry is None:
             known = ", ".join(sorted(self._entries)) or "(none)"
-            raise KeyError(f"Unknown {self.kind} plugin {name!r}. Known: {known}")
+            message = f"Unknown {self.kind} plugin {name!r}. Known: {known}"
+            if _load_errors:
+                # A plugin that failed to import is the usual reason a name is
+                # missing; saying so beats "Known: (none)".
+                failed = "; ".join(f"{src}: {err}" for src, err in _load_errors)
+                message += f". Plugin sources that failed to load: {failed}"
+            raise KeyError(message)
         return entry.obj
 
     def names(self) -> list[str]:
@@ -99,6 +105,25 @@ _ALL_REGISTRIES: dict[str, _Registry] = {
 }
 
 _discovered = False
+# (source, error) for every plugin module / entry point that failed to load.
+# Surfaced by `maatml plugins` and by "Unknown … plugin" errors instead of
+# being swallowed, so a broken plugin looks broken rather than absent.
+_load_errors: list[tuple[str, str]] = []
+# Model-folder plugins already executed, keyed by generated module name: a
+# model folder is executable code and must run once per process, not once per
+# command that happens to load the model definition.
+_loaded_model_plugins: dict[str, str] = {}
+
+
+def load_errors() -> list[tuple[str, str]]:
+    """Plugin sources that failed to import, as ``(source, error)`` pairs."""
+    return list(_load_errors)
+
+
+def _record_load_error(source: str, exc: BaseException) -> None:
+    entry = (source, f"{type(exc).__name__}: {exc}")
+    if entry not in _load_errors:
+        _load_errors.append(entry)
 
 
 def _caller_source(extra: str = "") -> str:
@@ -164,10 +189,18 @@ def restore_registries(snapshot: dict[str, dict[str, PluginEntry]]) -> None:
 
 
 def reset_registries(*, rediscover: bool = False) -> None:
-    """Wipe every registry. With ``rediscover``, re-import the built-ins after."""
+    """Wipe every registry: the blank slate for tests and embedding hosts.
+
+    Also forgets which model-folder plugins have run, so a later
+    :func:`load_model_plugins` re-executes them instead of assuming their
+    registrations are still there. With ``rediscover``, re-imports the
+    built-ins afterwards.
+    """
     global _discovered
     for reg in _ALL_REGISTRIES.values():
         reg.clear()
+    _loaded_model_plugins.clear()
+    _load_errors.clear()
     _discovered = False
     if rediscover:
         discover_plugins(force=True)
@@ -207,16 +240,23 @@ def _load_package_from_dir(pkg_dir: Path, module_name: str) -> Any:
 
 
 def load_model_plugins(
-    model_dir: str | Path, plugin_list: Optional[Iterable[str]] = None
+    model_dir: str | Path,
+    plugin_list: Optional[Iterable[str]] = None,
+    *,
+    force: bool = False,
 ) -> list[str]:
-    """Load plugins declared in a model's ``plugins:`` list.
+    """Load plugins declared in a model's ``plugins:`` list. Idempotent.
 
     Each entry is either:
       - a dotted module path (``my_pkg.plugins.foo``),
       - a model-folder-relative ``.py`` file (``plugins/local_hook.py``), or
       - a model-folder-relative package directory (``./jcl_plugin``) containing
         ``__init__.py``.
-    Returns the list of loaded module names.
+
+    Both ``load_model_def`` and the CLI ask for a model's plugins, so this is
+    the single owner of that work: an entry already executed in this process
+    is not run again (``force=True`` re-executes it). Returns the list of
+    loaded module names, whether or not this call was the one that ran them.
     """
     model_dir = Path(model_dir).resolve()
     loaded: list[str] = []
@@ -230,58 +270,80 @@ def load_model_plugins(
                 path = (model_dir / entry).resolve()
             if path.is_dir():
                 mod_name = f"maatml._model_plugins.{model_dir.name}.{path.name}"
-                _load_package_from_dir(path, mod_name)
+                if force or not _already_loaded(mod_name, path):
+                    _load_package_from_dir(path, mod_name)
+                    _loaded_model_plugins[mod_name] = str(path)
                 loaded.append(mod_name)
             elif path.is_file():
                 mod_name = f"maatml._model_plugins.{model_dir.name}.{path.stem}"
-                _load_module_from_path(path, mod_name)
+                if force or not _already_loaded(mod_name, path):
+                    _load_module_from_path(path, mod_name)
+                    _loaded_model_plugins[mod_name] = str(path)
                 loaded.append(mod_name)
             else:
                 raise FileNotFoundError(
                     f"Model plugin not found: {path} (from plugins: {entry!r})"
                 )
         else:
-            importlib.import_module(entry)
+            if force or entry not in sys.modules:
+                importlib.import_module(entry)
             loaded.append(entry)
     return loaded
+
+
+def _already_loaded(mod_name: str, path: Path) -> bool:
+    """Has this exact plugin path already been executed as ``mod_name``?"""
+    return (
+        _loaded_model_plugins.get(mod_name) == str(path) and mod_name in sys.modules
+    )
+
+
+_BUILTIN_PLUGIN_MODULES = (
+    "maatml.training.builtins",
+    "maatml.data.pipeline",
+    "maatml.data.formats",
+    "maatml.data.preference",
+    "maatml.evaluation.predictors",
+    "maatml.export.bundle",
+    "maatml.export.gguf",
+    "maatml.export.mlx_export",
+)
 
 
 def discover_plugins(*, force: bool = False) -> None:
     """Import built-in modules + entry-point plugins.
 
-    Idempotent unless ``force=True`` or the trainer registry is empty (e.g.
-    after a test wipe). Model-folder plugins are loaded separately via
-    ``load_model_plugins``.
+    Idempotent unless ``force=True``, which re-imports the built-in modules
+    and entry points. Discovery never wipes registrations: model-folder
+    plugins register through :func:`load_model_plugins`, and clearing here
+    threw away whatever a model folder had just registered. The old
+    "rediscover when the trainer registry looks empty" heuristic could not
+    tell "wiped by a test" from "nothing registered yet"; tests that want a
+    blank slate call :func:`reset_registries`.
     """
     global _discovered
-    trainers_empty = not TRAINERS.names()
-    if _discovered and not force and not trainers_empty:
+    if _discovered and not force:
         return
 
-    if force or trainers_empty:
-        for reg in _ALL_REGISTRIES.values():
-            reg.clear()
+    if force:
+        _load_errors.clear()
 
-    modules = (
-        "maatml.training.builtins",
-        "maatml.data.pipeline",
-        "maatml.data.formats",
-        "maatml.data.preference",
-        "maatml.evaluation.predictors",
-        "maatml.export.bundle",
-        "maatml.export.gguf",
-        "maatml.export.mlx_export",
-    )
-    for mod in modules:
+    for mod in _BUILTIN_PLUGIN_MODULES:
         try:
-            if mod in sys.modules and (force or trainers_empty):
+            # Reaching here means the registries still need populating (first
+            # call, after reset_registries, or force): a cached module import
+            # would be a no-op, so reload to re-run its @register_* decorators.
+            if mod in sys.modules:
                 importlib.reload(sys.modules[mod])
             else:
                 importlib.import_module(mod)
-        except ImportError:
-            pass
+        except ImportError as exc:
+            # Optional extras (gguf / mlx / torch) legitimately miss; record so
+            # `maatml plugins` can say why a format is unavailable.
+            _record_load_error(f"module:{mod}", exc)
 
-    # Setuptools / importlib entry points.
+    # Setuptools / importlib entry points, one failure at a time so a single
+    # broken third-party plugin cannot hide every other one.
     try:
         from importlib.metadata import entry_points
 
@@ -291,14 +353,19 @@ def discover_plugins(*, force: bool = False) -> None:
             selected = eps.select(group="maatml.plugins")
         else:
             selected = eps["maatml.plugins"]  # type: ignore[index]
-        for ep in selected:
+    except Exception as exc:  # noqa: BLE001  discovery must not abort CLI startup
+        _record_load_error("entry_points:maatml.plugins", exc)
+        selected = []
+
+    for ep in selected:
+        try:
             loaded = ep.load()
             if callable(loaded) and not isinstance(loaded, type):
                 try:
                     loaded()
                 except TypeError:
                     pass
-    except Exception:  # noqa: BLE001  discovery must not abort CLI startup
-        pass
+        except Exception as exc:  # noqa: BLE001
+            _record_load_error(f"entry_point:{getattr(ep, 'name', ep)}", exc)
 
     _discovered = True

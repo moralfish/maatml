@@ -117,3 +117,12 @@ def test_overrides_valid_still_apply(tmp_path: Path) -> None:
     assert md.packaging.max_input_tokens == 4096
     apply_overrides(md, ["architecture=seq2seq"])
     assert md.architecture == "seq2seq"
+
+
+def test_ranking_direction_comes_from_the_metric_name() -> None:
+    from maatml.overrides import minimizes
+
+    for lower_is_better in ("eval_loss", "train_loss", "mean_error", "latency_ms", "perplexity"):
+        assert minimizes(lower_is_better) is True
+    for higher_is_better in ("accuracy", "json_parse_rate", "f1", None):
+        assert minimizes(higher_is_better) is False

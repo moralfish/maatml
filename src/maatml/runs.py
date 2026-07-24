@@ -245,16 +245,19 @@ def _has_hf_checkpoints(path: Path) -> bool:
 
 
 def latest_incomplete_run(model_def: ModelDefinition) -> Optional[RunRecord]:
-    """Latest ``running`` run, else latest run dir that still has HF checkpoints."""
+    """Latest resumable run: ``running`` with checkpoints, else any with them.
+
+    A ``running`` record with no ``checkpoint-*`` has nothing to resume from
+    (the run died before its first save, or the process was killed). Such a
+    record used to win anyway and make ``--resume auto`` fail, hiding an older
+    run that could actually be resumed.
+    """
     runs = list_runs(model_def)
-    running = [r for r in runs if r.status == "running"]
+    resumable = [r for r in runs if _has_hf_checkpoints(Path(r.out_dir))]
+    running = [r for r in resumable if r.status == "running"]
     if running:
         return running[-1]
-    # Prefer runs that look resumable (HF Trainer mid-checkpoints present).
-    for rec in reversed(runs):
-        if _has_hf_checkpoints(Path(rec.out_dir)):
-            return rec
-    return None
+    return resumable[-1] if resumable else None
 
 
 def _last_trainer_checkpoint(root: Path) -> Optional[Path]:
