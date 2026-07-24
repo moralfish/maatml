@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from maatml.config import load_model_def
 from maatml.scaffold import scaffold_model, validate_model_dir
 
 
@@ -179,7 +180,11 @@ def test_scaffold_loads_plugin_and_records_it(tmp_path: Path) -> None:
     body = (target / "model.yml").read_text(encoding="utf-8")
     assert "architecture: toy_arch" in body
     # The folder keeps working after scaffolding because it records the plugin.
-    assert str(plugin) in body
+    # Compare the parsed value, not the raw text: a path with characters YAML
+    # must quote (a Windows drive letter, a backslash) is escaped on the way
+    # in, and what matters is that it reads back as the same path.
+    recorded = load_model_def(target).plugins
+    assert recorded == [str(plugin)]
     # The hook's sections replace core's guesses rather than merging with them.
     assert "backbone: toy-net" in body
     assert "CHANGE_ME" not in body
@@ -199,6 +204,7 @@ def test_scaffold_records_a_plugin_inside_the_model_folder_as_relative(
     target.mkdir()
     plugin = _write_plugin(target)
     scaffold_model(target, architecture="toy_arch", plugins=[str(plugin)])
-    body = (target / "model.yml").read_text(encoding="utf-8")
-    assert "./toy_plugin" in body
-    assert str(tmp_path) not in body
+    # Recorded relative to the model folder and with POSIX separators, so the
+    # folder still resolves when it moves between machines.
+    assert load_model_def(target).plugins == ["./toy_plugin"]
+    assert str(tmp_path) not in (target / "model.yml").read_text(encoding="utf-8")
