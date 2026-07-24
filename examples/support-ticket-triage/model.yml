@@ -70,6 +70,14 @@ smoke:
   max_steps: 2
   epochs: 1
   batch_size: 1
+  # Smoke tier for `maatml run --smoke`. Two steps on a handful of rows cannot
+  # earn the production gates above, and pretending otherwise would teach
+  # people to ignore a red gate. What a rehearsal can prove is that the
+  # pipeline itself works: the checkpoint saved, reloaded, and produced output
+  # for at least half the eval rows. Runs gated at this tier are marked
+  # smoke_gated in the run record and the export manifest.
+  gates:
+    output_nonempty_rate: 0.5
 
 packaging:
   max_input_tokens: 512

@@ -72,6 +72,30 @@ def write_jsonl_atomic(path: str | Path, rows: Iterable[dict]) -> Path:
     return p
 
 
+def write_json_atomic(
+    path: str | Path, data: Any, *, indent: int = 2, sort_keys: bool = True
+) -> Path:
+    """Write JSON via a temp file plus ``os.replace``.
+
+    Same guarantee as :func:`write_jsonl_atomic`: a reader never sees a
+    half-written file, and a crash mid-write leaves the previous one intact.
+    """
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(p.parent), prefix=p.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=indent, sort_keys=sort_keys)
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return p
+
+
 def stable_hash(*parts: Any) -> str:
     h = hashlib.sha256()
     for part in parts:

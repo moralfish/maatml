@@ -34,6 +34,7 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml scaffold ~/models/my-vision --architecture vision_multitask \
     --plugin examples/vision/vision_plugin   # plugin-owned architectures
 .venv/bin/maatml validate ~/models/my-task
+.venv/bin/maatml run      examples/<name>/ [--smoke] [--dry-run] [--force] [--from STEP] [--until STEP] [--set K=V]
 .venv/bin/maatml prepare  examples/<name>/
 .venv/bin/maatml train    examples/<name>/ [--smoke] [--device mps|cpu|cuda] [--seed N] [--limit N] [--resume auto|PATH] [--set training.learning_rate=1e-4]
 .venv/bin/maatml sweep    examples/<name>/ --param training.learning_rate=1e-4,3e-4 --param training.lora.r=8,16 [--metric eval_loss] [--smoke] [--max-trials N]

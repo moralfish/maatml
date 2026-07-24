@@ -84,10 +84,11 @@ laptop and deploy to the edge or vLLM.
   TRL) rather than competing on scale. Reach for those for large models,
   multi-node training, RL, or broad model coverage.
 - **Runs its own fixed lifecycle** (`prepare → train → evaluate → export →
-  verify` / `serve`), and will add a single-command `maatml run` for that path
-  (see [ROADMAP.md](ROADMAP.md)). It is **not** a general-purpose workflow
-  scheduler: no triggers, no arbitrary shell/Python steps, no remote executors.
-  Drop `maatml train` into MLflow / Prefect / Metaflow when you need that.
+  verify` / `serve`), as one command: `maatml run`, which skips steps that are
+  already fresh and stops non-zero at the first failure. It is **not** a
+  general-purpose workflow scheduler: no triggers, no arbitrary shell/Python
+  steps, no remote executors. Drop `maatml train` into MLflow / Prefect /
+  Metaflow when you need that.
 - **Its niche:** local-first, multimodal, structured-output models with
   correctness gated *outside* the model, from data generation through serving.
 
@@ -108,6 +109,7 @@ line; `maatml --debug <command>` prints the traceback.
 
 | Command | What it does |
 | --- | --- |
+| `run` | The whole lifecycle in one command: prepare, train, evaluate (gated), export, verify. Skips steps that are already fresh |
 | `prepare` | Build `train`/`val`/`test` splits from the seed corpus |
 | `train` | Fine-tune the model (`--smoke`, `--resume auto\|PATH`, `--set K=V`) |
 | `sweep` | Offline grid HPO over `--param K=a,b` |
@@ -118,7 +120,7 @@ line; `maatml --debug <command>` prints the traceback.
 | `datagen` | Validator-gated seed generation (`--teacher`, `--allow-ungated`) |
 | `ingest` | Import external samples (`--map field=col`, `--sanitize tag`) |
 | `runs` | List recorded training runs (`--compare` tabulates their metrics) |
-| `plan` | Print the prepare, train, evaluate, export plan |
+| `plan` | Show which lifecycle steps are stale (alias for `run --dry-run`) |
 | `plugins` | List discovered trainers, validators, and metrics |
 | `doctor` | Check the environment, plugins, and a model folder; exits 1 on problems |
 | `scaffold` | Create a new model folder (`--architecture`, `--plugin`, `--force`) |
