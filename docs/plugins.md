@@ -42,6 +42,11 @@ A plugin source that fails to import is recorded rather than skipped in
 silence: `maatml plugins` lists the failures under `unavailable`, and an
 `Unknown … plugin` error names them, which is usually why a name is missing.
 
+`jsonschema` is a core maatml dependency for this reason: `dataset.schema` is a
+JSON Schema document and every shipped validator calls `jsonschema.validate`, so
+the documented validator shape works without a second install step. Core itself
+does not import it.
+
 > **Trust boundary.** These imports run arbitrary Python at load time. Because
 > every command reads `model.yml`, even `maatml validate` and `maatml plan`
 > execute a folder's plugins. Only point maatml at model folders you trust, or

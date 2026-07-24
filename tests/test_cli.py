@@ -310,3 +310,99 @@ def test_main_prints_one_line_for_user_errors(monkeypatch, capsys, debug: bool) 
     assert "seed_samples.jsonl not found" in out
     assert "Traceback" not in out
     assert "--debug" in out
+
+
+# --- doctor ----------------------------------------------------------------
+
+
+def test_doctor_reports_environment_and_plugins() -> None:
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    for section in ("environment", "packages", "device", "plugins"):
+        assert section in result.output
+    # Extras are named literally, not eaten as rich markup.
+    assert "maatml" in result.output
+
+
+def test_doctor_json_is_machine_readable() -> None:
+    result = runner.invoke(app, ["doctor", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert {"environment", "packages", "device", "plugins"} <= set(payload)
+    assert all(
+        {"name", "status", "detail"} == set(check)
+        for checks in payload.values()
+        for check in checks
+    )
+
+
+def test_doctor_flags_a_model_folder_with_missing_paths(tmp_path: Path) -> None:
+    mdir = _write_model(tmp_path, name="doctor-broken")
+    (mdir / "datasets" / "seeds.jsonl").unlink()
+    result = runner.invoke(app, ["doctor", str(mdir), "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    model = {check["name"]: check for check in payload["model"]}
+    assert model["declared paths"]["status"] == "error"
+    # An unprepared folder is a warning, not an error: prepare has not run yet.
+    assert model["prepared splits"]["status"] == "warn"
+
+
+def test_doctor_on_a_healthy_example_exits_zero() -> None:
+    result = runner.invoke(app, ["doctor", "examples/support-ticket-triage", "--json"])
+    assert result.exit_code == 0, result.output
+    model = {c["name"]: c for c in json.loads(result.output)["model"]}
+    assert model["architecture"]["status"] == "ok"
+    assert model["evaluation.gates"]["status"] == "ok"
+
+
+# --- runs --compare --------------------------------------------------------
+
+
+def _seed_runs(tmp_path: Path):
+    from maatml.config import load_model_def
+    from maatml.runs import finish_run, start_run
+
+    mdir = _write_model(tmp_path, name="compare")
+    md = load_model_def(mdir)
+    first = start_run(md, smoke=True)
+    finish_run(md, first.run_id, "completed", metrics={"eval_loss": 1.5, "eval_runtime": 9.0})
+    second = start_run(md)
+    finish_run(md, second.run_id, "completed", metrics={"eval_loss": 0.5, "accuracy": 0.9})
+    return mdir, first, second
+
+
+def test_runs_compare_tabulates_metrics_across_runs(tmp_path: Path) -> None:
+    mdir, first, second = _seed_runs(tmp_path)
+    result = runner.invoke(app, ["runs", str(mdir), "--compare"])
+    assert result.exit_code == 0, result.output
+    assert "eval_loss" in result.output
+    assert "accuracy" in result.output
+    # Timing metrics are set aside, and the command says so rather than
+    # dropping them silently.
+    assert "eval_runtime" not in result.output.split("hidden")[0]
+    assert "timing metric(s) hidden" in result.output
+
+
+def test_runs_compare_metric_filter_and_all_metrics(tmp_path: Path) -> None:
+    mdir, _first, _second = _seed_runs(tmp_path)
+    filtered = runner.invoke(app, ["runs", str(mdir), "--compare", "--metric", "eval_loss"])
+    assert filtered.exit_code == 0
+    assert "accuracy" not in filtered.output
+
+    everything = runner.invoke(app, ["runs", str(mdir), "--compare", "--all-metrics"])
+    assert everything.exit_code == 0
+    assert "eval_runtime" in everything.output
+
+
+def test_compare_runs_marks_metrics_a_run_never_reported(tmp_path: Path) -> None:
+    from maatml.config import load_model_def
+    from maatml.runs import compare_runs, list_runs
+
+    mdir, _first, _second = _seed_runs(tmp_path)
+    keys, rows, hidden = compare_runs(list_runs(load_model_def(mdir)))
+    assert keys == ["eval_loss", "accuracy"]
+    assert hidden == ["eval_runtime"]
+    # The first run never reported accuracy: None, not 0.0.
+    assert rows[0]["metrics"]["accuracy"] is None
+    assert rows[1]["metrics"]["accuracy"] == 0.9

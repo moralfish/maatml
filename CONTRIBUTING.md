@@ -40,6 +40,10 @@ pip install -e ".[dev]"
 pip install -e ".[dev,ml]"
 ```
 
+`pyproject.toml` is the only dependency manifest: extras (`dev`, `ml`, `cuda`,
+`pref`, `teacher`, `docs`, `vision`, `vllm`) replace the `requirements*.txt`
+files that used to sit alongside it and drift out of sync.
+
 ## Lint and tests
 
 ```bash

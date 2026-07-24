@@ -34,7 +34,12 @@ dependencies = [
   "pyyaml>=6.0",
   "rich>=13.7",
   "typer>=0.12",
-  "jsonschema>=4.0"
+  # Core imports no jsonschema itself, but it is the validator contract every
+  # shipped validator is written against (`dataset.schema` is a JSON Schema
+  # document, and all six examples call jsonschema.validate). Keeping it core
+  # means a plugin author can write the documented validator without a second
+  # install step. See docs/plugins.md.
+  "jsonschema>=4.0",
 ]
 
 [project.scripts]
@@ -99,6 +104,11 @@ vllm = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# PEP 561: ship the marker so `mypy` in a downstream project reads maatml's
+# annotations instead of treating the package as untyped.
+maatml = ["py.typed"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/*.py[cod]"]
