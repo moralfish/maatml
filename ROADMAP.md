@@ -38,6 +38,8 @@ are ordered but unversioned.
 | v0.4 | Product surface (export / deploy / flywheel) | Done |
 | v0.5 | Serving + multimodal | Done |
 | v0.5.1 | Truth and safety | Done |
+| v0.6 | Truth and safety II: gates tell the truth | Done |
+| (unreleased) | Silent-failure hardening + test floor | Done |
 
 ## Non-goals
 
@@ -121,7 +123,7 @@ building on them.
   publish-workflow rehearsal against TestPyPI needs a TestPyPI trusted-publisher
   configured first (OIDC), so it is left as a maintainer setup step.
 
-## Truth and safety II: gates tell the truth (Planned)
+## v0.6: Truth and safety II: gates tell the truth (Done)
 
 **Tracking:** #13
 
@@ -201,93 +203,97 @@ checkpoint (CI test; the smoke overlay sets `save_steps` low enough to
 checkpoint within the smoke budget); `--set` of a schema-invalid value exits
 non-zero (test); serve 500 response bodies contain no traceback (test).
 
-## Silent-failure hardening + test floor (Planned)
+## Silent-failure hardening + test floor (Done)
 
 **Tracking:** #14
 
-The remaining "looks green, did nothing" paths, and
-tests for the parts of the codebase that had none, the trainers (4 of 6
-architectures) and the CLI.
+The remaining "looks green, did nothing" paths, and tests for the parts of the
+codebase that had none, the trainers (4 of 6 architectures) and the CLI.
 
 **Depends on:** Truth and safety II.
 
 **Honest numbers**
 
-- Per-class eval report: drop fabricated values (recall was a literal `1.0`,
-  F1 a literal `0.0`), report `pass_rate` / `n`, or compute real P/R/F1
-- seq2seq brace repair becomes opt-in and is recorded in `Report.extras`
-  whenever it fires, so pass rates stay measurements
-- `evaluate` defaults its token budget from `packaging.max_input_tokens`
-  (parity with serve and export `--parity`); truncated-input count logged
-- `evaluation.metrics` as a list: run all entries, or reject more than one
-  until multi-metric support exists (test)
+- Per-class eval numbers are `pass_rate` / `passed` / `n`. The old shape
+  reported a real precision alongside a literal `recall: 1.0` and `f1: 0.0`
+  for every category, so two of four numbers were invented
+- seq2seq brace repair is opt-in (`evaluation.repair_braces`), counted, and
+  recorded in `Report.extras`; both seq2seq examples set it
+- `evaluate` defaults its token budget to `packaging.max_input_tokens` (parity
+  with serve and `export --parity`) and counts truncated inputs
+- `evaluation.metrics` as a list runs every entry and merges results; two
+  plugins claiming one metric key is an error (test)
 
-**Coercion → loud failure**
+**Coercion, now loud failure**
 
-- Fractional epochs honored (float) in seq2seq / multi_head (parity with the
-  SFT config); precision values validated at parse time
-- Unknown gold labels counted and failed (or reported) instead of silently
-  mapping to index 0 / `none`; bool heads honor declared label order
-- seq2seq missing or falsy targets: error or counted skip, no training on
-  the literal string `"{}"` (test)
-- Preference rows: `json.dumps` for structured chosen/rejected, not Python
-  `repr` (test); warn when chosen == rejected
-- DPO / ORPO honors `lora.save_mode` (reuse `_save_sft_artifacts`)
-- Format adapters reject or count degenerate rows (empty instruction or
-  content, zero-message conversations) instead of silently emitting them
-- `multi_head` legacy JCL fallback fires only when legacy keys are actually
-  present; absent or malformed `training.heads` is an error again
-- Teacher failures counted and reported (first real exception logged); abort
-  after K consecutive failures instead of burning the attempts cap
-- Degenerate group keys (one group covering ~the whole corpus) refuse to
-  split silently: hard error, or per-row fallback with a loud warning;
-  teacher / ingest rows get per-row group identity
-- Benchmark pinning checks group keys against seed split assignment (no
-  family in both train and test)
-- Trainer bodies mark the run record `aborted` on any exception (fallible
-  work moved inside the finish handler); `running` records with no checkpoint
-  skipped by resume resolution
-- Val-set tokenize cache keyed on val.jsonl content too
-- Sweep survives a failed trial (record, continue, non-zero exit at the end);
-  rank only trials sharing the chosen metric, with ranking direction taken
-  from the metric definition, not the first trial
-- Sanitizer: warn when length-preserving truncation fires (once per rule);
-  validate fixed replacements fit at rule load
-- `datagen` append dedups by content / sample_id (reuse ingest `_row_id`);
-  stale reject reports overwritten
-- Plugin lifecycle: one owner for model-plugin loading (idempotent, no
-  double top-level execution); per-entry-point failure surfacing in
-  `maatml plugins` and in `Unknown … plugin` errors; drop the
-  wipe-on-empty-TRAINERS rediscovery heuristic; `Validator` Protocol matches
-  the real call sites (one call shape across harness / serve / datagen)
-- Known user-error classes in the CLI (missing file, unparseable model.yml,
-  absent seed corpus) print a one-line actionable message; full tracebacks
-  only under `--debug`
+- Fractional epochs honoured in seq2seq / multi_head; `precision` validated
+  where it is parsed (test)
+- Unknown gold labels are scanned before training and fail with the offending
+  values counted; boolean gold maps through the declared label order (test)
+- seq2seq rows with a missing or empty target are dropped and counted, never
+  serialised to the literal `"{}"` (test)
+- Preference rows serialise structured chosen/rejected as JSON (test); an
+  identical pair warns; DPO / ORPO save through `_save_sft_artifacts`, so
+  `lora.save_mode` means the same thing everywhere
+- alpaca / sharegpt drop and count rows with no user or assistant content; an
+  all-degenerate corpus fails (test)
+- `multi_head` legacy JCL fallback fires only when the legacy keys are present;
+  absent or malformed `training.heads` is an error (test)
+- Teacher failures are counted, the first error is reported on the datagen
+  card, and five consecutive failures abort instead of burning the attempts
+  cap (test)
+- A group key covering ~the whole corpus splits per row with a loud warning;
+  teacher and ingest rows carry a per-row family; an empty split is reported
+  (test)
+- `prepare` refuses a benchmark whose rows share a group key with the training
+  splits (test). The vision examples were copying the first N seed rows as
+  their benchmark, so the pinned score measured memorisation; both builders now
+  generate held-out rows in a `bench_*` family namespace
+- Trainer bodies mark the run `aborted` for fallible work that used to sit
+  outside the finish handler; `--resume auto` skips `running` records with no
+  checkpoint (test)
+- The SFT tokenize cache key includes `val.jsonl` content
+- `sweep` records a failed trial, continues, and exits non-zero at the end;
+  ranking compares only trials reporting the chosen metric, with the direction
+  taken from the metric name (test)
+- Sanitizer warns once per rule when length-preserving truncation cuts a
+  redaction short, and rejects a fixed replacement that cannot fit its
+  pattern's shortest match at load (test)
+- `datagen` append dedups by content / `sample_id` and clears a stale reject
+  report (test)
+- Plugin lifecycle: `load_model_plugins` is the single idempotent owner (test);
+  per-source failures are recorded, listed by `maatml plugins`, and named in
+  `Unknown … plugin` errors (test); `discover_plugins` no longer wipes the
+  registries when the trainer registry looks empty (test); the `Validator`
+  protocol matches the real call sites
+- Known CLI user errors print one actionable line; `maatml --debug` restores
+  the traceback (test)
 
 **Test floor**
 
-- CLI: `typer.testing.CliRunner` suite covering `evaluate --gate` exit codes,
-  `verify` on a tampered manifest, `scaffold` refusal, per-command argument
-  parsing (torch-free)
-- Trainers: torch-gated unit tests for config parsing / label masking /
-  tokenization across all four trainers; the ml CI job runs
-  `pytest examples/` so the vision end-to-end test actually executes; `-rs`
-  on the matrix run so skips are visible
-- Shared `tests/conftest.py` registry snapshot/restore behind a public
-  reset API (tests stop reaching into `_entries`)
-- macOS: `macos-latest` torch-free job (free on a public repo, catches
-  import / path / CLI regressions); optional weekly scheduled MPS `[ml]`
-  smoke. CI optimization, not a claims item, local development already
-  exercises MPS continuously
-- `gh-action-pypi-publish` pinned to a commit SHA (Dependabot keeps it
-  bumped)
+- `typer.testing.CliRunner` suite: `evaluate --gate` exit codes, `verify` on a
+  tampered manifest, `scaffold` refusal, per-command argument parsing, and a
+  torn `runs.jsonl` (torch-free)
+- Torch-gated unit tests for all four previously untested trainers (SFT label
+  masking, seq2seq label padding, multi_head per-head targets, preference row
+  loading), plus torch-free config-parsing tests
+- Shared `tests/conftest.py` snapshots and restores registries through a public
+  API (`snapshot_registries` / `restore_registries` / `reset_registries` /
+  `Registry.unregister`); tests no longer touch `_entries`
+- The ml job installs `[vision]` and runs `pytest tests/ examples/`, so the
+  torch-gated tests and the vision end-to-end test execute; the matrix runs
+  with `-rs`
+- `macos-latest` torch-free job. The optional weekly scheduled MPS `[ml]` smoke
+  was not added: it is an optimization rather than a claims item, and local
+  development exercises MPS continuously
+- `gh-action-pypi-publish` pinned to a commit SHA (Dependabot keeps it bumped)
 
-**Exit criteria:** each of the four previously-untested trainer modules has at
-least one torch-gated unit test exercising config parsing or label masking;
-the CliRunner suite covers `evaluate --gate` exit codes, `verify` on a
-tampered manifest, and `scaffold` refusal; the ml job runs pytest with the
-vision e2e green; preparing a datagen-produced corpus yields non-empty
-val/test splits (regression for the degenerate-group fix); CI includes a
+**Exit criteria (met):** each of the four previously-untested trainer modules
+has a torch-gated unit test exercising config parsing or label masking; the
+CliRunner suite covers `evaluate --gate` exit codes, `verify` on a tampered
+manifest, and `scaffold` refusal; the ml job runs pytest with the vision
+end-to-end test green; preparing a datagen-produced corpus yields non-empty
+val/test splits (regression test for the degenerate-group fix); CI includes a
 macOS job.
 
 ## Fixed lifecycle runner: `maatml run` (Planned)

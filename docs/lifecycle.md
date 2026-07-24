@@ -79,3 +79,21 @@ maatml serve     <model-dir>   # JSON inference API (validator inline)
 ```
 
 `maatml plan <model-dir>` prints this sequence for any model folder.
+
+## What each stage refuses to do quietly
+
+- `prepare` splits by group key (`dataset.group_by`, else `family` → `source` →
+  `sample_id`). A key covering nearly the whole corpus cannot be split, so
+  those rows are split individually with a warning: group-level leakage
+  protection does not apply to them. An empty split is reported, and a
+  `benchmark_samples` row sharing a group key with the training splits is an
+  error, because a benchmark is pinned to test.
+- `train` fails on gold labels no head declares, on a seq2seq corpus with no
+  targets, and on an unsupported `training.precision`. Any failure marks the
+  run `aborted` in `runs.jsonl`.
+- `evaluate` uses `packaging.max_input_tokens` as its token budget (the same
+  budget serve and `export --parity` enforce) and records how many inputs it
+  truncated. Per-class output is a pass rate with its sample count, not a
+  confusion matrix.
+- `sweep` records a failed trial and keeps going, then exits non-zero. It ranks
+  only trials that reported the metric being ranked.

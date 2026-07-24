@@ -8,6 +8,116 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+Silent-failure hardening and a test floor: the paths that reported success
+while doing nothing, plus tests for the four trainer architectures and the CLI,
+which had none.
+
+### Added
+
+- **Global `--debug`:** `maatml --debug <command>` prints full tracebacks for
+  user errors (missing file, unparseable `model.yml`, unknown plugin). Without
+  it those errors print a single actionable line.
+- **`evaluation.repair_braces`** (default `false`): opt-in re-adding of the
+  outer `{` / `}` that flan-t5 tokenizers drop. Every repair is counted in
+  `Report.extras.brace_repairs` and warned about, so a pass rate stays a
+  measurement of the model rather than of maatml's repair.
+- **Multi-metric evaluation:** `evaluation.metrics` as a list runs every entry
+  and merges the results (two plugins reporting the same metric key is an
+  error). It previously ran only the first entry.
+- **Report extras:** `max_input_tokens`, `truncated_inputs`, and brace-repair
+  counts are recorded in the eval report.
+- **Public registry reset API:** `reset_registries`, `snapshot_registries`,
+  `restore_registries`, and `Registry.unregister`, so tests and embedding hosts
+  stop reaching into registry internals.
+- **Plugin failure surfacing:** `maatml plugins` lists sources that failed to
+  load, and `Unknown … plugin` errors name them.
+- **Tests:** a `typer.testing.CliRunner` suite (gate exit codes, `verify` on a
+  tampered manifest, `scaffold` refusal, argument parsing) and torch-gated unit
+  tests for all four trainer architectures.
+- **CI:** a torch-free `macos-latest` job; the ml job runs `pytest tests/
+  examples/` so the torch-gated tests and the vision end-to-end test execute;
+  the matrix runs with `-rs` so skips are visible.
+
+### Changed
+
+- **Behavior change:** `maatml evaluate` defaults its token budget to
+  `packaging.max_input_tokens` (previously a fixed 2048), matching serve and
+  `export --parity`. Pass `--max-input-tokens` to override. Inputs the budget
+  truncated are counted and reported.
+- **Behavior change:** per-class eval numbers are `pass_rate` / `passed` / `n`.
+  The old shape reported `precision` alongside a literal `recall: 1.0` and
+  `f1: 0.0` for every category: two of the four numbers were invented.
+- **Behavior change:** seq2seq brace repair is off unless
+  `evaluation.repair_braces: true` (both seq2seq examples set it).
+- **Behavior change:** `training.precision` is validated where it is parsed;
+  an unsupported value (`bfloat16`, a typo) fails instead of silently training
+  in fp32.
+- **Behavior change:** an absent or malformed `training.heads` is an error. The
+  legacy JCL head shape (`heads.error_codes` / `heads.severities` /
+  `head_loss_weights`) only applies when those keys are present.
+- **Behavior change:** `maatml prepare` refuses a `benchmark_samples` file whose
+  rows share a group key with the training splits (a benchmark is pinned to
+  test, so the overlap inflates the number it exists to protect).
+- **Behavior change:** `maatml sweep` records a failed trial and continues,
+  exiting non-zero at the end, instead of aborting and discarding the trials
+  that already trained. Ranking compares only trials reporting the chosen
+  metric, and the direction comes from the metric name.
+- `maatml datagen` appending to an existing corpus skips rows already present
+  (by content / `sample_id`) and reports `duplicates`; a stale rejection report
+  from a previous run is removed rather than left in place.
+- `maatml evaluate` resolves validator, metrics, and gates before touching a
+  checkpoint, so a config error is reported instead of "no checkpoints found".
+- `discover_plugins` no longer wipes the registries when the trainer registry
+  looks empty (that heuristic dropped whatever a model folder had registered),
+  and model-folder plugins execute once per process instead of once per caller.
+- The `Validator` protocol describes the call shape the harness, serve,
+  datagen, and ingest actually use (a callable with optional keywords).
+- The vision and vision-vlm seed builders generate held-out benchmark rows in a
+  `bench_*` family namespace; they previously copied the first N seed rows, so
+  the pinned benchmark was a subset of train. Committed corpora regenerated.
+
+### Fixed
+
+- **Splits:** a corpus from `datagen` / `ingest` (one source, no families)
+  hashed into a single group, so every row landed in one split and val/test
+  came out empty while prepare reported success. A group covering ~the whole
+  corpus is now split per row with a loud warning, teacher and ingest rows
+  carry a per-row family, and an empty split is called out.
+- **seq2seq targets:** rows with a missing or empty target serialised to the
+  literal string `"{}"` and were trained on. They are dropped and counted, and
+  an all-empty corpus fails.
+- **Gold labels:** `multi_head` mapped any unrecognised label to index 0 /
+  `none`. Labels are scanned before training and unmappable values fail with
+  the offending values counted. Boolean gold maps through the declared labels,
+  so `labels: [valid, invalid]` no longer means `True` → `invalid`.
+- **Fractional epochs:** `seq2seq` and `multi_head` floored `epochs` to an int,
+  so `epochs: 0.5` trained for zero epochs and reported success.
+- **Preference rows:** structured `chosen` / `rejected` values serialise as JSON
+  instead of a Python `repr`; identical pairs warn; DPO / ORPO honour
+  `training.lora.save_mode` through the same saver as causal SFT.
+- **Degenerate rows:** the alpaca / sharegpt adapters emitted rows with no user
+  or assistant content (a mis-mapped field name produced a corpus of empty
+  strings); they are dropped and counted, and an all-degenerate corpus fails.
+- **Teacher datagen:** request failures were swallowed into "no row", so a dead
+  endpoint burned the attempts cap and reported "0 accepted" with no reason.
+  Failures are counted, the first error is reported on the datagen card, and
+  five consecutive failures abort the run.
+- **Run records:** trainers mark a run `aborted` for fallible work that used to
+  sit outside the finish handler (tokenizer load, reading the splits), so a
+  crashed run no longer stays `running` forever.
+- **Resume:** `--resume auto` skips `running` records with no checkpoint, which
+  used to hide an older run that could actually be resumed.
+- **Tokenize cache:** the SFT cache key includes `val.jsonl` content, so a new
+  val split is not evaluated against a stale cache.
+- **Sanitizer:** length-preserving truncation warns once per rule instead of
+  silently emitting a cut-short redaction, and a fixed replacement that cannot
+  fit its pattern's shortest match is rejected when the rules load.
+
+### Security
+
+- `pypa/gh-action-pypi-publish` is pinned to a commit SHA (that job holds an
+  OIDC token); Dependabot keeps the pin current.
+
 ## [0.6.0] - 2026-07-23
 
 Truth and safety II: make the "the same validator gates your data, evaluation,
