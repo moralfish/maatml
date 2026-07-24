@@ -11,6 +11,7 @@ from .registry import (
     SCAFFOLD_HOOKS,
     TRAINERS,
     discover_plugins,
+    load_model_plugins,
 )
 
 # Architecture aliases accepted in model.yml / --architecture.
@@ -302,29 +303,112 @@ _SCHEMA_PLACEHOLDER = {
 }
 
 
+def _deep_merge(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Merge ``overrides`` into ``base``, recursing into nested dicts."""
+    out = dict(base)
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _plugin_reference(entry: str, target_dir: Path) -> str:
+    """How a --plugin entry should be written into the scaffolded model.yml.
+
+    ``plugins:`` paths resolve relative to the model folder, but the entry the
+    user typed is relative to their shell, so a filesystem entry is rewritten
+    (relative to the new folder when that stays inside it, absolute otherwise).
+    Dotted module paths are recorded as given.
+    """
+    looks_like_path = entry.endswith(".py") or "/" in entry or entry.startswith(".")
+    if not looks_like_path:
+        return entry
+    resolved = Path(entry).expanduser().resolve()
+    try:
+        relative = resolved.relative_to(target_dir)
+    except ValueError:
+        return str(resolved)
+    return f"./{relative}"
+
+
+def _run_scaffold_hooks(
+    target_dir: Path,
+    *,
+    architecture: str,
+    arch: str,
+    folder_name: str,
+) -> dict[str, Any]:
+    """Call matching scaffold hooks and collect their contributions.
+
+    A hook may return ``None`` (it only wrote files itself) or a mapping with
+    any of ``model_yml`` (deep-merged into the generated config), ``seed_rows``
+    (replaces the generic seed row), and ``files`` (relative path to text
+    content). Core stays the only writer, so a hook cannot half-write a folder.
+    """
+    contribution: dict[str, Any] = {"model_yml": {}, "seed_rows": None, "files": {}}
+    seen: set[int] = set()
+    for hook_name in (architecture, arch, folder_name):
+        hook = SCAFFOLD_HOOKS.get(hook_name)
+        if hook is None or id(hook) in seen:
+            continue
+        seen.add(id(hook))
+        result = hook(target_dir, architecture=architecture, name=folder_name)
+        if not isinstance(result, dict):
+            continue
+        contribution["model_yml"] = _deep_merge(
+            contribution["model_yml"], result.get("model_yml") or {}
+        )
+        if "seed_rows" in result:
+            # An explicit empty list means "this corpus is generated, not
+            # hand-written", which is different from the hook not saying.
+            contribution["seed_rows"] = list(result["seed_rows"] or [])
+        contribution["files"].update(result.get("files") or {})
+    return contribution
+
+
 def scaffold_model(
     target_dir: Path,
     *,
     architecture: str,
     name: Optional[str] = None,
     force: bool = False,
+    plugins: Optional[list[str]] = None,
 ) -> Path:
     """Create a model folder with model.yml, datasets, README, and .gitignore.
 
     Refuses to overwrite an existing ``model.yml`` or seed corpus unless
     ``force`` is set, so a mistaken re-scaffold cannot destroy hand-edited
     config or a curated seed file.
+
+    ``plugins`` are loaded before the architecture is resolved and recorded in
+    the generated ``model.yml``, which is how plugin-owned architectures
+    (``vision_multitask``, ``vlm_sft``, anything third-party) can be
+    scaffolded at all: core does not know them until their plugin is imported.
     """
     discover_plugins()
+    target_dir = Path(target_dir).resolve()
+    folder_name = name or target_dir.name
+
+    plugin_entries = [p.strip() for p in (plugins or []) if p.strip()]
+    if plugin_entries:
+        # Entries are relative to the caller's cwd here; they are rewritten
+        # relative to the model folder when written into model.yml.
+        load_model_plugins(Path.cwd(), plugin_entries)
+
     arch = normalize_architecture(architecture)
     if TRAINERS.get(arch) is None and TRAINERS.get(architecture) is None:
         known = ", ".join(TRAINERS.names()) or "(none)"
+        hint = (
+            ""
+            if plugin_entries
+            else " Architectures owned by a plugin need --plugin <path|module>."
+        )
         raise ValueError(
-            f"Unknown architecture {architecture!r}. Registered trainers: {known}"
+            f"Unknown architecture {architecture!r}. Registered trainers: {known}.{hint}"
         )
 
-    target_dir = Path(target_dir).resolve()
-    folder_name = name or target_dir.name
     target_dir.mkdir(parents=True, exist_ok=True)
 
     seed_path = target_dir / "datasets" / "samples" / "seed_samples.jsonl"
@@ -366,6 +450,40 @@ def scaffold_model(
             "weights_dtype": "f16",
         },
     }
+    if plugin_entries:
+        model_yml["plugins"] = [
+            _plugin_reference(entry, target_dir) for entry in plugin_entries
+        ]
+
+    samples_dir = target_dir / "datasets" / "samples"
+    samples_dir.mkdir(parents=True, exist_ok=True)
+
+    # A plugin that owns the architecture also owns its defaults: the hook can
+    # replace config sections, the seed row, and any extra asset files.
+    contribution = _run_scaffold_hooks(
+        target_dir, architecture=architecture, arch=arch, folder_name=folder_name
+    )
+    # A section the hook declares replaces core's guess outright: for a
+    # plugin-owned architecture, core's `dataset:` / `training:` defaults are
+    # for a different model shape, and half-merging the two produces a config
+    # that mentions both (a `model_id: CHANGE_ME` next to a vision backbone).
+    model_yml.update(contribution["model_yml"])
+    dataset = model_yml.get("dataset", dataset)
+
+    # base_model mirrors the final training.model_id. An architecture that has
+    # no such key (a vision backbone, say) simply has no base_model, which is
+    # truer than leaving a CHANGE_ME placeholder in the file.
+    if "base_model" not in contribution["model_yml"]:
+        final_model_id = (model_yml.get("training") or {}).get("model_id")
+        if final_model_id and final_model_id != "CHANGE_ME":
+            model_yml["base_model"] = final_model_id
+        else:
+            model_yml.pop("base_model", None)
+    seed_rows = (
+        contribution["seed_rows"]
+        if contribution["seed_rows"] is not None
+        else [_seed_row(architecture)]
+    )
 
     (target_dir / "model.yml").write_text(_yaml_dump(model_yml), encoding="utf-8")
     (target_dir / "README.md").write_text(
@@ -374,28 +492,26 @@ def scaffold_model(
     )
     (target_dir / ".gitignore").write_text("output/\n", encoding="utf-8")
 
-    samples_dir = target_dir / "datasets" / "samples"
-    samples_dir.mkdir(parents=True, exist_ok=True)
     seed_path.write_text(
-        json.dumps(_seed_row(architecture), ensure_ascii=False) + "\n",
+        "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in seed_rows),
         encoding="utf-8",
     )
-    (target_dir / "datasets" / "schema.json").write_text(
-        json.dumps(_SCHEMA_PLACEHOLDER, indent=2) + "\n", encoding="utf-8"
-    )
 
-    if normalize_architecture(architecture) in ("causal_sft", "seq2seq") or (
-        "prompt_spec" in dataset
-    ):
+    extra_files = contribution["files"]
+    for rel, content in extra_files.items():
+        path = target_dir / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    if "datasets/schema.json" not in extra_files:
+        (target_dir / "datasets" / "schema.json").write_text(
+            json.dumps(_SCHEMA_PLACEHOLDER, indent=2) + "\n", encoding="utf-8"
+        )
+
+    if "prompt_spec" in dataset and "datasets/prompt_spec.json" not in extra_files:
         (target_dir / "datasets" / "prompt_spec.json").write_text(
             json.dumps(_PROMPT_SPEC, indent=2) + "\n", encoding="utf-8"
         )
-
-    # Optional architecture/task hooks.
-    for hook_name in (architecture, arch, folder_name):
-        hook = SCAFFOLD_HOOKS.get(hook_name)
-        if hook is not None:
-            hook(target_dir, architecture=architecture, name=folder_name)
 
     return target_dir
 

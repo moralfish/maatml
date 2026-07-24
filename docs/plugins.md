@@ -81,6 +81,33 @@ carries the same key is split per row with a warning instead.
 Optional teacher path: `maatml datagen --teacher` uses
 `MAATML_TEACHER_BASE_URL` / `MAATML_TEACHER_API_KEY` (`pip install maatml[teacher]`).
 
+## Scaffolding a plugin-owned architecture
+
+Core cannot scaffold an architecture it has never heard of, so point
+`maatml scaffold` at the plugin that owns it:
+
+```bash
+maatml scaffold ~/models/my-vision --architecture vision_multitask \
+    --plugin examples/vision/vision_plugin
+```
+
+`--plugin` (repeatable; a folder, a `.py` file, or an installed module) is
+loaded before the architecture is resolved and recorded in the new `model.yml`,
+so every later command finds the trainer too.
+
+A `@register_scaffold_hook(<architecture>)` supplies the defaults core cannot
+guess. It may return a mapping with any of:
+
+| Key | Effect |
+|-----|--------|
+| `model_yml` | Top-level sections that **replace** core's defaults (`dataset`, `training`, `evaluation`, …) |
+| `seed_rows` | Rows written to `seed_samples.jsonl`; `[]` means "this corpus is generated" |
+| `files` | Extra files, keyed by path relative to the model folder |
+
+Core stays the only writer, so a hook cannot half-create a folder. Ship the
+same schema and prompt spec your validator and generator were written against:
+a lookalike copy makes `maatml datagen` reject every row it generates.
+
 ## Exporters (`maatml export`)
 
 Built-ins: `safetensors` (always), `gguf` / `mlx` (optional tooling). Custom:

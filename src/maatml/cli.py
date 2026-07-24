@@ -779,6 +779,13 @@ def cmd_scaffold(
         help="Registered trainer architecture (e.g. causal_sft, seq2seq, classifier, dpo)",
     ),
     name: Optional[str] = typer.Option(None, "--name", help="Model name (default: folder name)"),
+    plugin: Optional[list[str]] = typer.Option(
+        None,
+        "--plugin",
+        help="Plugin to load before resolving --architecture, and record in the "
+        "new model.yml: a folder/.py path or an installed module (repeatable). "
+        "Required for plugin-owned architectures such as vision_multitask.",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -790,7 +797,11 @@ def cmd_scaffold(
     discover_plugins()
     try:
         path = scaffold_model(
-            target_dir, architecture=architecture, name=name, force=force
+            target_dir,
+            architecture=architecture,
+            name=name,
+            force=force,
+            plugins=list(plugin or []),
         )
     except FileExistsError as exc:
         console.print(f"[red]scaffold refused[/] {exc}")

@@ -227,3 +227,31 @@ def test_tiny_train_predict_onnx_roundtrip(tmp_path: Path, plugin) -> None:
     raw2 = pred2.predict(rows[0])
     parsed2 = json.loads(raw2)
     assert parsed2["scene"]["label"] in cfg.scene_labels
+
+
+def test_scaffold_hook_produces_a_valid_folder(tmp_path: Path, plugin) -> None:
+    """`maatml scaffold -a vision_multitask --plugin ...` must validate."""
+    from maatml.scaffold import scaffold_model, validate_model_dir
+
+    target = tmp_path / "scaffolded-vision"
+    scaffold_model(target, architecture="vision_multitask", plugins=[str(ROOT / "vision_plugin")])
+
+    assert validate_model_dir(target) == []
+    body = (target / "model.yml").read_text(encoding="utf-8")
+    assert "backbone: mobilenet_v3_large" in body
+    assert "generator: synthetic_scenes" in body
+    assert "CHANGE_ME" not in body
+    # The scaffolded schema is the one the validator and generator were written
+    # against, not a lookalike: a copy that drifts makes datagen reject every
+    # row it generates.
+    assert json.loads((target / "datasets" / "schema.json").read_text()) == json.loads(
+        (ROOT / "datasets" / "schema.json").read_text()
+    )
+
+
+def test_scaffold_fallback_schema_matches_the_canonical_one(plugin) -> None:
+    from vision_plugin.scaffold import _FALLBACK_SCHEMA
+
+    canonical = json.loads((ROOT / "datasets" / "schema.json").read_text())
+    assert _FALLBACK_SCHEMA["required"] == canonical["required"]
+    assert set(_FALLBACK_SCHEMA["properties"]) == set(canonical["properties"])
