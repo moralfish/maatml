@@ -394,3 +394,171 @@ def test_resolve_validator_params_subset_and_kwargs() -> None:
         return None
 
     assert _resolve_validator_params(loose) is None
+
+
+def _http_with_headers(method, url, body=None, headers=None):
+    data = None
+    hdrs = {"Accept": "application/json", **(headers or {})}
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        hdrs["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+
+
+# --- auth token ------------------------------------------------------------
+
+
+def test_auth_token_required_when_set(serve_model_dir) -> None:
+    md, ckpt = serve_model_dir
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", auth_token="s3cret")
+    server, base, _thread = _serve(md, ctx)
+    try:
+        # No token: 401.
+        status, _ = _http_with_headers("POST", f"{base}/predict", {"request": "hi"})
+        assert status == 401
+        # Wrong token: 401.
+        status, _ = _http_with_headers(
+            "POST", f"{base}/predict", {"request": "hi"},
+            {"Authorization": "Bearer nope"},
+        )
+        assert status == 401
+        # Right token: 200.
+        status, pred = _http_with_headers(
+            "POST", f"{base}/predict", {"request": "hi"},
+            {"Authorization": "Bearer s3cret"},
+        )
+        assert status == 200
+        assert pred["output"]["echo"] == "hi"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_info_advertises_auth_and_capture(serve_model_dir) -> None:
+    md, ckpt = serve_model_dir
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", auth_token="t")
+    server, base, _thread = _serve(md, ctx)
+    try:
+        _status, info = _http_with_headers("GET", f"{base}/info")
+        assert info["auth_required"] is True
+        assert info["capture_enabled"] is False
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- capture ---------------------------------------------------------------
+
+
+def test_capture_requires_auth_token(serve_model_dir, tmp_path) -> None:
+    md, ckpt = serve_model_dir
+    with pytest.raises(ValueError, match="requires --auth-token"):
+        build_serve_context(
+            md, checkpoint=ckpt, device="cpu", capture_path=tmp_path / "cap.jsonl"
+        )
+
+
+def test_capture_writes_unapproved_rows(serve_model_dir, tmp_path) -> None:
+    md, ckpt = serve_model_dir
+    cap = tmp_path / "capture.jsonl"
+    ctx = build_serve_context(
+        md, checkpoint=ckpt, device="cpu", auth_token="tok", capture_path=cap
+    )
+    server, base, _thread = _serve(md, ctx)
+    try:
+        status, pred = _http_with_headers(
+            "POST", f"{base}/predict?capture=1", {"request": "capture me"},
+            {"Authorization": "Bearer tok"},
+        )
+        assert status == 200
+        assert pred["captured"] is True
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    rows = [json.loads(line) for line in cap.read_text().splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["source"] == "serve_capture"
+    assert rows[0]["approved"] is False
+    assert rows[0]["needs_review"] is True
+    assert rows[0]["request"] == "capture me"
+
+
+def test_capture_without_token_is_401(serve_model_dir, tmp_path) -> None:
+    md, ckpt = serve_model_dir
+    ctx = build_serve_context(
+        md, checkpoint=ckpt, device="cpu", auth_token="tok",
+        capture_path=tmp_path / "c.jsonl",
+    )
+    server, base, _thread = _serve(md, ctx)
+    try:
+        status, _ = _http_with_headers(
+            "POST", f"{base}/predict?capture=1", {"request": "x"}
+        )
+        assert status == 401
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- retry-with-feedback ---------------------------------------------------
+
+
+class _FlakyPredictor:
+    """Invalid until it sees validation feedback, then valid (once)."""
+
+    def setup(self, checkpoint_dir, **kwargs) -> None:  # noqa: ANN001
+        del checkpoint_dir, kwargs
+
+    def predict(self, row: dict) -> str:
+        if row.get("_validation_feedback"):
+            return json.dumps({"echo": row.get("request"), "ok": True})
+        return json.dumps({"echo": row.get("request"), "ok": False})
+
+
+def test_enforce_retry_recovers_and_counts(serve_model_dir) -> None:
+    md, ckpt = serve_model_dir
+    PREDICTORS.register("flaky", _FlakyPredictor, source="test")
+    md.evaluation["predictor"] = "flaky"
+    ctx = build_serve_context(
+        md, checkpoint=ckpt, device="cpu", enforce=True, max_retries=1
+    )
+    server, base, _thread = _serve(md, ctx)
+    try:
+        status, pred = _http_with_headers("POST", f"{base}/predict", {"request": "hi"})
+        assert status == 200
+        assert pred["valid"] is True
+        assert pred["retries"] == 1
+        assert pred["attempts"] == 2
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_enforce_without_retry_returns_422_with_retry_count(serve_model_dir) -> None:
+    """Exit criterion: a validation failure under --enforce is 422 + retry count."""
+    md, ckpt = serve_model_dir
+    PREDICTORS.register("flaky", _FlakyPredictor, source="test")
+    md.evaluation["predictor"] = "flaky"
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", enforce=True)
+    server, base, _thread = _serve(md, ctx)
+    try:
+        status, pred = _http_with_headers("POST", f"{base}/predict", {"request": "hi"})
+        assert status == 422
+        assert pred["valid"] is False
+        assert pred["retries"] == 0
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_max_retries_needs_a_validator(serve_model_dir) -> None:
+    md, ckpt = serve_model_dir
+    md.evaluation.pop("validator")
+    with pytest.raises(ValueError, match="max-retries needs evaluation.validator"):
+        build_serve_context(md, checkpoint=ckpt, device="cpu", max_retries=2)

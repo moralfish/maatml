@@ -526,6 +526,25 @@ def cmd_serve(
         help="Return HTTP 422 when the configured validator rejects a prediction "
         "(gate live inference). Off by default (annotate only).",
     ),
+    max_retries: int = typer.Option(
+        0,
+        "--max-retries",
+        help="On a validation failure under --enforce, feed the error back and "
+        "re-ask the model up to this many times. Retries are counted in the "
+        "response. Needs evaluation.validator.",
+    ),
+    auth_token: Optional[str] = typer.Option(
+        None,
+        "--auth-token",
+        help="Require this bearer token on /predict (also reads "
+        "MAATML_SERVE_TOKEN). Required for --capture and non-loopback binds.",
+    ),
+    capture: Optional[Path] = typer.Option(
+        None,
+        "--capture",
+        help="Append served predictions to this JSONL for review. Captured rows "
+        "are NOT gold: ingest refuses them until approved. Requires --auth-token.",
+    ),
     debug: bool = typer.Option(
         False,
         "--debug",
@@ -535,7 +554,7 @@ def cmd_serve(
 ) -> None:
     """Serve a checkpoint or export bundle as a JSON inference API.
 
-    Endpoints: GET /health, GET /info, POST /predict (?validate=1 optional).
+    Endpoints: GET /health, GET /info, POST /predict (?validate=1, ?capture=1).
     Works for any architecture with a registered predictor (text + vision).
     """
     md = load_model_def(model_dir)
@@ -543,6 +562,7 @@ def cmd_serve(
     from .serve import run_server
 
     cors_origin = cors if cors is not None else os.environ.get("MAATML_SERVE_CORS")
+    token = auth_token if auth_token is not None else os.environ.get("MAATML_SERVE_TOKEN")
     try:
         run_server(
             md,
@@ -554,6 +574,9 @@ def cmd_serve(
             max_body_bytes=max_body_bytes,
             enforce=enforce,
             debug=debug,
+            auth_token=token,
+            max_retries=max_retries,
+            capture_path=capture,
         )
     except (FileNotFoundError, KeyError, ImportError, RuntimeError, ValueError) as exc:
         console.print(f"[red]serve failed[/] {exc}")
@@ -721,6 +744,11 @@ def cmd_ingest(
         f"skipped_unvalidated={result['skipped_unvalidated']} "
         f"seeds={result['seeds_path']}"
     )
+    if result.get("unapproved_capture"):
+        console.print(
+            f"[yellow]note[/] refused {result['unapproved_capture']} unapproved "
+            "serve-capture row(s); set approved: true after review to ingest them"
+        )
 
 
 @app.command("runs")

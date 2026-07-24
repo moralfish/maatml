@@ -120,3 +120,46 @@ def test_ingest_skips_unvalidated_when_validator_configured(tmp_path: Path) -> N
     assert result["rejected"] == 0
     rows = list(iter_jsonl(md.resolve("datasets/samples/seed_samples.jsonl")))
     assert [r["sample_id"] for r in rows] == ["a"]
+
+
+def test_ingest_refuses_unapproved_serve_capture(tmp_path: Path) -> None:
+    """Exit criterion: a captured row lacking approval is refused, not ingested."""
+    model_dir = tmp_path / "model"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    md = _model(model_dir)
+
+    inp = tmp_path / "capture.jsonl"
+    write_jsonl(
+        inp,
+        [
+            # Straight off serve --capture: unreviewed, must be refused.
+            {"request": "unreviewed", "target": {"x": 1}, "source": "serve_capture",
+             "approved": False, "needs_review": True},
+            # A reviewer corrected and approved this one.
+            {"request": "reviewed", "target": {"x": 2}, "source": "serve_capture",
+             "approved": True, "needs_review": False},
+        ],
+    )
+    result = ingest_samples(md, inp, append=False)
+
+    assert result["unapproved_capture"] == 1
+    assert result["accepted"] == 1
+    seeds = list(iter_jsonl(md.resolve("datasets/samples/seed_samples.jsonl")))
+    assert len(seeds) == 1
+    assert seeds[0]["request"] == "reviewed"
+    # The approved row sheds its review markers and is provenance-stamped.
+    assert "approved" not in seeds[0]
+    assert "needs_review" not in seeds[0]
+    assert seeds[0]["source"].startswith("ingest:")
+
+
+def test_ingest_capture_stripped_of_approval_is_still_refused(tmp_path: Path) -> None:
+    """A capture row cannot slip through by dropping the approval flag."""
+    model_dir = tmp_path / "model"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    md = _model(model_dir)
+    inp = tmp_path / "c.jsonl"
+    write_jsonl(inp, [{"request": "x", "target": {"a": 1}, "source": "serve_capture"}])
+    result = ingest_samples(md, inp, append=False)
+    assert result["unapproved_capture"] == 1
+    assert result["accepted"] == 0
