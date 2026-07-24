@@ -49,14 +49,23 @@ class ValidationResult:
 
 @runtime_checkable
 class Validator(Protocol):
-    def validate(
+    """The call shape every maatml validator must accept.
+
+    Registered validators are called directly (``validate(raw_output, ...)``),
+    not through a ``.validate()`` method, and the harness, serve, datagen, and
+    ingest all pass the same optional keywords: a validator may be given only
+    ``user_prompt`` (no schema or contracts resolved) or all of them. Every
+    keyword is optional so one implementation satisfies all four call sites.
+    """
+
+    def __call__(
         self,
         raw_output: str,
         *,
-        schema_path: str | Path,
-        contracts_path: str | Path,
-        user_prompt: Optional[str] = None,
-        strip_fences: bool = True,
+        schema_path: str | Path | None = ...,
+        contracts_path: str | Path | None = ...,
+        user_prompt: Optional[str] = ...,
+        strip_fences: bool = ...,
     ) -> ValidationResult: ...
 
 

@@ -6,14 +6,18 @@ Normalized rows carry ``messages: [{role, content}, ...]`` plus optional
 """
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Optional
+
+from rich.console import Console
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import register_format
 from ..utils.io import iter_jsonl
 from .pipeline import prepare_rows
 
+console = Console()
 
 _ROLE_MAP = {
     "human": "user",
@@ -79,6 +83,47 @@ def normalize_sharegpt(row: dict) -> dict:
     return out
 
 
+def is_degenerate(row: dict) -> bool:
+    """Would this normalized row train the model on nothing?
+
+    A conversation with no turns, no user content, or an empty assistant reply
+    contributes no signal. They used to be emitted anyway, so a corpus of
+    mis-mapped rows produced a full-looking prepare and a model trained on
+    empty strings.
+    """
+    messages = row.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return True
+    has_user = any(
+        m.get("role") == "user" and str(m.get("content") or "").strip() for m in messages
+    )
+    has_assistant = any(
+        m.get("role") == "assistant" and str(m.get("content") or "").strip()
+        for m in messages
+    )
+    return not (has_user and has_assistant)
+
+
+def _normalize_rows(raws, normalize_fn, *, label: str) -> tuple[list[dict], int]:
+    """Normalize and drop degenerate rows, returning ``(rows, dropped)``."""
+    rows: list[dict] = []
+    dropped = 0
+    for raw in raws:
+        row = normalize_fn(raw)
+        if is_degenerate(row):
+            dropped += 1
+            continue
+        rows.append(row)
+    if dropped:
+        message = (
+            f"{label}: dropped {dropped} row(s) with no user or assistant content "
+            "(check the source field names, e.g. instruction/output for alpaca)"
+        )
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
+        console.print(f"[yellow]warning[/] {message}")
+    return rows, dropped
+
+
 def _prepare_normalized(
     model_def: ModelDefinition,
     normalize_fn,
@@ -95,13 +140,24 @@ def _prepare_normalized(
             "Remove dataset.sanitize or use the jsonl_seed format."
         )
     seed_path = model_def.resolve(cfg["seed_samples"])
-    rows = [normalize_fn(raw) for raw in iter_jsonl(seed_path)]
+    rows, dropped = _normalize_rows(
+        iter_jsonl(seed_path), normalize_fn, label=str(seed_path)
+    )
+    if not rows:
+        raise ValueError(
+            f"No usable rows in {seed_path}: every row was empty after "
+            f"normalization ({dropped} dropped)."
+        )
     bench_rows: list[dict] = []
     benchmark_path = cfg.get("benchmark_samples")
     if benchmark_path:
-        for raw in iter_jsonl(model_def.resolve(benchmark_path)):
-            bench_rows.append(normalize_fn(raw))
-    return prepare_rows(
+        bench_rows, bench_dropped = _normalize_rows(
+            iter_jsonl(model_def.resolve(benchmark_path)),
+            normalize_fn,
+            label=str(model_def.resolve(benchmark_path)),
+        )
+        dropped += bench_dropped
+    summary = prepare_rows(
         model_def,
         rows,
         out_dir=out_dir,
@@ -111,6 +167,8 @@ def _prepare_normalized(
             str(model_def.resolve(benchmark_path)) if benchmark_path else None
         ),
     )
+    summary["degenerate_dropped"] = dropped
+    return summary
 
 
 @register_format("alpaca")

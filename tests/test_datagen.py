@@ -143,3 +143,70 @@ def test_atomic_write_preserves_original_on_failure(tmp_path):
         write_jsonl_atomic(dest, _rows())
     assert list(iter_jsonl(dest)) == [{"orig": 1}]  # unchanged
     assert [p.name for p in tmp_path.iterdir() if p.suffix == ".tmp"] == []
+
+
+# --- append dedup / stale reports / teacher failures -------------------------
+
+
+def test_append_dedups_previously_generated_rows(tmp_path, monkeypatch):
+    _register_dummy_generator()
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: True))
+    md = _md(tmp_path, evaluation={"validator": "some_validator"})
+
+    first = run_datagen(md, target=2, append=False, max_attempts=10)
+    assert first["accepted"] == 2
+
+    # The dummy generator is deterministic: a second run proposes the same
+    # sample_ids, which used to double the corpus.
+    second = run_datagen(md, target=2, append=True, max_attempts=10)
+    assert second["duplicates"] == 2
+    assert second["accepted"] == 0
+    assert second["seed_written"] is False
+    assert len(list(iter_jsonl(tmp_path / "seeds.jsonl"))) == 2
+    assert "duplicates_skipped: 2" in (tmp_path / "seeds.datagen_card.md").read_text()
+
+
+def test_stale_reject_report_is_removed_when_nothing_is_rejected(tmp_path, monkeypatch):
+    _register_dummy_generator()
+    md = _md(tmp_path, evaluation={"validator": "some_validator"})
+
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: False))
+    run_datagen(md, target=1, append=False, max_attempts=3)
+    reject_path = tmp_path / "seeds.datagen_rejected.jsonl"
+    assert reject_path.is_file()
+
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: True))
+    result = run_datagen(md, target=1, append=False, max_attempts=3)
+    assert result["reject_path"] is None
+    assert not reject_path.exists(), "a previous run's rejects must not linger"
+
+
+def test_teacher_failures_are_counted_and_abort_after_k(tmp_path):
+    from maatml.data.gated import GenerationAbort
+
+    class _DeadTeacher:
+        def propose_json_row(self, system, user, **kwargs):
+            raise RuntimeError("connection refused")
+
+    stats = {"failures": 0, "consecutive": 0, "malformed": 0, "first_error": None}
+    md = _md(tmp_path)
+    gen = datagen_mod._teacher_generate_fn(
+        md, _DeadTeacher(), seed=0, stats=stats, max_consecutive_failures=3
+    )
+    assert gen() is None
+    assert gen() is None
+    with pytest.raises(GenerationAbort, match="connection refused"):
+        gen()
+    assert stats["failures"] == 3
+    assert stats["first_error"].startswith("RuntimeError")
+
+
+def test_teacher_rows_get_per_row_family(tmp_path):
+    class _Teacher:
+        def propose_json_row(self, system, user, **kwargs):
+            return {"request": "r", "target": {"x": 1}}
+
+    stats = {"failures": 0, "consecutive": 0, "malformed": 0, "first_error": None}
+    gen = datagen_mod._teacher_generate_fn(_md(tmp_path), _Teacher(), seed=7, stats=stats)
+    row = gen()
+    assert row["family"] == row["sample_id"] == "teacher-7-1"

@@ -125,7 +125,9 @@ class _EvalCtx:
 
 PredictorLike = Union[str, Any]
 ValidatorLike = Union[str, Callable[..., ValidationResult]]
-MetricsLike = Union[str, Callable[..., dict[str, float]]]
+MetricsEntry = Union[str, Callable[..., dict[str, float]]]
+# ``evaluation.metrics`` may name one metrics plugin or a list of them.
+MetricsLike = Union[MetricsEntry, Sequence[MetricsEntry]]
 
 
 def percentile(values: list[float], pct: float) -> float:
@@ -278,6 +280,14 @@ def resolve_validator(validator: Any) -> Callable[..., ValidationResult]:
 
 
 def _category_buckets(row_results: list[RowEval]) -> dict[str, dict[str, float]]:
+    """Validator pass rate per ``category``.
+
+    This is a pass/fail bucket count, not a classification confusion matrix:
+    there is no per-category prediction to compare against a gold category, so
+    the report carries ``pass_rate`` / ``n`` and nothing else. Real per-class
+    P/R/F1 comes from :func:`per_class_prf`, which metrics plugins call with
+    actual (true, predicted) label pairs.
+    """
     per_category: dict[str, dict[str, int]] = {}
     for item in row_results:
         category = str(item.row.get("category") or "unknown")
@@ -287,13 +297,46 @@ def _category_buckets(row_results: list[RowEval]) -> dict[str, dict[str, float]]
             bucket["passed_all"] += 1
     return {
         cat: {
-            "precision": b["passed_all"] / max(1, b["n"]),
-            "recall": 1.0,
-            "f1": 0.0,
-            "support": float(b["n"]),
+            "pass_rate": b["passed_all"] / max(1, b["n"]),
+            "passed": float(b["passed_all"]),
+            "n": float(b["n"]),
         }
         for cat, b in per_category.items()
     }
+
+
+def _resolve_metrics(metrics_fn: Any) -> list[Callable[..., dict[str, float]]]:
+    """Resolve one metrics entry, or a list of them, to callables.
+
+    ``evaluation.metrics`` may be a single name or a list. Every entry runs and
+    the results are merged; two entries claiming the same metric key is a
+    configuration error rather than a silent last-writer-wins.
+    """
+    if metrics_fn is None:
+        return []
+    entries = list(metrics_fn) if isinstance(metrics_fn, (list, tuple)) else [metrics_fn]
+    return [_resolve_callable("metrics", entry, METRICS) for entry in entries]
+
+
+def _merge_metrics(
+    callables: list[Callable[..., dict[str, float]]],
+    row_results: list[RowEval],
+    names: list[str],
+) -> dict[str, float]:
+    merged: dict[str, float] = {}
+    owner: dict[str, str] = {}
+    for name, fn in zip(names, callables):
+        produced = fn(row_results) or {}
+        for key, value in produced.items():
+            if key in merged:
+                raise GateConfigError(
+                    f"evaluation.metrics: {name!r} and {owner[key]!r} both report "
+                    f"{key!r}. Rename one metric key or configure a single metrics "
+                    "plugin."
+                )
+            owner[key] = name
+            merged[key] = value
+    return merged
 
 
 def run_evaluation(
@@ -405,9 +448,12 @@ def run_evaluation(
             "model.yml, pass schema_path=, or place schema.json under the checkpoint."
         )
 
-    metrics_callable: Optional[Callable[..., dict[str, float]]] = None
-    if metrics_fn is not None:
-        metrics_callable = _resolve_callable("metrics", metrics_fn, METRICS)
+    metrics_names = (
+        [str(m) for m in metrics_fn]
+        if isinstance(metrics_fn, (list, tuple))
+        else ([str(metrics_fn)] if metrics_fn is not None else [])
+    )
+    metrics_callables = _resolve_metrics(metrics_fn)
 
     row_results: list[RowEval] = []
     failures: list[dict] = []
@@ -481,8 +527,8 @@ def run_evaluation(
             )
 
     n = len(row_results)
-    if metrics_callable is not None:
-        metrics = metrics_callable(row_results)
+    if metrics_callables:
+        metrics = _merge_metrics(metrics_callables, row_results, metrics_names)
     else:
         # Layer-pass rates only.
         layer_pass: dict[int, int] = {}
@@ -498,6 +544,26 @@ def run_evaluation(
         metrics["all_layers_pass_rate"] = all_ok / n if n else 0.0
 
     per_class = _category_buckets(row_results)
+
+    # Anything the predictor did to the raw model output (brace repair) or to
+    # the input (truncation at the token budget) is reported, so a pass rate is
+    # never quietly a measurement of a repaired output.
+    extras: dict[str, Any] = {"max_input_tokens": max_input_tokens}
+    report_extras = getattr(pred_obj, "report_extras", None)
+    if callable(report_extras):
+        extras.update(report_extras() or {})
+    truncated = extras.get("truncated_inputs")
+    if truncated:
+        console.print(
+            f"[yellow]warning[/] {truncated}/{n} inputs exceeded "
+            f"max_input_tokens={max_input_tokens} and were truncated"
+        )
+    repaired = extras.get("brace_repairs")
+    if repaired:
+        console.print(
+            f"[yellow]warning[/] brace repair rewrote {repaired}/{n} model outputs "
+            "(evaluation.repair_braces); pass rates include the repair"
+        )
 
     identity_name = model_def.name if model_def else checkpoint_dir.name
     identity_version = model_def.version if model_def else ""
@@ -529,6 +595,7 @@ def run_evaluation(
         latency_ms=latency_stats(timings),
         baseline_delta=baseline_delta(metrics, baseline_path),
         sample_failures=failures,
+        extras=extras,
         gates=gates_payload,
         passed=passed,
     )

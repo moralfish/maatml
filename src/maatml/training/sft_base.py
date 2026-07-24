@@ -337,9 +337,13 @@ def _save_sft_artifacts(
     *,
     save_mode: str,
     base_model_id: str,
-    spec_path: Path,
+    spec_path: Optional[Path] = None,
 ) -> dict[str, Any]:
-    """Persist merged and/or adapter weights per ``lora.save_mode``."""
+    """Persist merged and/or adapter weights per ``lora.save_mode``.
+
+    ``spec_path`` is copied in as ``prompt_spec.json`` when the architecture
+    has one; the preference trainers reuse this saver and have none.
+    """
     mode = (save_mode or "merged").lower()
     if mode not in ("merged", "adapter", "both"):
         raise ValueError(
@@ -371,7 +375,8 @@ def _save_sft_artifacts(
         model.save_pretrained(out_dir)
         tokenizer.save_pretrained(out_dir)
 
-    shutil.copy2(spec_path, out_dir / "prompt_spec.json")
+    if spec_path is not None:
+        shutil.copy2(spec_path, out_dir / "prompt_spec.json")
     return meta
 
 
@@ -477,22 +482,24 @@ def train_sft(
         trial=trial,
     )
 
-    train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
-    val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
-    if limit is not None:
-        train_rows = train_rows[:limit]
-        val_rows = val_rows[: max(2, limit // 4)]
-    if not train_rows:
-        raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
-
-    console.print(
-        f"[cyan]{log_label} train[/]: run={run.run_id} model={cfg.model_id} "
-        f"train={len(train_rows)} val={len(val_rows)} lora={cfg.lora.enabled} "
-        f"precision={cfg.precision}"
-        + (f" quant={cfg.quantization.enabled()}" if cfg.quantization else "")
-    )
-
+    # The run record exists from here on: reading the splits is fallible too,
+    # so it belongs inside the handler that marks the run `aborted`.
     try:
+        train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
+        val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
+        if limit is not None:
+            train_rows = train_rows[:limit]
+            val_rows = val_rows[: max(2, limit // 4)]
+        if not train_rows:
+            raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
+
+        console.print(
+            f"[cyan]{log_label} train[/]: run={run.run_id} model={cfg.model_id} "
+            f"train={len(train_rows)} val={len(val_rows)} lora={cfg.lora.enabled} "
+            f"precision={cfg.precision}"
+            + (f" quant={cfg.quantization.enabled()}" if cfg.quantization else "")
+        )
+
         tokenizer = AutoTokenizer.from_pretrained(
             cfg.model_id, revision=cfg.model_revision
         )
@@ -530,12 +537,16 @@ def train_sft(
         model = _maybe_attach_lora(model, cfg.lora)
 
         train_file = dataset_dir / "train.jsonl"
+        val_file = dataset_dir / "val.jsonl"
         prompt_hash = sha256_file(spec_path) if spec_path.is_file() else stable_hash(prompt_spec)
         cache_key = stable_hash(
             _tokenizer_cache_identity(tokenizer),
             cfg.max_input_tokens,
             prompt_hash,
             sha256_file(train_file) if train_file.is_file() else "",
+            # val.jsonl content too: re-preparing with the same train split but
+            # a different val split used to reuse a stale val cache.
+            sha256_file(val_file) if val_file.is_file() else "",
             "causal_sft",
             target_field,
             request_field,

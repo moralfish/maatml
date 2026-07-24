@@ -24,6 +24,7 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs
+from .sft_config import validate_precision
 
 
 @dataclass
@@ -40,7 +41,7 @@ class Seq2SeqConfig:
     batch_size: int = 8
     grad_accum: int = 2
     learning_rate: float = 3.0e-5
-    epochs: int = 6
+    epochs: float = 6.0
     weight_decay: float = 0.01
     warmup_ratio: float = 0.06
     seed: int = 1337
@@ -65,11 +66,13 @@ class Seq2SeqConfig:
             batch_size=int(d.get("batch_size", 8)),
             grad_accum=int(d.get("grad_accum", 2)),
             learning_rate=float(d.get("learning_rate", 3.0e-5)),
-            epochs=int(d.get("epochs", 6)),
+            # Fractional epochs are honoured (parity with the SFT config);
+            # int() silently floored `epochs: 0.5` to zero epochs of training.
+            epochs=float(d.get("epochs", 6.0)),
             weight_decay=float(d.get("weight_decay", 0.01)),
             warmup_ratio=float(d.get("warmup_ratio", 0.06)),
             seed=int(d.get("seed", 1337)),
-            precision=d.get("precision", "bf16"),
+            precision=validate_precision(d.get("precision", "bf16")),
             grad_checkpointing=bool(d.get("grad_checkpointing", False)),
             eval_steps=int(d.get("eval_steps", 9999)),
             save_steps=int(d.get("save_steps", 250)),
@@ -96,10 +99,38 @@ class Seq2SeqResult:
     train_runtime: float
 
 
+def has_target(row: dict, target_field: str) -> bool:
+    """Does this row carry a usable seq2seq target?
+
+    A missing / empty / falsy target used to serialise to the literal string
+    ``"{}"`` (or ``""``), so the model was trained to emit that. Rows that
+    cannot supply a target are counted and dropped, never silently trained on.
+    """
+    value = row.get(target_field)
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (dict, list, tuple, set)):
+        return bool(value)
+    return True
+
+
+def _drop_targetless(rows: list[dict], target_field: str) -> tuple[list[dict], int]:
+    """Split rows into (usable, dropped_count) by :func:`has_target`."""
+    kept = [row for row in rows if has_target(row, target_field)]
+    return kept, len(rows) - len(kept)
+
+
 def _serialise_target(
     target, *, key_order: Optional[list[str]] = None
 ) -> str:
     """Canonical compact-JSON (or passthrough string) serialisation of the target."""
+    if target is None or (hasattr(target, "__len__") and len(target) == 0):
+        raise ValueError(
+            "seq2seq target is empty; rows without a target must be dropped "
+            "before tokenization (see has_target)"
+        )
     if isinstance(target, str):
         return target
     if not isinstance(target, dict):
@@ -136,7 +167,7 @@ def _build_dataset(
         def __getitem__(self, idx: int) -> dict:
             row = self.samples[idx]
             request = row.get(request_field, "")
-            target_val = row.get(target_field) or {}
+            target_val = row.get(target_field)
 
             source = source_prefix + request
             target = _serialise_target(target_val, key_order=target_key_order)
@@ -352,38 +383,44 @@ def train_seq2seq_model(
         trial=trial,
     )
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        cfg.model_id, use_fast=True, revision=cfg.model_revision
-    )
+    # Everything after the run record exists runs under the finish handler:
+    # a tokenizer download failure or an unreadable split must mark the run
+    # `aborted`, not leave it `running` forever.
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(
+            cfg.model_id, use_fast=True, revision=cfg.model_revision
+        )
 
-    train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
-    val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
-    if limit is not None:
-        train_rows = train_rows[:limit]
-        val_rows = val_rows[: max(2, limit // 4)]
-    if not train_rows:
-        raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
+        train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
+        val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
+        if limit is not None:
+            train_rows = train_rows[:limit]
+            val_rows = val_rows[: max(2, limit // 4)]
+        if not train_rows:
+            raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
 
-    print(
-        f"seq2seq: run={run.run_id} model={cfg.model_id} train={len(train_rows)} "
-        f"val={len(val_rows)} src_len={cfg.source_max_len} tgt_len={cfg.target_max_len} "
-        f"epochs={cfg.epochs}"
-    )
+        train_rows, dropped_train = _drop_targetless(train_rows, target_field)
+        val_rows, dropped_val = _drop_targetless(val_rows, target_field)
+        if dropped_train or dropped_val:
+            print(
+                f"seq2seq: dropped {dropped_train} train / {dropped_val} val rows "
+                f"with no {target_field!r} (they would have trained on an empty target)"
+            )
+        if not train_rows:
+            raise ValueError(
+                f"Every training row in {dataset_dir / 'train.jsonl'} is missing "
+                f"{target_field!r}; check dataset.target_field"
+            )
 
-    key_order = list(target_key_order) if target_key_order else None
-    train_ds = _build_dataset(
-        train_rows,
-        tokenizer,
-        cfg.source_max_len,
-        cfg.target_max_len,
-        source_prefix=source_prefix,
-        target_key_order=key_order,
-        request_field=request_field,
-        target_field=target_field,
-    )
-    val_ds = (
-        _build_dataset(
-            val_rows,
+        print(
+            f"seq2seq: run={run.run_id} model={cfg.model_id} train={len(train_rows)} "
+            f"val={len(val_rows)} src_len={cfg.source_max_len} tgt_len={cfg.target_max_len} "
+            f"epochs={cfg.epochs}"
+        )
+
+        key_order = list(target_key_order) if target_key_order else None
+        train_ds = _build_dataset(
+            train_rows,
             tokenizer,
             cfg.source_max_len,
             cfg.target_max_len,
@@ -392,13 +429,23 @@ def train_seq2seq_model(
             request_field=request_field,
             target_field=target_field,
         )
-        if val_rows
-        else None
-    )
+        val_ds = (
+            _build_dataset(
+                val_rows,
+                tokenizer,
+                cfg.source_max_len,
+                cfg.target_max_len,
+                source_prefix=source_prefix,
+                target_key_order=key_order,
+                request_field=request_field,
+                target_field=target_field,
+            )
+            if val_rows
+            else None
+        )
 
-    report_to = normalize_report_to(training_dict.get("report_to"))
-    group_by_length = bool(training_dict.get("group_by_length", False))
-    try:
+        report_to = normalize_report_to(training_dict.get("report_to"))
+        group_by_length = bool(training_dict.get("group_by_length", False))
         result = _train_loop(
             cfg,
             train_ds,

@@ -34,7 +34,13 @@ evaluation:
 ```
 
 `load_model_plugins` imports the package (or `.py` file); side-effect
-registrations run at import time.
+registrations run at import time. It is the single owner of that import and is
+idempotent, so a folder's plugin code runs once per process no matter how many
+commands (or library calls) ask for it. Pass `force=True` to re-execute it.
+
+A plugin source that fails to import is recorded rather than skipped in
+silence: `maatml plugins` lists the failures under `unavailable`, and an
+`Unknown … plugin` error names them, which is usually why a name is missing.
 
 > **Trust boundary.** These imports run arbitrary Python at load time. Because
 > every command reads `model.yml`, even `maatml validate` and `maatml plan`
@@ -57,7 +63,15 @@ def my_generator(model_def, *, seed: int = 0, **kwargs):
 ```
 
 Core runs `build_gated_corpus(generate_fn, validate_fn, target_n=…)` and
-appends accepted rows to `dataset.seed_samples`.
+appends accepted rows to `dataset.seed_samples`, skipping rows already in the
+corpus (matched by `sample_id` or content). Returning `None` means "no
+candidate this time" and costs one attempt; raising is recorded as a rejected
+row. Raise `maatml.data.gated.GenerationAbort` to stop the run immediately
+(the teacher client does this after five consecutive request failures).
+
+Stamp a `family` (or whatever `dataset.group_by` names) on generated rows.
+Rows that share one group key cannot be split, so a corpus where every row
+carries the same key is split per row with a warning instead.
 
 Optional teacher path: `maatml datagen --teacher` uses
 `MAATML_TEACHER_BASE_URL` / `MAATML_TEACHER_API_KEY` (`pip install maatml[teacher]`).
@@ -74,6 +88,27 @@ def export_my_fmt(model_def, checkpoint_dir, out_dir, *, run_id=None):
 ```
 
 Always write / update `manifest.json` via `maatml.export.manifest`.
+
+## Testing plugins
+
+Registries are process-global. Snapshot and restore them around a test through
+the public API instead of touching registry internals:
+
+```python
+from maatml.registry import restore_registries, snapshot_registries
+
+snapshot = snapshot_registries()
+try:
+    ...  # register, load a model folder, assert
+finally:
+    restore_registries(snapshot)
+```
+
+`reset_registries()` wipes every registry (and forgets which model-folder
+plugins have run) for a blank slate; `reset_registries(rediscover=True)`
+re-imports the built-ins afterwards. `REGISTRY.unregister(name)` drops one
+entry. `discover_plugins()` only adds registrations, so it never removes what a
+model folder registered.
 
 ## Deprecation policy
 

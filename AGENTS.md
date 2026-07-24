@@ -43,6 +43,9 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
 .venv/bin/maatml runs     examples/<name>/
 .venv/bin/maatml plugins
+# Global: maatml --debug <command> prints tracebacks for user errors
+# (missing file, unparseable model.yml, unknown plugin), which otherwise
+# print a single line.
 
 # Multi-GPU (CUDA): HF Trainer / accelerate owns placement; rank-0 writes runs.jsonl
 accelerate launch -m maatml.cli train examples/<name>/
@@ -169,3 +172,7 @@ output/eval/<run>.{json,md}
   model def; `maatml sweep` runs a cartesian product of `--param` axes (cap with
   `--max-trials`).
 - **Tests** live under `tests/` (core) and `examples/*/tests/` (task plugins).
+  Torch-gated tests (`pytest.importorskip("torch")`) run in the `ml-smoke` CI
+  job; the torch-free matrix runs with `-rs` so those skips stay visible.
+  `tests/conftest.py` snapshots and restores the plugin registries around every
+  test through the public API (`snapshot_registries` / `restore_registries`).

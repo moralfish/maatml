@@ -32,6 +32,7 @@ from .config import config_key_warnings, get_dataset_cfg, load_model_def
 from .overrides import (
     apply_overrides,
     expand_param_grid,
+    minimizes,
     overrides_from_mapping,
     pick_metric,
 )
@@ -41,6 +42,7 @@ from .registry import (
     TRAINERS,
     discover_plugins,
     list_all_plugins,
+    load_errors,
     load_model_plugins,
 )
 from .runs import list_runs, resolve_checkpoint
@@ -52,6 +54,40 @@ os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="maatml CLI")
 console = Console()
+
+_STATE: dict[str, bool] = {"debug": False}
+
+# Failures that mean "the input or the model folder is wrong", not "maatml
+# broke". They print one actionable line; --debug restores the traceback.
+_USER_ERRORS = (
+    FileNotFoundError,
+    IsADirectoryError,
+    NotADirectoryError,
+    PermissionError,
+    ValueError,
+    KeyError,
+    ImportError,
+)
+
+
+@app.callback()
+def _main_callback(
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Print full tracebacks for user errors (missing files, invalid "
+        "model.yml, unknown plugins) instead of a single line.",
+    ),
+) -> None:
+    """maatml CLI."""
+    _STATE["debug"] = debug
+
+
+def _user_message(exc: BaseException) -> str:
+    """One-line message for a user error (KeyError's str() adds quotes)."""
+    if isinstance(exc, KeyError) and exc.args and isinstance(exc.args[0], str):
+        return exc.args[0]
+    return str(exc) or type(exc).__name__
 
 
 # ---------------------------------------------------------------------------
@@ -65,14 +101,19 @@ def _boot_plugins(md) -> None:
         load_model_plugins(md.model_dir, md.plugins)
 
 
-def _default_eval_keys(md) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Infer predictor/validator/metrics from evaluation: or architecture/task."""
+def _default_eval_keys(md) -> tuple[Optional[str], Optional[str], Any]:
+    """Infer predictor/validator/metrics from evaluation: or architecture/task.
+
+    ``evaluation.metrics`` may be a single name or a list; every entry runs and
+    the results are merged (the harness rejects two plugins claiming the same
+    metric key). A list is no longer silently truncated to its first entry.
+    """
     ev = md.evaluation or {}
     predictor = ev.get("predictor")
     validator = ev.get("validator")
     metrics = ev.get("metrics")
-    if isinstance(metrics, list):
-        metrics = metrics[0] if metrics else None
+    if isinstance(metrics, list) and not metrics:
+        metrics = None
 
     arch = normalize_architecture(md.architecture)
     if predictor is None:
@@ -203,7 +244,9 @@ def cmd_sweep(
 
     arch = normalize_architecture(base.architecture)
     trainer = TRAINERS.get(base.architecture) or TRAINERS.require(arch)
-    ranking: list[tuple[Optional[float], dict, Any]] = []
+    scored: list[tuple[float, dict, Any, str]] = []
+    failures: list[tuple[dict, str]] = []
+    skipped: list[tuple[dict, Optional[str]]] = []
 
     for i, trial_map in enumerate(grid):
         md = _clone_model_def(base)
@@ -217,40 +260,63 @@ def cmd_sweep(
         console.print(
             f"[cyan]sweep[/] trial {i + 1}/{len(grid)} params={trial_map}"
         )
-        result = trainer(
-            md,
-            smoke=smoke,
-            limit=limit,
-            device=device,
-            seed=seed,
-            trial=trial_meta,
-        )
+        # One bad combination used to abort the whole sweep after the earlier
+        # trials had already trained. Record it and keep going; the exit code
+        # still reports the failure at the end.
+        try:
+            result = trainer(
+                md,
+                smoke=smoke,
+                limit=limit,
+                device=device,
+                seed=seed,
+                trial=trial_meta,
+            )
+        except Exception as exc:  # noqa: BLE001  a trial failure is data, not a crash
+            failures.append((trial_map, f"{type(exc).__name__}: {exc}"))
+            console.print(f"  [red]-> trial failed[/] {type(exc).__name__}: {exc}")
+            continue
         key, val = pick_metric(result.metrics, metric)
-        ranking.append((val, trial_map, result))
         console.print(
             f"  -> run={Path(result.out_dir).name} "
             f"{key or 'metric'}={val if val is not None else 'n/a'}"
         )
-
-    scored: list[tuple[float, bool, dict, Any, Optional[str]]] = []
-    for val, trial_map, result in ranking:
-        key, _ = pick_metric(result.metrics, metric)
-        minimize = key is not None and "loss" in key.lower()
-        if val is None:
+        if val is None or key is None:
+            skipped.append((trial_map, key))
             continue
-        scored.append((val, minimize, trial_map, result, key))
+        scored.append((val, trial_map, result, key))
 
-    if scored:
-        minimize = scored[0][1]
-        scored.sort(key=lambda t: t[0], reverse=not minimize)
-        console.print("[bold]sweep ranking[/]")
-        for rank, (val, _, trial_map, result, key) in enumerate(scored, start=1):
+    # Rank only trials that reported the same metric: comparing eval_loss
+    # against, say, accuracy would order them by an accident of naming.
+    ranked_key = metric or (scored[0][3] if scored else None)
+    comparable = [entry for entry in scored if entry[3] == ranked_key]
+    incomparable = [entry for entry in scored if entry[3] != ranked_key]
+
+    if comparable:
+        minimize = minimizes(ranked_key)
+        comparable.sort(key=lambda t: t[0], reverse=not minimize)
+        direction = "lower is better" if minimize else "higher is better"
+        console.print(f"[bold]sweep ranking[/] ({ranked_key}, {direction})")
+        for rank, (val, trial_map, result, key) in enumerate(comparable, start=1):
             console.print(
                 f"  {rank}. {key}={val:.6g}  params={trial_map}  "
                 f"out={Path(result.out_dir).name}"
             )
     else:
         console.print("[yellow]sweep finished with no numeric metrics to rank[/]")
+
+    for trial_map, key in skipped:
+        console.print(f"[yellow]unranked[/] params={trial_map} (no numeric metric)")
+    for _val, trial_map, _result, key in incomparable:
+        console.print(
+            f"[yellow]unranked[/] params={trial_map} reported {key!r}, "
+            f"not {ranked_key!r}"
+        )
+    if failures:
+        console.print(f"[red]{len(failures)} trial(s) failed[/]")
+        for trial_map, err in failures:
+            console.print(f"  params={trial_map}: {err}")
+        raise typer.Exit(code=1)
 
 
 @app.command("evaluate")
@@ -264,7 +330,12 @@ def cmd_evaluate(
     split: str = typer.Option("test", "--split"),
     device: str = typer.Option("auto", "--device"),
     baseline: Optional[Path] = typer.Option(None, "--baseline"),
-    max_input_tokens: int = typer.Option(2048, "--max-input-tokens"),
+    max_input_tokens: Optional[int] = typer.Option(
+        None,
+        "--max-input-tokens",
+        help="Input token budget; defaults to packaging.max_input_tokens so "
+        "eval measures the same budget serve and export --parity enforce",
+    ),
     limit: Optional[int] = typer.Option(None, "--limit"),
     gate: bool = typer.Option(
         False,
@@ -279,6 +350,7 @@ def cmd_evaluate(
     from .evaluation import predictors as _predictors  # noqa: F401
     from .evaluation.harness import (
         GateConfigError,
+        _resolve_metrics,
         resolve_gate_spec,
         resolve_validator,
         run_evaluation,
@@ -286,16 +358,14 @@ def cmd_evaluate(
     from .evaluation.runner import write_markdown_summary
     from .runs import get_run, update_run_gates
 
-    # Fast-fail before the (expensive) checkpoint load if --gate has nothing to enforce.
+    # Every configuration check runs before the checkpoint is resolved and
+    # loaded: a misconfigured model.yml should say so, not report "no
+    # checkpoints found" (or spend minutes loading weights first).
     if gate:
         try:
             resolve_gate_spec(md)
         except GateConfigError as exc:
             raise typer.BadParameter(str(exc), param_hint="--gate") from exc
-
-    ckpt = resolve_checkpoint(md, checkpoint)
-    md.eval_dir.mkdir(parents=True, exist_ok=True)
-    out_path = md.eval_dir / f"{ckpt.name}.json"
 
     predictor, validator, metrics = _default_eval_keys(md)
     if predictor is None:
@@ -306,12 +376,27 @@ def cmd_evaluate(
     if validator is None:
         console.print("[yellow]no validator configured, scoring JSON parse only[/]")
     else:
-        # Fail before the expensive checkpoint load if a validator is configured
-        # but does not resolve (plugins are already loaded via _boot_plugins).
+        # Plugins are already loaded via _boot_plugins, so an unresolvable
+        # validator name is a config error we can report immediately.
         try:
             resolve_validator(validator)
         except GateConfigError as exc:
             raise typer.BadParameter(str(exc), param_hint="evaluation.validator") from exc
+
+    try:
+        _resolve_metrics(metrics)
+    except KeyError as exc:
+        raise typer.BadParameter(str(exc), param_hint="evaluation.metrics") from exc
+
+    ckpt = resolve_checkpoint(md, checkpoint)
+    md.eval_dir.mkdir(parents=True, exist_ok=True)
+    out_path = md.eval_dir / f"{ckpt.name}.json"
+
+    token_budget = (
+        max_input_tokens
+        if max_input_tokens is not None
+        else md.packaging.max_input_tokens
+    )
 
     report = run_evaluation(
         checkpoint_dir=ckpt,
@@ -323,7 +408,7 @@ def cmd_evaluate(
         metrics_fn=metrics,
         device=device,
         split=split,
-        max_input_tokens=max_input_tokens,
+        max_input_tokens=token_budget,
         baseline_path=baseline,
         limit=limit,
         task=md.task,
@@ -508,6 +593,7 @@ def cmd_datagen(
     md = load_model_def(model_dir)
     _boot_plugins(md)
     from .data.datagen import DatagenConfigError, run_datagen
+    from .data.gated import GenerationAbort
 
     try:
         result = run_datagen(
@@ -522,6 +608,9 @@ def cmd_datagen(
     except DatagenConfigError as exc:
         console.print(f"[red]datagen refused[/] {exc}")
         raise typer.Exit(code=1) from exc
+    except GenerationAbort as exc:
+        console.print(f"[red]datagen aborted[/] {exc}")
+        raise typer.Exit(code=1) from exc
     except (KeyError, ImportError) as exc:
         console.print(f"[red]datagen failed[/] {exc}")
         raise typer.Exit(code=1) from exc
@@ -529,11 +618,16 @@ def cmd_datagen(
     console.print(
         f"[green]datagen[/] status={status} generator={result['generator']} "
         f"accepted={result['accepted']} rejected={result['rejected']} "
-        f"out={result['out_path']}"
+        f"duplicates={result['duplicates']} out={result['out_path']}"
     )
+    if result["teacher_failures"]:
+        console.print(
+            f"[yellow]note[/] teacher request failures: {result['teacher_failures']} "
+            f"(see {result['card_path']})"
+        )
     if result["protected_existing"]:
         console.print(
-            "[yellow]note[/] nothing accepted; existing seed file left unchanged"
+            "[yellow]note[/] nothing new accepted; existing seed file left unchanged"
         )
 
 
@@ -692,9 +786,22 @@ def cmd_plugins() -> None:
         for entry in entries:
             console.print(f"  {entry.name}  [dim]{entry.source}[/]")
 
+    errors = load_errors()
+    if errors:
+        console.print(f"[yellow]unavailable[/] ({len(errors)} source(s) failed to load)")
+        for source, err in errors:
+            console.print(f"  {source}  [dim]{err}[/]")
+
 
 def main() -> None:
-    app()
+    try:
+        app()
+    except _USER_ERRORS as exc:
+        if _STATE["debug"]:
+            raise
+        console.print(f"[red]error[/] {_user_message(exc)}")
+        console.print("[dim]re-run with --debug for the full traceback[/]")
+        raise SystemExit(1) from exc
 
 
 if __name__ == "__main__":

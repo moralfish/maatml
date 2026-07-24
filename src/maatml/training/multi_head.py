@@ -28,6 +28,7 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs
+from .sft_config import validate_precision
 
 _PATH_TOKEN = re.compile(r"([^[.\]]+)|\[(\d+)\]")
 
@@ -77,11 +78,17 @@ class HeadSpec:
         }
 
 
+_LEGACY_HEAD_KEYS = ("error_codes", "severities")
+
+
 def parse_heads(training_dict: dict) -> list[HeadSpec]:
     """Parse ``training.heads`` (list or dict) into ``HeadSpec`` list.
 
-    Also accepts legacy ``head_loss_weights`` + ``heads.error_codes`` /
-    ``heads.severities`` shape used by older jcl model.yml files.
+    Also accepts the legacy ``head_loss_weights`` + ``heads.error_codes`` /
+    ``heads.severities`` shape used by older jcl model.yml files. That
+    fallback fires only when those legacy keys are actually present: an absent
+    or malformed ``training.heads`` is a configuration error, not a silent
+    switch to JCL's four hardcoded heads.
     """
     raw = training_dict.get("heads")
     if isinstance(raw, list) and raw:
@@ -103,6 +110,15 @@ def parse_heads(training_dict: dict) -> list[HeadSpec]:
     # Legacy jcl shape: heads.error_codes / heads.severities + head_loss_weights
     legacy = raw if isinstance(raw, dict) else {}
     weights = training_dict.get("head_loss_weights") or {}
+    has_legacy_keys = any(k in legacy for k in _LEGACY_HEAD_KEYS) or bool(weights)
+    if not has_legacy_keys:
+        raise ValueError(
+            "training.heads must be a non-empty list of head specs "
+            "(name / kind / labels / target_path / loss_weight). "
+            f"Got {raw!r}. The legacy JCL head shape (heads.error_codes / "
+            "heads.severities / head_loss_weights) is still accepted when "
+            "those keys are present."
+        )
     error_codes = list(
         legacy.get("error_codes")
         or [
@@ -149,19 +165,74 @@ def parse_heads(training_dict: dict) -> list[HeadSpec]:
     ]
 
 
+class UnknownLabelError(ValueError):
+    """A gold value that does not map to any declared head label."""
+
+
+_TRUE_ALIASES = ("true", "valid", "yes", "pass", "ok")
+_FALSE_ALIASES = ("false", "invalid", "no", "fail")
+
+
 def _label_index(value: Any, labels: list[str]) -> int:
-    """Map a gold value to a class index."""
-    none_idx = labels.index("none") if "none" in labels else 0
+    """Map a gold value to a class index, or raise :class:`UnknownLabelError`.
+
+    Unknown values used to land on ``none`` (or index 0), so a typo'd or
+    out-of-vocabulary gold label trained the model to predict the wrong class
+    while every count still looked healthy.
+
+    Booleans map through the declared labels, not through position: ``True``
+    picks whichever of ``true`` / ``valid`` / ``yes`` / ``pass`` / ``ok`` the
+    head declares (``False`` likewise), so ``labels: [valid, invalid]`` and
+    ``labels: [invalid, valid]`` both behave. A two-label head with no
+    recognisable names falls back to False → index 0, True → index 1.
+    """
     if isinstance(value, bool):
-        if labels == ["invalid", "valid"] or len(labels) == 2:
+        aliases = _TRUE_ALIASES if value else _FALSE_ALIASES
+        for alias in aliases:
+            if alias in labels:
+                return labels.index(alias)
+        if len(labels) == 2:
             return 1 if value else 0
-        return int(value)
+        raise UnknownLabelError(
+            f"boolean gold {value!r} does not map to any of {labels!r}; "
+            "declare a boolean-looking label pair (e.g. [invalid, valid])"
+        )
     if value is None or value == "":
-        return none_idx
+        if "none" in labels:
+            return labels.index("none")
+        raise UnknownLabelError(
+            f"missing gold value and no 'none' label declared in {labels!r}"
+        )
     s = str(value)
     if s in labels:
         return labels.index(s)
-    return none_idx
+    raise UnknownLabelError(f"gold label {s!r} is not one of {labels!r}")
+
+
+def scan_label_coverage(
+    rows: list[dict], heads: list[HeadSpec], *, target_field: str
+) -> dict[str, dict[str, int]]:
+    """Count gold values that no classification head label covers.
+
+    Runs before training so an unmappable corpus fails loudly at startup
+    instead of quietly training every unknown row as class 0 / ``none``.
+    """
+    from collections import Counter
+
+    unknown: dict[str, Counter] = {}
+    for row in rows:
+        gold = row.get(target_field)
+        if not isinstance(gold, dict):
+            gold = {}
+        for head in heads:
+            if head.kind == "line_pointer":
+                continue
+            raw = _resolve_path(gold, head.target_path)
+            try:
+                _label_index(raw, head.labels)
+            except UnknownLabelError:
+                unknown.setdefault(head.name, Counter())[repr(raw)] += 1
+    return {name: dict(counter.most_common(5)) for name, counter in unknown.items()}
 
 
 def _line_start_offset(text: str, line_no: int) -> int:
@@ -184,7 +255,7 @@ class MultiHeadConfig:
     batch_size: int = 16
     grad_accum: int = 1
     learning_rate: float = 2.0e-5
-    epochs: int = 4
+    epochs: float = 4.0
     weight_decay: float = 0.01
     warmup_ratio: float = 0.06
     seed: int = 1337
@@ -207,11 +278,12 @@ class MultiHeadConfig:
             batch_size=int(d.get("batch_size", 16)),
             grad_accum=int(d.get("grad_accum", 1)),
             learning_rate=float(d.get("learning_rate", 2.0e-5)),
-            epochs=int(d.get("epochs", 4)),
+            # Fractional epochs are honoured (parity with the SFT config).
+            epochs=float(d.get("epochs", 4.0)),
             weight_decay=float(d.get("weight_decay", 0.01)),
             warmup_ratio=float(d.get("warmup_ratio", 0.06)),
             seed=int(d.get("seed", 1337)),
-            precision=d.get("precision", "bf16"),
+            precision=validate_precision(d.get("precision", "bf16")),
             grad_checkpointing=bool(d.get("grad_checkpointing", False)),
             eval_steps=int(d.get("eval_steps", 9999)),
             save_steps=int(d.get("save_steps", 250)),
@@ -622,60 +694,66 @@ def train_multi_head(
     request_field = ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
     target_field = ds_cfg.get("target_field") or "target"
 
-    text_transform = None
-    transform_name = ds_cfg.get("text_transform")
-    if transform_name:
-        text_transform = TRANSFORMS.require(str(transform_name))
+    # From here on the run record exists, so every failure (tokenizer load,
+    # unreadable split, unmappable labels) must mark it `aborted`.
+    try:
+        text_transform = None
+        transform_name = ds_cfg.get("text_transform")
+        if transform_name:
+            text_transform = TRANSFORMS.require(str(transform_name))
 
-    resolved_tokenizer = (
-        Path(tokenizer_path)
-        if tokenizer_path
-        else (
-            model_def.resolve(ds_cfg["tokenizer"])
-            if ds_cfg.get("tokenizer")
-            else None
+        resolved_tokenizer = (
+            Path(tokenizer_path)
+            if tokenizer_path
+            else (
+                model_def.resolve(ds_cfg["tokenizer"])
+                if ds_cfg.get("tokenizer")
+                else None
+            )
         )
-    )
-    if resolved_tokenizer and resolved_tokenizer.exists():
-        from transformers import PreTrainedTokenizerFast
+        if resolved_tokenizer and resolved_tokenizer.exists():
+            from transformers import PreTrainedTokenizerFast
 
-        specials = _default_special_tokens(resolved_tokenizer)
-        tokenizer: Any = PreTrainedTokenizerFast(
-            tokenizer_file=str(resolved_tokenizer),
-            model_max_length=cfg.max_input_tokens,
-            **specials,
+            specials = _default_special_tokens(resolved_tokenizer)
+            tokenizer: Any = PreTrainedTokenizerFast(
+                tokenizer_file=str(resolved_tokenizer),
+                model_max_length=cfg.max_input_tokens,
+                **specials,
+            )
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                cfg.model_id, revision=cfg.model_revision
+            )
+
+        train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
+        val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
+        if limit is not None:
+            train_rows = train_rows[:limit]
+            val_rows = val_rows[: max(2, limit // 4)]
+        if not train_rows:
+            raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
+
+        unknown = scan_label_coverage(
+            train_rows + val_rows, heads, target_field=target_field
         )
-    else:
-        tokenizer = AutoTokenizer.from_pretrained(
-            cfg.model_id, revision=cfg.model_revision
+        if unknown:
+            detail = "; ".join(
+                f"{head}: {counts}" for head, counts in sorted(unknown.items())
+            )
+            raise ValueError(
+                "gold values do not map to the declared head labels "
+                f"({detail}). Fix training.heads[].labels or the corpus; these "
+                "rows would otherwise train as class 0 / 'none'."
+            )
+
+        print(
+            f"multi_head: run={run.run_id} model={cfg.model_id} heads={[h.name for h in heads]} "
+            f"train={len(train_rows)} val={len(val_rows)} "
+            f"max_len={cfg.max_input_tokens} epochs={cfg.epochs}"
         )
 
-    train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
-    val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
-    if limit is not None:
-        train_rows = train_rows[:limit]
-        val_rows = val_rows[: max(2, limit // 4)]
-    if not train_rows:
-        raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
-
-    print(
-        f"multi_head: run={run.run_id} model={cfg.model_id} heads={[h.name for h in heads]} "
-        f"train={len(train_rows)} val={len(val_rows)} "
-        f"max_len={cfg.max_input_tokens} epochs={cfg.epochs}"
-    )
-
-    train_ds = _build_dataset(
-        train_rows,
-        tokenizer,
-        cfg.max_input_tokens,
-        heads,
-        request_field=request_field,
-        target_field=target_field,
-        text_transform=text_transform,
-    )
-    val_ds = (
-        _build_dataset(
-            val_rows,
+        train_ds = _build_dataset(
+            train_rows,
             tokenizer,
             cfg.max_input_tokens,
             heads,
@@ -683,12 +761,21 @@ def train_multi_head(
             target_field=target_field,
             text_transform=text_transform,
         )
-        if val_rows
-        else None
-    )
+        val_ds = (
+            _build_dataset(
+                val_rows,
+                tokenizer,
+                cfg.max_input_tokens,
+                heads,
+                request_field=request_field,
+                target_field=target_field,
+                text_transform=text_transform,
+            )
+            if val_rows
+            else None
+        )
 
-    report_to = normalize_report_to(training_dict.get("report_to"))
-    try:
+        report_to = normalize_report_to(training_dict.get("report_to"))
         result = _train_loop(
             cfg,
             train_ds,

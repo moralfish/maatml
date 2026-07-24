@@ -102,14 +102,16 @@ laptop and deploy to the edge or vLLM.
 
 Most commands take a model folder (containing `model.yml`) as their first
 argument. Outputs land under `<model-folder>/output/` (gitignored). Run
-`maatml <command> --help` for the full flag list.
+`maatml <command> --help` for the full flag list. Errors in your input (a
+missing file, an unparseable `model.yml`, an unregistered plugin) print one
+line; `maatml --debug <command>` prints the traceback.
 
 | Command | What it does |
 | --- | --- |
 | `prepare` | Build `train`/`val`/`test` splits from the seed corpus |
 | `train` | Fine-tune the model (`--smoke`, `--resume auto\|PATH`, `--set K=V`) |
 | `sweep` | Offline grid HPO over `--param K=a,b` |
-| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss |
+| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss. The token budget defaults to `packaging.max_input_tokens` |
 | `export` | Deployable bundle + `manifest.json` (`--format`, `--parity`) |
 | `verify` | Recompute sha256 of an export against its `manifest.json` |
 | `serve` | JSON inference API; `--enforce` rejects invalid outputs (HTTP 422) |

@@ -49,6 +49,10 @@ evaluation:
   validator: spool
   metrics: spool
   predictor: seq2seq
+  # flan-t5's SentencePiece tokenizer maps `{`/`}` to <unk>, so the decoded
+  # output loses its outer braces. Re-adding them is opt-in and counted in the
+  # report's extras (brace_repairs), so the pass rate stays a measurement.
+  repair_braces: true
   # Enforced contract for `maatml evaluate --gate`
   gates:
     json_parse_rate: 0.95

@@ -240,3 +240,20 @@ def pick_metric(
         if isinstance(val, (int, float)) and not isinstance(val, bool):
             return key, float(val)
     return None, None
+
+
+# Metric names whose best value is the smallest one.
+_MINIMIZED_SUBSTRINGS = ("loss", "error", "latency", "perplexity", "ppl", "runtime")
+
+
+def minimizes(metric_name: Optional[str]) -> bool:
+    """Does a lower value of this metric mean a better trial?
+
+    Ranking direction belongs to the metric, not to whichever trial happened to
+    finish first: reading it off ``scored[0]`` meant one trial reporting a
+    different metric could invert the whole ranking.
+    """
+    if not metric_name:
+        return False
+    lowered = metric_name.lower()
+    return any(token in lowered for token in _MINIMIZED_SUBSTRINGS)
