@@ -5,13 +5,15 @@ missing TRL raises a clear install hint.
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..config import ModelDefinition
+from ..data.preference import as_completion_text
 from ..device import (
     effective_dataloader_workers,
     resolve_training_placement,
@@ -20,8 +22,8 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
-from .sft_base import _maybe_attach_lora
-from .sft_config import LoraSettings, QuantizationSettings
+from .sft_base import _maybe_attach_lora, _save_sft_artifacts
+from .sft_config import LoraSettings, QuantizationSettings, validate_precision
 
 
 class PreferenceTrainConfig(BaseModel):
@@ -52,6 +54,11 @@ class PreferenceTrainConfig(BaseModel):
     report_to: Any = None
     model_revision: Optional[str] = None
 
+    @field_validator("precision")
+    @classmethod
+    def _check_precision(cls, v: str) -> str:
+        return validate_precision(v)
+
 
 @dataclass
 class PreferenceTrainResult:
@@ -69,21 +76,31 @@ def _require_trl():
         ) from exc
 
 
-def _load_preference_rows(path: Path, limit: Optional[int]) -> list[dict]:
+def _load_preference_rows(path: Path, limit: Optional[int]) -> tuple[list[dict], int]:
+    """Load ``{prompt, chosen, rejected}`` rows; returns (rows, n_identical).
+
+    Structured completions are JSON-serialised, not ``str()``-ed: a dict
+    completion used to reach the trainer as its Python ``repr``
+    (``{'a': 1}``), teaching the model single quotes and ``None``.
+    """
     rows = list(iter_jsonl(path))
     if limit is not None:
         rows = rows[:limit]
-    # Ensure required keys for TRL.
     cleaned: list[dict] = []
+    identical = 0
     for row in rows:
+        chosen = as_completion_text(row["chosen"])
+        rejected = as_completion_text(row["rejected"])
+        if chosen == rejected:
+            identical += 1
         cleaned.append(
             {
-                "prompt": str(row["prompt"]),
-                "chosen": str(row["chosen"]),
-                "rejected": str(row["rejected"]),
+                "prompt": as_completion_text(row["prompt"]),
+                "chosen": chosen,
+                "rejected": rejected,
             }
         )
-    return cleaned
+    return cleaned, identical
 
 
 def train_preference(
@@ -129,13 +146,25 @@ def train_preference(
         trial=trial,
     )
 
-    train_rows = _load_preference_rows(dataset_dir / "train.jsonl", limit)
-    val_limit = None if limit is None else max(2, limit // 4)
-    val_rows = _load_preference_rows(dataset_dir / "val.jsonl", val_limit)
-    if not train_rows:
-        raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
-
+    # The run record exists from here on, so row loading failures abort it too.
     try:
+        train_rows, identical_train = _load_preference_rows(
+            dataset_dir / "train.jsonl", limit
+        )
+        val_limit = None if limit is None else max(2, limit // 4)
+        val_rows, identical_val = _load_preference_rows(
+            dataset_dir / "val.jsonl", val_limit
+        )
+        if not train_rows:
+            raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
+        if identical_train or identical_val:
+            warnings.warn(
+                f"{identical_train} train / {identical_val} val preference rows have "
+                "identical chosen and rejected completions; they carry no preference "
+                "signal",
+                stacklevel=2,
+            )
+
         tokenizer = AutoTokenizer.from_pretrained(
             cfg.model_id, revision=cfg.model_revision
         )
@@ -281,9 +310,17 @@ def train_preference(
             if isinstance(v, (int, float)):
                 metrics_out[str(k)] = float(v)
 
-        if hasattr(model, "save_pretrained"):
-            model.save_pretrained(out_dir)
-        tokenizer.save_pretrained(out_dir)
+        # Same saver as SFT, so training.lora.save_mode (merged | adapter |
+        # both) means the same thing for DPO/ORPO as it does for causal SFT.
+        # TRL may have attached the adapter itself when peft_config was passed.
+        trained_model = getattr(trainer, "model", model)
+        save_meta = _save_sft_artifacts(
+            trained_model,
+            tokenizer,
+            out_dir,
+            save_mode=cfg.lora.save_mode if cfg.lora.enabled else "merged",
+            base_model_id=cfg.model_id,
+        )
 
         write_run_metadata(
             out_dir,
@@ -300,6 +337,7 @@ def train_preference(
                 "method": method,
                 "distributed": distributed,
                 "model_revision": cfg.model_revision,
+                **save_meta,
             },
         )
         finish_run(model_def, run.run_id, "completed", metrics=metrics_out)

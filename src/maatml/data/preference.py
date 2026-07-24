@@ -5,6 +5,8 @@ Rows are ``{prompt, chosen, rejected}`` (+ optional ``sample_id`` / ``family``).
 """
 from __future__ import annotations
 
+import json
+import warnings
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence, Union
 
@@ -15,6 +17,20 @@ from .pipeline import prepare_rows
 
 ValidatorFn = Callable[[str, str], bool]
 CandidatesFn = Callable[[str], Sequence[str]]
+
+
+def as_completion_text(value: Any) -> str:
+    """Serialise a preference field to the text the trainer will see.
+
+    Strings pass through; structured values become compact JSON. ``str()`` on
+    a dict yields its Python repr (``{'a': 1}``, single quotes, ``None``),
+    which is not the JSON the model is supposed to learn.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value)
 
 
 def normalize_preference(row: dict) -> dict[str, Any]:
@@ -30,10 +46,17 @@ def normalize_preference(row: dict) -> dict[str, Any]:
             f"(keys present: {sorted(row)})"
         )
     out: dict[str, Any] = {
-        "prompt": str(prompt),
-        "chosen": str(chosen),
-        "rejected": str(rejected),
+        "prompt": as_completion_text(prompt),
+        "chosen": as_completion_text(chosen),
+        "rejected": as_completion_text(rejected),
     }
+    if out["chosen"] == out["rejected"]:
+        warnings.warn(
+            "preference row has identical chosen and rejected completions "
+            f"(sample_id={row.get('sample_id') or row.get('id') or '?'}); "
+            "it carries no preference signal",
+            stacklevel=2,
+        )
     for key in ("sample_id", "family", "source", "category"):
         if key in row and row[key] is not None:
             out[key] = row[key]

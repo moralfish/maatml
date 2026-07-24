@@ -5,7 +5,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# `training.precision` values the device profiles understand. Anything else
+# used to fall through resolve_load_dtype as "fp32", so `precision: bfloat16`
+# or a typo trained at a precision nobody asked for.
+VALID_PRECISIONS = ("bf16", "fp16", "fp32")
+
+
+def validate_precision(value: Any) -> str:
+    """Return ``value`` if it is a supported precision, else raise."""
+    text = str(value)
+    if text not in VALID_PRECISIONS:
+        raise ValueError(
+            f"training.precision must be one of {', '.join(VALID_PRECISIONS)}; "
+            f"got {value!r}"
+        )
+    return text
 
 
 class LoraSettings(BaseModel):
@@ -62,6 +78,11 @@ class SFTTrainConfig(BaseModel):
     attn_implementation: Optional[str] = None
     dataloader_workers: Optional[int] = None
     model_revision: Optional[str] = None
+
+    @field_validator("precision")
+    @classmethod
+    def _check_precision(cls, v: str) -> str:
+        return validate_precision(v)
 
 
 @dataclass
