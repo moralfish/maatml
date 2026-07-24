@@ -43,6 +43,9 @@ class RunRecord(BaseModel):
     metrics: Optional[dict[str, float]] = None
     error: Optional[str] = None
     gates: Optional[dict[str, Any]] = None
+    # True when the recorded gate pass came from the smoke tier (`smoke.gates`)
+    # rather than the production thresholds, so the two never look alike.
+    smoke_gated: Optional[bool] = None
     # Optional HPO / sweep trial metadata (rank-0 writes only).
     trial: Optional[dict[str, Any]] = None
 
@@ -268,6 +271,7 @@ def update_run_gates(
     gates: dict[str, Any],
     *,
     metrics: Optional[dict[str, float]] = None,
+    smoke_gated: bool = False,
 ) -> Optional[RunRecord]:
     """Attach eval-gate results to a known run (no-op if run_id unknown)."""
     rec = get_run(model_def, run_id)
@@ -275,6 +279,7 @@ def update_run_gates(
         return None
     payload = rec.model_dump()
     payload["gates"] = gates
+    payload["smoke_gated"] = bool(smoke_gated)
     if metrics is not None:
         payload["metrics"] = {**(payload.get("metrics") or {}), **metrics}
     updated = RunRecord(**payload)

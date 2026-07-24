@@ -127,11 +127,16 @@ class ModelDefinition(BaseModel):
         """`models/<name>/output/eval/`."""
         return self.output_dir / "eval"
 
+    # Keys a `smoke:` overlay may carry that are not training knobs, so they
+    # never reach a trainer config that forbids unknown fields.
+    _SMOKE_ONLY_KEYS = ("gates",)
+
     def merged_smoke(self) -> dict[str, Any]:
         """Return ``training`` overlaid with ``smoke`` overrides.
 
         Used by `--smoke` to run a fast variant of the same training loop without
-        a separate config file.
+        a separate config file. ``smoke.gates`` (the smoke tier the lifecycle
+        runner enforces) is not a training knob and is left out.
         """
         merged = dict(self.training)
         merged.update(self.smoke or {})
@@ -139,6 +144,8 @@ class ModelDefinition(BaseModel):
         if "base_model" in (self.smoke or {}):
             merged["model_id"] = self.smoke["base_model"]
             merged.pop("base_model", None)
+        for key in self._SMOKE_ONLY_KEYS:
+            merged.pop(key, None)
         return merged
 
     def validate_paths(self) -> None:

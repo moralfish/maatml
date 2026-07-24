@@ -40,6 +40,7 @@ are ordered but unversioned.
 | v0.5.1 | Truth and safety | Done |
 | v0.6 | Truth and safety II: gates tell the truth | Done |
 | v0.7 | Silent-failure hardening + test floor | Done |
+| (unreleased) | Fixed lifecycle runner: `maatml run` | Done |
 
 ## Non-goals
 
@@ -296,7 +297,7 @@ end-to-end test green; preparing a datagen-produced corpus yields non-empty
 val/test splits (regression test for the degenerate-group fix); CI includes a
 macOS job.
 
-## Fixed lifecycle runner: `maatml run` (Planned)
+## Fixed lifecycle runner: `maatml run` (Done)
 
 **Tracking:** #15
 
@@ -337,12 +338,18 @@ runner chains must fail loud first; `runs.jsonl` must tolerate a torn line).
   big-bang config rewrite. The typed surface includes `evaluation.validator`
   and gate keys
 
-**Exit criteria:** `maatml run examples/support-ticket-triage/ --smoke` goes
-seeds → verified export in one command in CI using smoke-tier gates, with the
-run record marked smoke-gated; re-run with no changes does no work; a run with
-a misspelled `evaluation.validator` exits non-zero; `run --set` with a
+**Exit criteria (met):** `maatml run examples/support-ticket-triage/ --smoke`
+goes seeds → verified export in one command in CI using smoke-tier gates, with
+the run record and the export manifest marked smoke-gated; a re-run with no
+changes does no work (CI asserts it); a run with a misspelled
+`evaluation.validator` exits non-zero before any step runs; `run --set` with a
 schema-invalid value exits non-zero and leaves `output/pipeline.json`
 unchanged.
+
+The smoke tier gates on `output_nonempty_rate`, a coverage metric maatml always
+reports: a rehearsal cannot earn the production thresholds, and a 0.0 gate
+would pass vacuously, but "the checkpoint saved, reloaded, and produced output"
+is a real claim a smoke run can make.
 
 ## Distill + reviewed flywheel + serve contract (Planned)
 

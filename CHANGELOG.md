@@ -8,10 +8,34 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
-Hygiene backlog: the small items that had been carried outside the tranches.
+The fixed lifecycle runner, plus the hygiene backlog that had been carried
+outside the tranches.
 
 ### Added
 
+- **`maatml run`: the fixed lifecycle in one command.** Walks prepare, train,
+  evaluate (gates enforced), export, verify in order and stops non-zero at the
+  first failure, so one green line means every stage passed. Flags: `--smoke`,
+  `--force`, `--from`, `--until`, `--dry-run`, `--device`, `--seed`, `--limit`,
+  `--format`, `--set`. `datagen` / `ingest` stay outside the runner: they
+  change the seed corpus, which is what makes `prepare` stale.
+- **Step fingerprints in `output/pipeline.json`** (written atomically). Each
+  step records the effective config after `--smoke` / `--set`, its declared
+  input files, the upstream fingerprint, the maatml version and git SHA, the
+  plugin sources, the device profile, and the exporter. A step is skipped only
+  when the fingerprint matches, it completed last time, and its outputs are
+  still present, so this is idempotence rather than a cache.
+- **Smoke-tier gates:** a `smoke:` block may declare its own `gates:`, which
+  `--smoke` runs enforce instead of the production thresholds. The pass is
+  recorded as smoke-gated in the run record (`smoke_gated`) and in the export
+  manifest (`gate_evidence`), so a rehearsal never reads as a real gate pass.
+- **`output_nonempty_rate`** is reported alongside a model's own metrics: it
+  says the checkpoint saved, reloaded, and produced output, which is what a
+  smoke tier can gate on honestly. A metrics plugin claiming that key is an
+  error.
+- **CI:** the ml job runs `maatml run --smoke` end to end on triage, re-runs it
+  to prove nothing further executes, and asserts the manifest records the smoke
+  tier.
 - **`maatml doctor`:** read-only diagnostics for "why did that not work here?".
   Reports the installed optional stacks, the device the CLI would pick and its
   profile, the registry contents plus anything that failed to load, and (given
@@ -33,6 +57,14 @@ Hygiene backlog: the small items that had been carried outside the tranches.
 
 ### Changed
 
+- **Behavior change:** `maatml plan` prints per-step fresh/stale status with
+  the reason a step is stale (which fingerprint component changed), instead of
+  a static list of commands. It is now an alias for `run --dry-run`.
+- The `evaluation:` section is typed where the runner depends on it, so an
+  unknown key, a non-numeric gate, a misspelled validator, or an unregistered
+  metrics plugin fails before any step runs rather than after training.
+- `maatml evaluate` and the runner share one implementation, so both enforce
+  gates, resolve the token budget, and record results on the run identically.
 - Scaffolded `model.yml` omits `base_model` when the architecture has no base
   model id, instead of leaving a `CHANGE_ME` placeholder in the file.
 - `pyproject.toml` is the only dependency manifest: the `requirements*.txt`

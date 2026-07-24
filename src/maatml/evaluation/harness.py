@@ -63,7 +63,44 @@ class GateConfigError(ValueError):
     """Raised when gate enforcement is requested but no gates are configured."""
 
 
-def resolve_gate_spec(model_def: Any) -> dict[str, float]:
+def effective_gates(model_def: Any, *, smoke: bool = False) -> dict[str, float]:
+    """Gate minima for this run, empty when none are configured.
+
+    A ``smoke:`` overlay may declare its own ``gates:``. A smoke run is a
+    rehearsal on a fraction of the data, so holding it to the production
+    thresholds would only teach people to ignore the gate; a smoke tier keeps
+    the gate meaningful at that budget. Runs gated this way are marked
+    smoke-gated everywhere they are recorded, so they never read as a real
+    gate pass.
+    """
+    evaluation = getattr(model_def, "evaluation", None)
+    spec = evaluation.get("gates") if isinstance(evaluation, dict) else None
+    if smoke:
+        smoke_section = getattr(model_def, "smoke", None)
+        smoke_spec = smoke_section.get("gates") if isinstance(smoke_section, dict) else None
+        if isinstance(smoke_spec, dict) and smoke_spec:
+            spec = smoke_spec
+    if not (isinstance(spec, dict) and spec):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in spec.items():
+        try:
+            out[str(key)] = float(value)
+        except (TypeError, ValueError) as exc:
+            raise GateConfigError(
+                f"evaluation.gates[{key!r}] must be a number; got {value!r}"
+            ) from exc
+    return out
+
+
+def uses_smoke_gates(model_def: Any) -> bool:
+    """Does the ``smoke:`` overlay declare its own gates?"""
+    smoke_section = getattr(model_def, "smoke", None)
+    spec = smoke_section.get("gates") if isinstance(smoke_section, dict) else None
+    return isinstance(spec, dict) and bool(spec)
+
+
+def resolve_gate_spec(model_def: Any, *, smoke: bool = False) -> dict[str, float]:
     """Return the configured gate minima, or raise if none are set.
 
     ``evaluate --gate`` (and ``enforce_gates=True``) must not pass vacuously: a
@@ -71,14 +108,13 @@ def resolve_gate_spec(model_def: Any) -> dict[str, float]:
     enforcement against an empty spec is a configuration error rather than a
     silent success.
     """
-    evaluation = getattr(model_def, "evaluation", None)
-    gate_spec = evaluation.get("gates") if isinstance(evaluation, dict) else None
-    if not (isinstance(gate_spec, dict) and gate_spec):
+    gates = effective_gates(model_def, smoke=smoke)
+    if not gates:
         raise GateConfigError(
             "gate enforcement requested but no evaluation.gates are configured. "
             "Add a gates: block to model.yml (see any example) or drop --gate."
         )
-    return {str(k): float(v) for k, v in gate_spec.items()}
+    return gates
 
 
 def check_gates(
@@ -318,6 +354,21 @@ def _resolve_metrics(metrics_fn: Any) -> list[Callable[..., dict[str, float]]]:
     return [_resolve_callable("metrics", entry, METRICS) for entry in entries]
 
 
+# Always computed, whatever metrics plugin runs: it measures the harness end of
+# the contract (did the checkpoint load and emit anything at all?) rather than
+# the model's quality, which is what a smoke tier can gate on honestly.
+COVERAGE_METRIC = "output_nonempty_rate"
+
+
+def coverage_metrics(row_results: list[RowEval]) -> dict[str, float]:
+    """Built-in metrics no plugin owns: prediction coverage."""
+    n = len(row_results)
+    if not n:
+        return {COVERAGE_METRIC: 0.0}
+    nonempty = sum(1 for item in row_results if item.gen_text and item.gen_text.strip())
+    return {COVERAGE_METRIC: nonempty / n}
+
+
 def _merge_metrics(
     callables: list[Callable[..., dict[str, float]]],
     row_results: list[RowEval],
@@ -359,8 +410,14 @@ def run_evaluation(
     prompt_spec_path: Optional[Path] = None,
     task: Optional[str] = None,
     enforce_gates: bool = False,
+    gate_spec: Optional[dict[str, float]] = None,
+    smoke_gated: bool = False,
 ) -> Report:
-    """Run the shared eval loop and write a :class:`Report` JSON."""
+    """Run the shared eval loop and write a :class:`Report` JSON.
+
+    ``gate_spec`` overrides the configured minima (the lifecycle runner passes
+    the smoke tier); ``smoke_gated`` records that the pass came from that tier.
+    """
     discover_plugins()
 
     checkpoint_dir = Path(checkpoint_dir)
@@ -543,6 +600,14 @@ def run_evaluation(
         }
         metrics["all_layers_pass_rate"] = all_ok / n if n else 0.0
 
+    for key, value in coverage_metrics(row_results).items():
+        if key in metrics:
+            raise GateConfigError(
+                f"metrics plugin reports {key!r}, which maatml computes itself "
+                "(prediction coverage). Rename the plugin's metric."
+            )
+        metrics[key] = value
+
     per_class = _category_buckets(row_results)
 
     # Anything the predictor did to the raw model output (brace repair) or to
@@ -579,8 +644,11 @@ def run_evaluation(
     if enforce_gates:
         # Raises GateConfigError when no gates are configured, enforcement must
         # never pass vacuously.
-        gate_spec = resolve_gate_spec(model_def)
-        gates_payload = check_gates(metrics, gate_spec)
+        spec = gate_spec or resolve_gate_spec(model_def, smoke=smoke_gated)
+        gates_payload = check_gates(metrics, spec)
+        # A smoke-tier pass is recorded as such wherever it is stored, so it
+        # can never be read as a production gate pass later.
+        gates_payload["smoke"] = bool(smoke_gated)
         passed = bool(gates_payload["passed"])
 
     report = Report(

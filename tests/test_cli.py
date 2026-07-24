@@ -421,3 +421,97 @@ def test_compare_runs_marks_metrics_a_run_never_reported(tmp_path: Path) -> None
     # The first run never reported accuracy: None, not 0.0.
     assert rows[0]["metrics"]["accuracy"] is None
     assert rows[1]["metrics"]["accuracy"] == 0.9
+
+
+# --- run / plan ------------------------------------------------------------
+
+
+def _runnable_model(tmp_path: Path) -> Path:
+    mdir = tmp_path / "runnable"
+    (mdir / "datasets" / "samples").mkdir(parents=True, exist_ok=True)
+    (mdir / "model.yml").write_text(
+        """name: runnable
+model_id: runnable
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  seed_samples: datasets/samples/seed_samples.jsonl
+evaluation:
+  predictor: causal_sft
+  gates:
+    all_layers_pass_rate: 0.5
+smoke:
+  max_steps: 2
+  gates:
+    output_nonempty_rate: 0.5
+""",
+        encoding="utf-8",
+    )
+    (mdir / "datasets" / "samples" / "seed_samples.jsonl").write_text(
+        json.dumps({"request": "r", "expected_output": {"ok": True}}) + "\n",
+        encoding="utf-8",
+    )
+    return mdir
+
+
+def test_run_dry_run_lists_every_step_as_stale(tmp_path: Path) -> None:
+    mdir = _runnable_model(tmp_path)
+    result = runner.invoke(app, ["run", str(mdir), "--dry-run"])
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    for step in ("prepare", "train", "evaluate", "export", "verify"):
+        assert step in output
+    assert "never run" in output
+    # A dry run does no work and leaves no state behind.
+    assert not (mdir / "output" / "pipeline.json").exists()
+
+
+def test_plan_is_the_same_view_as_run_dry_run(tmp_path: Path) -> None:
+    mdir = _runnable_model(tmp_path)
+    planned = plain(runner.invoke(app, ["plan", str(mdir)]).output)
+    dry = plain(runner.invoke(app, ["run", str(mdir), "--dry-run"]).output)
+    for step in ("prepare", "train", "evaluate", "export", "verify"):
+        assert step in planned and step in dry
+
+
+def test_run_rejects_an_unknown_step_name(tmp_path: Path) -> None:
+    mdir = _runnable_model(tmp_path)
+    result = runner.invoke(app, ["run", str(mdir), "--dry-run", "--from", "nope"])
+    assert result.exit_code == 2
+    assert "--from must be one of" in plain(result.output)
+
+
+def test_run_with_an_invalid_set_leaves_no_state(tmp_path: Path) -> None:
+    """Exit criterion: an invalid --set must not touch output/pipeline.json."""
+    mdir = _runnable_model(tmp_path)
+    runner.invoke(app, ["run", str(mdir), "--dry-run"])  # no state written
+    state = mdir / "output" / "pipeline.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text('{"steps": {"prepare": {"status": "completed"}}}', encoding="utf-8")
+    before = state.read_text(encoding="utf-8")
+
+    result = runner.invoke(app, ["run", str(mdir), "--set", "version=not-semver"])
+    assert result.exit_code == 2
+    assert state.read_text(encoding="utf-8") == before
+
+
+def test_run_with_a_misspelled_validator_exits_nonzero(tmp_path: Path) -> None:
+    """Exit criterion: the config error surfaces before any step runs."""
+    mdir = _runnable_model(tmp_path)
+    result = runner.invoke(
+        app, ["run", str(mdir), "--set", "evaluation.validator=nope_misspelled"]
+    )
+    assert result.exit_code != 0
+    assert "nope_misspelled" in plain(result.output)
+    assert not (mdir / "output" / "pipeline.json").exists()
+
+
+def test_run_without_gates_refuses_to_start(tmp_path: Path) -> None:
+    mdir = _runnable_model(tmp_path)
+    body = (mdir / "model.yml").read_text(encoding="utf-8")
+    (mdir / "model.yml").write_text(
+        body.replace("  gates:\n    all_layers_pass_rate: 0.5\n", ""), encoding="utf-8"
+    )
+    result = runner.invoke(app, ["run", str(mdir)])
+    assert result.exit_code != 0
+    assert "gates" in plain(result.output)

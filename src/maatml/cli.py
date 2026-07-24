@@ -393,85 +393,30 @@ def cmd_evaluate(
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
     _boot_plugins(md)
-    # Ensure predictor registrations are loaded.
-    from .evaluation import predictors as _predictors  # noqa: F401
-    from .evaluation.harness import (
-        GateConfigError,
-        _resolve_metrics,
-        resolve_gate_spec,
-        resolve_validator,
-        run_evaluation,
-    )
-    from .evaluation.runner import write_markdown_summary
-    from .runs import get_run, update_run_gates
+    from .evaluation.harness import GateConfigError
+    from .evaluation.runner import evaluate_model
 
-    # Every configuration check runs before the checkpoint is resolved and
-    # loaded: a misconfigured model.yml should say so, not report "no
-    # checkpoints found" (or spend minutes loading weights first).
-    if gate:
-        try:
-            resolve_gate_spec(md)
-        except GateConfigError as exc:
-            raise typer.BadParameter(str(exc), param_hint="--gate") from exc
-
-    predictor, validator, metrics = _default_eval_keys(md)
-    if predictor is None:
-        raise typer.BadParameter(
-            f"No predictor for architecture={md.architecture!r}; "
-            "set evaluation.predictor in model.yml"
-        )
-    if validator is None:
+    if not (md.evaluation or {}).get("validator"):
         console.print("[yellow]no validator configured, scoring JSON parse only[/]")
-    else:
-        # Plugins are already loaded via _boot_plugins, so an unresolvable
-        # validator name is a config error we can report immediately.
-        try:
-            resolve_validator(validator)
-        except GateConfigError as exc:
-            raise typer.BadParameter(str(exc), param_hint="evaluation.validator") from exc
 
+    # evaluate_model performs every configuration check before it resolves or
+    # loads a checkpoint, so a misconfigured model.yml says so instead of
+    # reporting "no checkpoints found" (or spending minutes loading weights).
     try:
-        _resolve_metrics(metrics)
-    except KeyError as exc:
-        raise typer.BadParameter(str(exc), param_hint="evaluation.metrics") from exc
-
-    ckpt = resolve_checkpoint(md, checkpoint)
-    md.eval_dir.mkdir(parents=True, exist_ok=True)
-    out_path = md.eval_dir / f"{ckpt.name}.json"
-
-    token_budget = (
-        max_input_tokens
-        if max_input_tokens is not None
-        else md.packaging.max_input_tokens
-    )
-
-    report = run_evaluation(
-        checkpoint_dir=ckpt,
-        dataset_dir=md.prepared_dir,
-        out_path=out_path,
-        model_def=md,
-        predictor=predictor,
-        validator=validator,
-        metrics_fn=metrics,
-        device=device,
-        split=split,
-        max_input_tokens=token_budget,
-        baseline_path=baseline,
-        limit=limit,
-        task=md.task,
-        enforce_gates=gate,
-    )
-    write_markdown_summary(report, out_path.with_suffix(".md"))
-
-    # Record gate results on the run registry when checkpoint is a known run_id.
-    run_rec = get_run(md, ckpt.name)
-    if run_rec is not None and report.gates is not None:
-        update_run_gates(
+        report, out_path = evaluate_model(
             md,
-            run_rec.run_id,
-            report.gates,
-            metrics=report.metrics,
+            checkpoint=checkpoint,
+            split=split,
+            device=device,
+            baseline=baseline,
+            max_input_tokens=max_input_tokens,
+            limit=limit,
+            gate=gate,
         )
+    except GateConfigError as exc:
+        raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
+    except KeyError as exc:
+        raise typer.BadParameter(_user_message(exc), param_hint="evaluation") from exc
 
     console.print(f"[green]done[/] report={out_path}")
     if gate and report.passed is False:
@@ -836,22 +781,173 @@ def cmd_validate(
     console.print(f"[green]OK[/] {md.identity} ({md.architecture})")
 
 
+def _print_pipeline_plan(md, plans) -> None:
+    """Per-step fresh/stale table with the reason a step is stale."""
+    from rich.table import Table
+
+    console.print(f"[bold]{md.identity}[/] ({md.architecture})")
+    table = Table()
+    table.add_column("step", no_wrap=True)
+    table.add_column("action")
+    table.add_column("reason")
+    marks = {"run": "[yellow]run[/]", "skip": "[green]skip[/]", "not selected": "[dim]-[/]"}
+    for plan in plans:
+        table.add_row(plan.name, marks.get(plan.action, plan.action), plan.reason)
+    console.print(table)
+
+
+def _lifecycle_options(
+    smoke: bool,
+    device: str,
+    force: bool,
+    from_step: Optional[str],
+    until_step: Optional[str],
+    seed: Optional[int],
+    limit: Optional[int],
+    export_format: Optional[str],
+):
+    from .lifecycle import RunOptions
+
+    return RunOptions(
+        smoke=smoke,
+        device=device,
+        force=force,
+        from_step=from_step,
+        until_step=until_step,
+        seed=seed,
+        limit=limit,
+        export_format=export_format,
+    )
+
+
+@app.command("run")
+def cmd_run(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    smoke: bool = typer.Option(
+        False, "--smoke", help="Use the smoke: overlay, including smoke.gates"
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Re-run every selected step, fresh or not"
+    ),
+    from_step: Optional[str] = typer.Option(
+        None, "--from", help="First step to run (prepare|train|evaluate|export|verify)"
+    ),
+    until_step: Optional[str] = typer.Option(
+        None, "--until", help="Last step to run"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Show each step's fresh/stale status and stop"
+    ),
+    device: str = typer.Option("auto", "--device"),
+    seed: Optional[int] = typer.Option(None, "--seed"),
+    limit: Optional[int] = typer.Option(None, "--limit"),
+    export_format: Optional[str] = typer.Option(
+        None, "--format", help="Export format (default safetensors)"
+    ),
+    set_overrides: Optional[list[str]] = typer.Option(
+        None, "--set", help="Override model.yml (repeatable); feeds the fingerprint"
+    ),
+) -> None:
+    """Run the fixed lifecycle: prepare, train, evaluate (gated), export, verify.
+
+    Steps that are already fresh are skipped; anything else re-runs. The first
+    failure stops the run with a non-zero exit, so a green line means every
+    stage passed. `datagen` / `ingest` stay outside: they change the seed
+    corpus, which is what makes prepare stale.
+    """
+    md = load_model_def(model_dir)
+    # Overrides are validated here, before they reach a fingerprint or any
+    # step: an invalid --set must not leave state behind.
+    if set_overrides:
+        try:
+            apply_overrides(md, set_overrides)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--set") from exc
+    _boot_plugins(md)
+
+    from .evaluation.harness import GateConfigError
+    from .lifecycle import (
+        _resolve_paths,
+        _selected_steps,
+        plan_pipeline,
+        run_pipeline,
+        validate_run_config,
+    )
+
+    options = _lifecycle_options(
+        smoke, device, force, from_step, until_step, seed, limit, export_format
+    )
+    # A bad step name is a usage error; a config the run cannot use is a
+    # refusal. Both are reported before any step runs, and before a dry run
+    # prints a plan that could not be executed.
+    try:
+        selected = _selected_steps(from_step, until_step)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--from/--until") from exc
+
+    try:
+        validate_run_config(md, smoke=smoke, steps=selected)
+    except (GateConfigError, ValueError, KeyError) as exc:
+        console.print(f"[red]run refused[/] {_user_message(exc)}")
+        raise typer.Exit(code=1) from exc
+
+    checkpoint, export_dir, report = _resolve_paths(md)
+    plans = plan_pipeline(
+        md,
+        smoke=smoke,
+        device=device,
+        force=force,
+        from_step=from_step,
+        until_step=until_step,
+        checkpoint=checkpoint,
+        export_dir=export_dir,
+        export_format=export_format,
+        eval_report=report,
+    )
+
+    if dry_run:
+        _print_pipeline_plan(md, plans)
+        return
+
+    def _on_step(name: str, status: str, detail: str) -> None:
+        colour = {"running": "cyan", "ran": "green", "skipped": "dim", "failed": "red"}
+        console.print(f"[{colour.get(status, 'white')}]{status:>8}[/] {name}  {detail}")
+
+    result = run_pipeline(md, options, on_step=_on_step)
+    if not result.ok:
+        console.print(f"[red]lifecycle failed at {result.failed}[/]")
+        raise typer.Exit(code=1)
+    ran = [o.name for o in result.outcomes if o.status == "ran"]
+    console.print(
+        f"[green]lifecycle complete[/] ran={ran or 'nothing (all fresh)'}"
+        + (" [yellow](smoke tier)[/]" if smoke else "")
+    )
+
+
 @app.command("plan")
 def cmd_plan(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    smoke: bool = typer.Option(False, "--smoke"),
+    device: str = typer.Option("auto", "--device"),
 ) -> None:
-    """Print the lifecycle command plan for a model folder."""
+    """Show which lifecycle steps are stale (alias for `run --dry-run`)."""
     md = load_model_def(model_dir)
-    console.print(f"[bold]{md.identity}[/] ({md.task} / {md.architecture})")
-    console.print(f"1. maatml prepare {md.model_dir}")
-    console.print(f"2. maatml train {md.model_dir} --smoke")
-    console.print(f"3. maatml train {md.model_dir}")
-    console.print(f"4. maatml evaluate {md.model_dir}")
-    console.print(f"5. maatml export {md.model_dir}")
-    console.print(f"6. maatml verify {md.model_dir}/output/export/<run_id>")
-    console.print(
-        f"7. maatml serve {md.model_dir} --checkpoint output/export/<run_id>"
+    _boot_plugins(md)
+    from .lifecycle import _resolve_paths, plan_pipeline
+
+    checkpoint, export_dir, report = _resolve_paths(md)
+    _print_pipeline_plan(
+        md,
+        plan_pipeline(
+            md,
+            smoke=smoke,
+            device=device,
+            checkpoint=checkpoint,
+            export_dir=export_dir,
+            eval_report=report,
+        ),
     )
+    console.print("[dim]run it with: maatml run " + str(md.model_dir) + "[/]")
 
 
 @app.command("doctor")

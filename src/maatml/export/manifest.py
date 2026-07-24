@@ -119,7 +119,31 @@ def build_manifest(
     }
     if run_id:
         manifest["run_id"] = run_id
+        manifest["gate_evidence"] = _gate_evidence(model_def, run_id)
     return manifest
+
+
+def _gate_evidence(model_def: ModelDefinition, run_id: str) -> dict[str, Any]:
+    """What gate result backs this bundle, and at which tier.
+
+    A bundle exported from a smoke-tier pass has to say so: the thresholds a
+    rehearsal met are not the production ones, and a manifest that recorded
+    only "passed" would let the two be mistaken for each other later.
+    """
+    evidence: dict[str, Any] = {"run_id": run_id, "gated": False, "smoke_gated": False}
+    try:
+        from ..runs import get_run
+
+        record = get_run(model_def, run_id)
+    except Exception:  # noqa: BLE001  a manifest must not fail on registry issues
+        return evidence
+    if record is None:
+        return evidence
+    gates = record.gates or {}
+    evidence["gated"] = bool(gates)
+    evidence["passed"] = gates.get("passed")
+    evidence["smoke_gated"] = bool(record.smoke_gated or gates.get("smoke"))
+    return evidence
 
 
 def write_manifest(export_dir: Path, manifest: dict[str, Any]) -> Path:

@@ -97,12 +97,11 @@ jobs:
           maatml validate examples/support-ticket-triage
 
   ml-smoke:
-    # Proves the real [ml] path runs end to end on CPU: prepare -> smoke train
-    # -> evaluate exercises trainer construction, LoRA, checkpoint save, the
-    # predictor, and the triage validator + metrics on the real
-    # torch/transformers/peft stack. It swaps in a tiny random base model so it
-    # proves the wiring in seconds instead of downloading and training
-    # Qwen3-0.6B; it does not assert output quality (no --gate).
+    # Proves the real [ml] path runs end to end on CPU. `maatml run --smoke`
+    # walks prepare -> train -> evaluate (smoke-tier gates) -> export -> verify
+    # on the real torch/transformers/peft stack, then re-runs to prove the
+    # pipeline is idempotent. Model quality is not asserted: the smoke tier
+    # gates on prediction coverage, not on task accuracy.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -125,19 +124,33 @@ jobs:
           HF_HUB_DISABLE_TELEMETRY: "1"
           TOKENIZERS_PARALLELISM: "false"
         run: pytest tests/ examples/ -q -rs
-      - name: Smoke train + evaluate triage on CPU (tiny model)
+      - name: Lifecycle run on CPU (tiny model, smoke tier)
         env:
           HF_HUB_DISABLE_TELEMETRY: "1"
           TOKENIZERS_PARALLELISM: "false"
         run: |
-          # Tiny random Llama (a few MB, shares q_proj/v_proj with Qwen so the
-          # triage LoRA config applies) keeps this a proof of the pipeline, not
-          # a full train. The example's model.yml still targets Qwen3-0.6B.
+          # One command: prepare -> train -> evaluate (smoke-tier gates) ->
+          # export -> verify. A tiny random Llama (a few MB, shares
+          # q_proj/v_proj with Qwen so the triage LoRA config applies) keeps
+          # this a proof of the pipeline, not a full train; the example's
+          # model.yml still targets Qwen3-0.6B. The smoke tier gates on
+          # prediction coverage, so a broken checkpoint fails here.
           TINY=hf-internal-testing/tiny-random-LlamaForCausalLM
-          maatml prepare  examples/support-ticket-triage/
-          maatml train    examples/support-ticket-triage/ --smoke --device cpu \
+          maatml run examples/support-ticket-triage/ --smoke --device cpu \
             --set training.model_id="$TINY"
-          maatml evaluate examples/support-ticket-triage/ --device cpu
+          # Idempotence: a second run with nothing changed does no work.
+          maatml run examples/support-ticket-triage/ --smoke --device cpu \
+            --set training.model_id="$TINY" | tee rerun.log
+          grep -q "ran=nothing (all fresh)" rerun.log
+          # The bundle records that its gate pass came from the smoke tier.
+          python - <<'PY'
+          import glob, json
+          manifest = json.load(open(sorted(glob.glob(
+              "examples/support-ticket-triage/output/export/*/manifest.json"))[-1]))
+          evidence = manifest["gate_evidence"]
+          assert evidence["passed"] and evidence["smoke_gated"], evidence
+          print("gate evidence:", evidence)
+          PY
 
   standalone:
     runs-on: ubuntu-latest

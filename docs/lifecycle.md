@@ -78,7 +78,54 @@ maatml verify    <export-dir>  # sha256 check vs manifest
 maatml serve     <model-dir>   # JSON inference API (validator inline)
 ```
 
-`maatml plan <model-dir>` prints this sequence for any model folder.
+## One command for the whole lifecycle
+
+```bash
+maatml run <model-dir>            # prepare -> train -> evaluate -> export -> verify
+maatml run <model-dir> --smoke    # the same walk at the smoke tier
+maatml run <model-dir> --dry-run  # what is stale, and why
+```
+
+`maatml run` walks the fixed pipeline in order and stops non-zero at the first
+failure, so one green line means every stage passed rather than "the last
+command I happened to type passed". Gates are enforced at the evaluate step,
+which is what makes the line worth anything.
+
+Steps that are already fresh are skipped. Freshness is decided by a fingerprint
+over what the step consumed: effective config after `--smoke` and `--set`, the
+declared input files, the upstream step's fingerprint, the maatml version and
+git SHA, the plugin sources, the device profile, and the exporter. It lives in
+`output/pipeline.json` and exists for **idempotence, not speed**: a step is
+skipped only when its fingerprint matches, the step completed last time, and
+its outputs are still there. `--dry-run` prints which component changed.
+
+```
+step      action   reason
+prepare   skip     up to date
+train     run      changed: training_config
+evaluate  run      changed: upstream
+```
+
+`datagen` and `ingest` stay outside the runner. They change the seed corpus,
+and that is precisely what makes `prepare` stale on the next run.
+
+`--from` / `--until` restrict the walk, `--force` re-runs everything selected,
+and `--set` overrides feed the fingerprint (an invalid one exits non-zero
+before any step runs and leaves `output/pipeline.json` untouched).
+
+### Smoke-tier gates
+
+A `--smoke` rehearsal cannot meet production thresholds, and holding it to them
+would only teach people to ignore a red gate. A `smoke:` block may declare its
+own `gates:`, which `--smoke` runs enforce instead. The pass is recorded as
+smoke-gated in the run record and in the export manifest's `gate_evidence`, so
+a rehearsal never reads as a production gate pass later.
+
+maatml always reports `output_nonempty_rate` alongside a model's own metrics,
+which is what a smoke tier can honestly gate on: it says the checkpoint saved,
+reloaded, and produced output, without claiming the output was any good.
+
+`maatml plan <model-dir>` is the same view as `run --dry-run`.
 
 ## What each stage refuses to do quietly
 
