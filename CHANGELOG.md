@@ -8,6 +8,8 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-24
+
 The fixed lifecycle runner, the reviewed data flywheel and serve contract, plus
 the hygiene backlog that had been carried outside the tranches.
 

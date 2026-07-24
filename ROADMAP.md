@@ -40,8 +40,8 @@ are ordered but unversioned.
 | v0.5.1 | Truth and safety | Done |
 | v0.6 | Truth and safety II: gates tell the truth | Done |
 | v0.7 | Silent-failure hardening + test floor | Done |
-| (unreleased) | Fixed lifecycle runner: `maatml run` | Done |
-| (unreleased) | Distill + reviewed flywheel + serve contract | Done |
+| v0.8 | Fixed lifecycle runner: `maatml run` | Done |
+| v0.8 | Distill + reviewed flywheel + serve contract | Done |
 
 ## Non-goals
 
@@ -298,7 +298,7 @@ end-to-end test green; preparing a datagen-produced corpus yields non-empty
 val/test splits (regression test for the degenerate-group fix); CI includes a
 macOS job.
 
-## Fixed lifecycle runner: `maatml run` (Done)
+## v0.8: Fixed lifecycle runner: `maatml run` (Done)
 
 **Tracking:** #15
 
@@ -352,7 +352,7 @@ reports: a rehearsal cannot earn the production thresholds, and a 0.0 gate
 would pass vacuously, but "the checkpoint saved, reloaded, and produced output"
 is a real claim a smoke run can make.
 
-## Distill + reviewed flywheel + serve contract (Done)
+## v0.8: Distill + reviewed flywheel + serve contract (Done)
 
 **Tracking:** #16
 
