@@ -40,4 +40,6 @@ jobs:
           name: python-package-distributions
           path: dist/
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        # Pinned to a commit SHA: this job holds an OIDC token, so a moved tag
+        # would be a supply-chain change nobody reviewed. Dependabot bumps it.
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247 # v1.14.1
