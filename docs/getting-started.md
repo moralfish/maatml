@@ -40,14 +40,20 @@ tokenizer, base model, LoRA adapter, and trainer all wire up correctly before
 spending real compute. This step downloads the base model
 (`Qwen/Qwen3-0.6B`, ~1.2 GB) from the Hugging Face Hub on first run.
 
-## 4. Train for real
+## 4. Train the example as configured
 
 ```bash
 maatml train examples/support-ticket-triage/
 ```
 
 Checkpoints land under `output/checkpoints/<run_id>/`. List every run with
-`maatml runs examples/support-ticket-triage/`.
+`maatml runs examples/support-ticket-triage/`, and compare their metrics with
+`maatml runs examples/support-ticket-triage/ --compare`.
+
+This is still a rehearsal, not a trained model: the example ships 8 seed rows
+and `training.max_steps: 4`, enough to prove the pipeline offline and in CI. A
+real run needs a real corpus (`maatml datagen` or `maatml ingest`), then
+`max_steps: -1` and a few epochs in `model.yml`.
 
 ## 5. Evaluate against the gates
 
@@ -56,7 +62,11 @@ maatml evaluate examples/support-ticket-triage/ --gate
 ```
 
 `--gate` exits non-zero if `evaluation.gates` in `model.yml` aren't met, the
-same check you'd wire into CI.
+same check you'd wire into CI. **Expect it to fail here**: four steps on eight
+samples does not earn `json_parse_rate: 0.95`, and a gate that passed on that
+evidence would not be worth wiring into CI. That failure is the contract
+working. Drop `--gate` to see the scores on their own, and re-run it once the
+corpus and training budget are real.
 
 ## 6. Serve it
 

@@ -442,17 +442,3 @@ injected into a bundle after export fails `verify` (test).
   exporter (promote out of the vision plugin)
 - 1.0: frozen config / plugin / manifest APIs, migration guarantees,
   reproducible benchmarks
-
-## Hygiene backlog (non-tranche)
-
-- Ship `py.typed`; `maatml doctor`; `runs --compare`
-- Scaffold creation path for plugin-owned `vision_multitask` / `vlm_sft`;
-  add missing scaffold tests for `seq2seq` / `multi_head_classifier`
-- Windows CPU-free CI job; reconcile `requirements*.txt` with pyproject extras
-  (jsonschema is declared core but unused by `src/`, decide: document as a
-  plugin-contract dependency, or move to an extra)
-- docs/index.md vision install line gains the `[ml]` extra
-  (`pip install "maatml[ml,vision]"`), matching README
-- Quickstart: step 4 is a smoke-grade rehearsal (`max_steps: 4`); say so and
-  set gate expectations, or raise the default config until it earns the gates
-- Remove or fold orphaned root docs (`maatml.md`)
