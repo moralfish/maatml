@@ -6,6 +6,7 @@ model load, which is exactly the behaviour that has to hold in CI.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,20 @@ from typer.testing import CliRunner
 from maatml.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_BOX = re.compile(r"[─-╿]")
+
+
+def plain(output: str) -> str:
+    """Console output with styling and box drawing removed.
+
+    typer renders usage errors inside a rich panel, so the message is broken
+    across lines by borders whose position depends on the terminal width. That
+    made width-sensitive assertions pass on one platform and fail on another.
+    """
+    text = _BOX.sub(" ", _ANSI.sub("", output))
+    return " ".join(text.split())
 
 
 def _write_model(
@@ -72,7 +87,7 @@ def test_unknown_command_exits_two() -> None:
 def test_missing_model_dir_is_a_usage_error() -> None:
     result = runner.invoke(app, ["prepare", "/nonexistent/model/dir"])
     assert result.exit_code == 2
-    assert "Error" in result.output
+    assert "Error" in plain(result.output)
 
 
 def test_ingest_rejects_a_malformed_field_map(tmp_path: Path) -> None:
@@ -83,7 +98,7 @@ def test_ingest_rejects_a_malformed_field_map(tmp_path: Path) -> None:
         app, ["ingest", str(mdir), "--input", str(source), "--map", "no-equals-sign"]
     )
     assert result.exit_code == 2
-    assert "field=col" in result.output
+    assert "field=col" in plain(result.output)
 
 
 def test_plugins_lists_registered_trainers() -> None:
@@ -99,7 +114,7 @@ def test_evaluate_gate_without_gates_configured_exits_nonzero(tmp_path: Path) ->
     mdir = _write_model(tmp_path, evaluation="evaluation:\n  predictor: causal_sft\n")
     result = runner.invoke(app, ["evaluate", str(mdir), "--gate"])
     assert result.exit_code != 0
-    assert "no evaluation.gates" in result.output.replace("\n", " ")
+    assert "no evaluation.gates" in plain(result.output)
 
 
 def test_evaluate_reports_unregistered_validator_before_loading(tmp_path: Path) -> None:
@@ -109,7 +124,7 @@ def test_evaluate_reports_unregistered_validator_before_loading(tmp_path: Path) 
     )
     result = runner.invoke(app, ["evaluate", str(mdir)])
     assert result.exit_code != 0
-    assert "not_registered" in result.output
+    assert "not_registered" in plain(result.output)
 
 
 def test_evaluate_reports_unregistered_metrics_before_loading(tmp_path: Path) -> None:
@@ -119,7 +134,7 @@ def test_evaluate_reports_unregistered_metrics_before_loading(tmp_path: Path) ->
     )
     result = runner.invoke(app, ["evaluate", str(mdir)])
     assert result.exit_code != 0
-    assert "nope_metrics" in result.output
+    assert "nope_metrics" in plain(result.output)
 
 
 # --- verify ----------------------------------------------------------------

@@ -12,6 +12,7 @@ from .registry import (
     TRAINERS,
     discover_plugins,
     load_model_plugins,
+    looks_like_plugin_path,
 )
 
 # Architecture aliases accepted in model.yml / --architecture.
@@ -322,15 +323,16 @@ def _plugin_reference(entry: str, target_dir: Path) -> str:
     (relative to the new folder when that stays inside it, absolute otherwise).
     Dotted module paths are recorded as given.
     """
-    looks_like_path = entry.endswith(".py") or "/" in entry or entry.startswith(".")
-    if not looks_like_path:
+    if not looks_like_plugin_path(entry, Path.cwd()):
         return entry
     resolved = Path(entry).expanduser().resolve()
     try:
         relative = resolved.relative_to(target_dir)
     except ValueError:
         return str(resolved)
-    return f"./{relative}"
+    # POSIX separators so a model folder committed from Windows still resolves
+    # on Linux and macOS.
+    return f"./{relative.as_posix()}"
 
 
 def _run_scaffold_hooks(
