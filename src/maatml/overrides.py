@@ -18,7 +18,9 @@ from .config import ModelDefinition
 _OVERRIDE_RX = re.compile(r"^([^=]+)=(.*)$", re.DOTALL)
 
 # Top-level ModelDefinition fields that are plain nested dicts.
-_DICT_SECTIONS = frozenset({"data", "dataset", "training", "smoke", "evaluation", "extensions"})
+_DICT_SECTIONS = frozenset(
+    {"data", "dataset", "training", "smoke", "evaluation", "distill", "extensions"}
+)
 
 
 def coerce_override_value(raw: str) -> Any:

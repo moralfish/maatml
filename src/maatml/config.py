@@ -79,6 +79,10 @@ class ModelDefinition(BaseModel):
     training: dict[str, Any] = Field(default_factory=dict)
     smoke: dict[str, Any] = Field(default_factory=dict)
     evaluation: dict[str, Any] = Field(default_factory=dict)
+    # Optional source-op stage for `maatml distill` (teacher labels over a
+    # prompt pool). A plain dict here, parsed into the typed DistillConfig by
+    # the command, like the other stage sections.
+    distill: dict[str, Any] = Field(default_factory=dict)
     packaging: PackagingSpec = Field(default_factory=PackagingSpec)
     plugins: list[str] = Field(default_factory=list)
     extensions: dict[str, Any] = Field(default_factory=dict)

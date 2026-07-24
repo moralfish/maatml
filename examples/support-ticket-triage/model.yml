@@ -79,6 +79,18 @@ smoke:
   gates:
     output_nonempty_rate: 0.5
 
+# Data flywheel: `maatml distill` labels this prompt pool with a teacher, gated
+# by the same validator eval and serve use. A recorded cache ships alongside so
+# `maatml distill . --replay` reproduces the accepted corpus offline (CI), and
+# so the example needs no API key. One prompt's recorded label routes billing to
+# the wrong team; the routing contract rejects it, so it never reaches seeds.
+distill:
+  prompt_source: datasets/distill/prompts.jsonl
+  teacher_model: recorded-teacher
+  teacher_revision: "2026-07"
+  cache: datasets/distill/cache.jsonl
+  family: distill
+
 packaging:
   max_input_tokens: 512
   expected_latency_ms: 2000
