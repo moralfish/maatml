@@ -8,6 +8,8 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-24
+
 Silent-failure hardening and a test floor: the paths that reported success
 while doing nothing, plus tests for the four trainer architectures and the CLI,
 which had none.

@@ -39,7 +39,7 @@ are ordered but unversioned.
 | v0.5 | Serving + multimodal | Done |
 | v0.5.1 | Truth and safety | Done |
 | v0.6 | Truth and safety II: gates tell the truth | Done |
-| (unreleased) | Silent-failure hardening + test floor | Done |
+| v0.7 | Silent-failure hardening + test floor | Done |
 
 ## Non-goals
 
@@ -203,7 +203,7 @@ checkpoint (CI test; the smoke overlay sets `save_steps` low enough to
 checkpoint within the smoke budget); `--set` of a schema-invalid value exits
 non-zero (test); serve 500 response bodies contain no traceback (test).
 
-## Silent-failure hardening + test floor (Done)
+## v0.7: Silent-failure hardening + test floor (Done)
 
 **Tracking:** #14
 
