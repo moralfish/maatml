@@ -37,3 +37,6 @@ examples/*/datasets/samples/*.parquet
 # Build / deploy artifacts (not committed)
 /site/
 /.wrangler/
+
+# Ephemeral log the ml-smoke CI step tees; never tracked.
+rerun.log
