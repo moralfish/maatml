@@ -8,6 +8,45 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+Hygiene backlog: the small items that had been carried outside the tranches.
+
+### Added
+
+- **`maatml doctor`:** read-only diagnostics for "why did that not work here?".
+  Reports the installed optional stacks, the device the CLI would pick and its
+  profile, the registry contents plus anything that failed to load, and (given
+  a model folder) its declared paths, splits, runs, validator, and gates.
+  `--json` for machines; exits 1 when something is broken rather than absent.
+- **`maatml runs --compare`:** run-by-metric table across recorded runs, with
+  `--metric` to select keys, `--limit` for the most recent N, and
+  `--all-metrics` to include trainer timing. A metric a run never reported
+  shows as `-`, never as `0`, and hidden timing metrics are named.
+- **`maatml scaffold --plugin`:** loads a plugin before resolving
+  `--architecture` and records it in the new `model.yml`, so plugin-owned
+  architectures (`vision_multitask`, `vlm_sft`, third-party) can be scaffolded
+  at all. Scaffold hooks may contribute `model_yml` sections, `seed_rows`, and
+  extra `files`; the vision and vision-vlm plugins now ship theirs.
+- **`py.typed`** in the wheel (PEP 561), so a downstream mypy reads maatml's
+  annotations instead of treating the package as untyped.
+- **CI:** a torch-free `windows-latest` job covering path, encoding, and
+  console assumptions that only fail off POSIX.
+
+### Changed
+
+- Scaffolded `model.yml` omits `base_model` when the architecture has no base
+  model id, instead of leaving a `CHANGE_ME` placeholder in the file.
+- `pyproject.toml` is the only dependency manifest: the `requirements*.txt`
+  files are removed (`requirements-base.txt` had already lost `jsonschema`),
+  and `jsonschema` stays a core dependency with the reason recorded, it is the
+  contract every shipped validator is written against.
+- Quickstart says what step 4 actually is: a rehearsal on eight seed rows with
+  `max_steps: 4`, where `--gate` is expected to fail until the corpus and
+  training budget are real.
+- `docs/index.md` installs the vision extra as `maatml[ml,vision]`; the vision
+  examples need the training stack too.
+- The orphaned root `maatml.md` is gone; README, AGENTS.md, and the docs site
+  carry that content.
+
 ## [0.7.0] - 2026-07-24
 
 Silent-failure hardening and a test floor: the paths that reported success

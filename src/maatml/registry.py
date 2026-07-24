@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -118,6 +119,17 @@ _loaded_model_plugins: dict[str, str] = {}
 def load_errors() -> list[tuple[str, str]]:
     """Plugin sources that failed to import, as ``(source, error)`` pairs."""
     return list(_load_errors)
+
+
+def restore_load_errors(entries: Iterable[tuple[str, str]] = ()) -> None:
+    """Replace the recorded load errors (``()`` clears them).
+
+    Public because the list is process-global: a test that provokes a plugin
+    failure would otherwise leave it visible to every later `maatml doctor` /
+    `Unknown … plugin` message in the same process.
+    """
+    _load_errors.clear()
+    _load_errors.extend(entries)
 
 
 def _record_load_error(source: str, exc: BaseException) -> None:
@@ -239,6 +251,25 @@ def _load_package_from_dir(pkg_dir: Path, module_name: str) -> Any:
     return module
 
 
+def looks_like_plugin_path(entry: str, base_dir: Optional[Path] = None) -> bool:
+    """Is this ``plugins:`` entry a filesystem path rather than a module name?
+
+    Testing only for ``/`` sent every Windows path (``C:\\models\\my_plugin``,
+    ``plugins\\hook.py``) down the ``import_module`` branch, where it failed as
+    an unknown module. Separators are checked for both platforms, and a bare
+    name that exists next to the model folder is treated as a path too.
+    """
+    if entry.endswith(".py") or entry.startswith("."):
+        return True
+    if "/" in entry or "\\" in entry or (os.altsep and os.altsep in entry):
+        return True
+    if os.path.splitdrive(entry)[0]:
+        return True
+    if base_dir is not None and (Path(base_dir) / entry).exists():
+        return True
+    return False
+
+
 def load_model_plugins(
     model_dir: str | Path,
     plugin_list: Optional[Iterable[str]] = None,
@@ -264,7 +295,7 @@ def load_model_plugins(
         entry = entry.strip()
         if not entry:
             continue
-        if entry.endswith(".py") or "/" in entry or entry.startswith("."):
+        if looks_like_plugin_path(entry, model_dir):
             path = Path(entry)
             if not path.is_absolute():
                 path = (model_dir / entry).resolve()

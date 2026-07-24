@@ -138,6 +138,53 @@ def _clone_model_def(md):
     return clone
 
 
+def _print_run_comparison(
+    records, metrics: Optional[list[str]], *, include_telemetry: bool = False
+) -> None:
+    """Render `runs --compare` as a run-by-metric table."""
+    from rich.table import Table
+
+    from .runs import compare_runs
+
+    keys, rows, hidden = compare_runs(
+        records, metrics=metrics, include_telemetry=include_telemetry
+    )
+    # Metrics run down the left and runs across the top: a run usually reports
+    # more metrics than there are runs to compare, and this way the metric
+    # names stay readable instead of being truncated into column headers.
+    table = Table(title=f"{len(rows)} run(s)")
+    table.add_column("metric", no_wrap=True)
+    for row in rows:
+        table.add_column(row["run_id"], justify="right", no_wrap=True)
+
+    table.add_row("status", *[row["status"] for row in rows])
+    table.add_row("smoke", *["yes" if row["smoke"] else "no" for row in rows])
+    table.add_row(
+        "gates",
+        *[
+            "-" if row["gates_passed"] is None else ("pass" if row["gates_passed"] else "fail")
+            for row in rows
+        ],
+    )
+    for key in keys:
+        # A metric a run never reported stays "-" instead of reading as 0.
+        table.add_row(
+            key,
+            *[
+                "-" if row["metrics"][key] is None else f"{row['metrics'][key]:.4g}"
+                for row in rows
+            ],
+        )
+    console.print(table)
+    if not keys:
+        console.print("[dim]no metrics recorded on these runs[/]")
+    if hidden:
+        console.print(
+            f"[dim]{len(hidden)} timing metric(s) hidden "
+            f"({', '.join(hidden)}); --all-metrics to include[/]"
+        )
+
+
 def _parse_field_maps(maps: Optional[list[str]]) -> dict[str, str]:
     """Parse ``dest=src`` field maps for ingest."""
     out: dict[str, str] = {}
@@ -679,13 +726,38 @@ def cmd_ingest(
 @app.command("runs")
 def cmd_runs(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    compare: bool = typer.Option(
+        False,
+        "--compare",
+        help="Print a run-by-metric table instead of one line per run",
+    ),
+    metric: Optional[list[str]] = typer.Option(
+        None,
+        "--metric",
+        help="Restrict --compare to these metric keys (repeatable)",
+    ),
+    all_metrics: bool = typer.Option(
+        False,
+        "--all-metrics",
+        help="Include trainer timing metrics (runtime, samples/s) in --compare",
+    ),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", help="Only the most recent N runs"
+    ),
 ) -> None:
     """List training runs recorded in <model-dir>/output/runs.jsonl."""
     md = load_model_def(model_dir)
     records = list_runs(md)
+    if limit is not None and limit > 0:
+        records = records[-limit:]
     if not records:
         console.print(f"[dim]no runs yet under {md.output_dir}[/]")
         return
+
+    if compare:
+        _print_run_comparison(records, metric, include_telemetry=all_metrics)
+        return
+
     for rec in records:
         metrics = ""
         if rec.metrics:
@@ -707,6 +779,13 @@ def cmd_scaffold(
         help="Registered trainer architecture (e.g. causal_sft, seq2seq, classifier, dpo)",
     ),
     name: Optional[str] = typer.Option(None, "--name", help="Model name (default: folder name)"),
+    plugin: Optional[list[str]] = typer.Option(
+        None,
+        "--plugin",
+        help="Plugin to load before resolving --architecture, and record in the "
+        "new model.yml: a folder/.py path or an installed module (repeatable). "
+        "Required for plugin-owned architectures such as vision_multitask.",
+    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -718,7 +797,11 @@ def cmd_scaffold(
     discover_plugins()
     try:
         path = scaffold_model(
-            target_dir, architecture=architecture, name=name, force=force
+            target_dir,
+            architecture=architecture,
+            name=name,
+            force=force,
+            plugins=list(plugin or []),
         )
     except FileExistsError as exc:
         console.print(f"[red]scaffold refused[/] {exc}")
@@ -769,6 +852,49 @@ def cmd_plan(
     console.print(
         f"7. maatml serve {md.model_dir} --checkpoint output/export/<run_id>"
     )
+
+
+@app.command("doctor")
+def cmd_doctor(
+    model_dir: Optional[Path] = typer.Argument(
+        None,
+        exists=True,
+        file_okay=False,
+        help="Optional model folder to check as well as the environment",
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", help="Emit the diagnostics as JSON instead of a table"
+    ),
+) -> None:
+    """Report environment, plugin, and model-folder health. Exits 1 on errors."""
+    import json as _json
+
+    from .doctor import ERROR, OK, WARN, collect_diagnostics
+
+    diag = collect_diagnostics(model_dir)
+
+    if json_out:
+        console.print_json(_json.dumps(diag.as_dict()))
+    else:
+        from rich.markup import escape
+
+        marks = {OK: "[green]ok[/]", WARN: "[yellow]warn[/]", ERROR: "[red]error[/]"}
+        for section, checks in diag.sections.items():
+            console.print(f"[bold]{section}[/]")
+            for check in checks:
+                # Details mention extras like [ml] / [vision]; escape them so
+                # rich prints the name instead of eating it as markup.
+                console.print(
+                    f"  {marks[check.status]} {escape(check.name)}: "
+                    f"{escape(check.detail)}"
+                )
+
+    errors = diag.errors
+    if errors:
+        # --json output stays parseable: the exit code carries the verdict.
+        if not json_out:
+            console.print(f"[red]{len(errors)} problem(s) found[/]")
+        raise typer.Exit(code=1)
 
 
 @app.command("plugins")

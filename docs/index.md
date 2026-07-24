@@ -17,7 +17,7 @@ modalities, is what general fine-tuning tools leave out.
 ```bash
 pip install maatml
 pip install "maatml[ml]"       # training stack
-pip install "maatml[vision]"   # torchvision + ONNX (vision / VLM examples)
+pip install "maatml[ml,vision]"  # + torchvision and ONNX (vision / VLM examples)
 pip install "maatml[docs]"     # this site: mkdocs serve
 ```
 

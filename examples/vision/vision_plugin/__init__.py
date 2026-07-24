@@ -13,6 +13,7 @@ from .datagen import synthetic_scenes_generator
 from .export_onnx import export_onnx  # noqa: F401  registers @register_exporter("onnx")
 from .metrics import compute_vision_metrics
 from .predictor import VisionMultitaskPredictor
+from .scaffold import scaffold_vision_multitask  # noqa: F401  registers @register_scaffold_hook
 from .trainer import train_vision_multitask
 from .validator import validate_vision_scene
 
@@ -28,5 +29,6 @@ __all__ = [
     "validate_vision_scene",
     "compute_vision_metrics",
     "synthetic_scenes_generator",
+    "scaffold_vision_multitask",
     "export_onnx",
 ]

@@ -117,10 +117,11 @@ line; `maatml --debug <command>` prints the traceback.
 | `serve` | JSON inference API; `--enforce` rejects invalid outputs (HTTP 422) |
 | `datagen` | Validator-gated seed generation (`--teacher`, `--allow-ungated`) |
 | `ingest` | Import external samples (`--map field=col`, `--sanitize tag`) |
-| `runs` | List recorded training runs |
+| `runs` | List recorded training runs (`--compare` tabulates their metrics) |
 | `plan` | Print the prepare, train, evaluate, export plan |
 | `plugins` | List discovered trainers, validators, and metrics |
-| `scaffold` | Create a new model folder (`--architecture`, `--force`) |
+| `doctor` | Check the environment, plugins, and a model folder; exits 1 on problems |
+| `scaffold` | Create a new model folder (`--architecture`, `--plugin`, `--force`) |
 | `validate` | Check `model.yml` and paths (`--no-plugins` skips plugin code) |
 
 Multi-GPU (CUDA): `accelerate launch -m maatml.cli train <model-dir>/` or

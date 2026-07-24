@@ -174,3 +174,30 @@ def test_entry_point_failures_are_surfaced(monkeypatch) -> None:
     # The failure is named in "Unknown … plugin" errors, where it explains why.
     with pytest.raises(KeyError, match="broken_plugin"):
         TRAINERS.require("some_missing_trainer")
+
+
+def test_windows_style_plugin_paths_are_treated_as_paths() -> None:
+    """A backslash path must not be sent down the import_module branch."""
+    from maatml.registry import looks_like_plugin_path
+
+    for entry in (
+        r"C:\models\my-model\my_plugin",
+        r"plugins\hook.py",
+        r".\vision_plugin",
+        "./vision_plugin",
+        "plugins/hook.py",
+        "sub/dir",
+    ):
+        assert looks_like_plugin_path(entry), entry
+
+    # Dotted module paths stay module paths.
+    for entry in ("my_pkg.plugins.foo", "maatml_vision"):
+        assert not looks_like_plugin_path(entry), entry
+
+
+def test_bare_directory_name_next_to_the_model_is_a_path(tmp_path: Path) -> None:
+    from maatml.registry import looks_like_plugin_path
+
+    (tmp_path / "sibling_plugin").mkdir()
+    assert looks_like_plugin_path("sibling_plugin", tmp_path)
+    assert not looks_like_plugin_path("sibling_plugin", tmp_path / "elsewhere")

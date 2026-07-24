@@ -31,6 +31,8 @@ mypy src/maatml --ignore-missing-imports
 # Per-model lifecycle (any standalone folder with model.yml)
 .venv/bin/maatml scaffold ~/models/my-task --architecture causal_sft
 .venv/bin/maatml scaffold ~/models/my-dpo --architecture dpo
+.venv/bin/maatml scaffold ~/models/my-vision --architecture vision_multitask \
+    --plugin examples/vision/vision_plugin   # plugin-owned architectures
 .venv/bin/maatml validate ~/models/my-task
 .venv/bin/maatml prepare  examples/<name>/
 .venv/bin/maatml train    examples/<name>/ [--smoke] [--device mps|cpu|cuda] [--seed N] [--limit N] [--resume auto|PATH] [--set training.learning_rate=1e-4]
@@ -41,7 +43,8 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml serve    examples/<name>/ [--checkpoint X] [--host 127.0.0.1] [--port 8080]
 .venv/bin/maatml datagen  examples/<name>/ [--target N] [--seed S] [--teacher] [--out PATH]
 .venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
-.venv/bin/maatml runs     examples/<name>/
+.venv/bin/maatml runs     examples/<name>/ [--compare] [--metric K] [--limit N]
+.venv/bin/maatml doctor   [examples/<name>/] [--json]
 .venv/bin/maatml plugins
 # Global: maatml --debug <command> prints tracebacks for user errors
 # (missing file, unparseable model.yml, unknown plugin), which otherwise

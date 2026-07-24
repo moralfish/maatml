@@ -133,6 +133,62 @@ def list_runs(model_def: ModelDefinition) -> list[RunRecord]:
     return [latest[rid] for rid in order]
 
 
+# Trainer telemetry: real metrics, but they measure the machine rather than the
+# model, and there are enough of them to bury the ones being compared.
+_TELEMETRY_SUFFIXES = ("_runtime", "_samples_per_second", "_steps_per_second")
+_TELEMETRY_KEYS = frozenset({"epoch", "total_flos", "train_loss"})
+
+
+def is_telemetry(key: str) -> bool:
+    return key in _TELEMETRY_KEYS or key.endswith(_TELEMETRY_SUFFIXES)
+
+
+def compare_runs(
+    records: list[RunRecord],
+    *,
+    metrics: Optional[list[str]] = None,
+    include_telemetry: bool = False,
+) -> tuple[list[str], list[dict[str, Any]], list[str]]:
+    """Build a run-by-metric comparison table.
+
+    Returns ``(metric_keys, rows, hidden_keys)``. Every row carries the run
+    identity plus one entry per metric key (``None`` when that run never
+    reported it, so a missing metric reads as missing rather than as zero).
+    Explicitly requested ``metrics`` are never hidden; otherwise trainer
+    telemetry is set aside and returned in ``hidden_keys`` so the caller can
+    say what it left out.
+    """
+    keys: list[str] = []
+    hidden: list[str] = []
+    if metrics:
+        keys = list(dict.fromkeys(metrics))
+    else:
+        for rec in records:
+            for key in (rec.metrics or {}):
+                if key in keys or key in hidden:
+                    continue
+                if not include_telemetry and is_telemetry(key):
+                    hidden.append(key)
+                else:
+                    keys.append(key)
+
+    rows: list[dict[str, Any]] = []
+    for rec in records:
+        values = rec.metrics or {}
+        gates = rec.gates or {}
+        rows.append(
+            {
+                "run_id": rec.run_id,
+                "status": rec.status,
+                "smoke": rec.smoke,
+                "device": rec.device,
+                "gates_passed": gates.get("passed"),
+                "metrics": {key: values.get(key) for key in keys},
+            }
+        )
+    return keys, rows, hidden
+
+
 def get_run(model_def: ModelDefinition, run_id: str) -> Optional[RunRecord]:
     for rec in list_runs(model_def):
         if rec.run_id == run_id:

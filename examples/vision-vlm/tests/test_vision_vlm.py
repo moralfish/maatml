@@ -259,3 +259,30 @@ def test_predictor_wraps_generate_output(plugin, monkeypatch) -> None:
     )
     out = json.loads(pred.predict({"image": "ignored.png"}))
     assert "background" in out["description"].lower() or "striped" in out["description"].lower()
+
+
+def test_scaffold_hook_produces_a_valid_folder(tmp_path: Path, plugin) -> None:
+    """`maatml scaffold -a vlm_sft --plugin ...` must validate."""
+    from maatml.scaffold import scaffold_model, validate_model_dir
+
+    target = tmp_path / "scaffolded-vlm"
+    scaffold_model(target, architecture="vlm_sft", plugins=[str(ROOT / "vlm_plugin")])
+
+    assert validate_model_dir(target) == []
+    body = (target / "model.yml").read_text(encoding="utf-8")
+    assert "SmolVLM" in body
+    assert "generator: described_scenes" in body
+    # Schema and prompt spec come from the example corpus, so a scaffolded
+    # folder gates on exactly the same contract.
+    for asset in ("schema.json", "prompt_spec.json"):
+        assert json.loads((target / "datasets" / asset).read_text()) == json.loads(
+            (ROOT / "datasets" / asset).read_text()
+        )
+
+
+def test_scaffold_fallback_schema_matches_the_canonical_one(plugin) -> None:
+    from vlm_plugin.scaffold import _FALLBACK_SCHEMA
+
+    canonical = json.loads((ROOT / "datasets" / "schema.json").read_text())
+    assert _FALLBACK_SCHEMA["required"] == canonical["required"]
+    assert _FALLBACK_SCHEMA["properties"] == canonical["properties"]
