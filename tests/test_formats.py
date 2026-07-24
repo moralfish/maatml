@@ -118,3 +118,72 @@ dataset:
     md = load_model_def(mdir)
     with pytest.raises(ValueError, match="does not sanitize"):
         prepare_alpaca(md)
+
+
+def test_degenerate_rows_are_dropped_and_counted(tmp_path: Path) -> None:
+    from maatml.data.formats import is_degenerate
+
+    mdir = tmp_path / "model"
+    (mdir / "datasets").mkdir(parents=True)
+    seeds = mdir / "datasets" / "seeds.jsonl"
+    write_jsonl(
+        seeds,
+        [
+            {"instruction": "do a thing", "output": "done", "family": "a"},
+            {"instruction": "", "input": "", "output": "", "family": "b"},
+            {"instruction": "another", "output": "", "family": "c"},
+            {"instruction": "third", "output": "ok", "family": "d"},
+        ],
+    )
+    (mdir / "model.yml").write_text(
+        """name: alpaca-degenerate
+model_id: alpaca-degenerate
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  format: alpaca
+  seed_samples: datasets/seeds.jsonl
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    with pytest.warns(RuntimeWarning, match="dropped 2 row"):
+        summary = prepare_alpaca(md)
+    assert summary["degenerate_dropped"] == 2
+    assert sum(summary["split_counts"].values()) == 2
+
+    assert is_degenerate({"messages": []}) is True
+    assert is_degenerate({"messages": [{"role": "user", "content": "hi"}]}) is True
+    assert (
+        is_degenerate(
+            {
+                "messages": [
+                    {"role": "user", "content": "hi"},
+                    {"role": "assistant", "content": "yo"},
+                ]
+            }
+        )
+        is False
+    )
+
+
+def test_all_degenerate_corpus_fails(tmp_path: Path) -> None:
+    from maatml.data.formats import prepare_sharegpt
+
+    mdir = tmp_path / "model"
+    (mdir / "datasets").mkdir(parents=True)
+    write_jsonl(mdir / "datasets" / "seeds.jsonl", [{"conversations": []}])
+    (mdir / "model.yml").write_text(
+        """name: sharegpt-empty
+model_id: sharegpt-empty
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  format: sharegpt
+  seed_samples: datasets/seeds.jsonl
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    with pytest.raises(ValueError, match="No usable rows"):
+        prepare_sharegpt(md)

@@ -8,6 +8,7 @@ writes splits + a dataset card.
 """
 from __future__ import annotations
 
+import json
 import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -128,29 +129,133 @@ def _apply_sanitize(row: dict, sanitize_tags: list[str], request_field: str) -> 
     return out
 
 
+# A group holding at least this share of the corpus cannot be split: hashing
+# it once sends (nearly) every row to the same split, leaving val/test empty.
+_DEGENERATE_GROUP_SHARE = 0.9
+
+
+def _row_identity(row: dict) -> str:
+    """Per-row group key: ``sample_id`` when present, else a content hash."""
+    sid = row.get("sample_id")
+    if isinstance(sid, str) and sid.strip():
+        return sid.strip()
+    if sid is not None and not isinstance(sid, str):
+        return str(sid)
+    return stable_hash(json.dumps(row, sort_keys=True, default=str))[:16]
+
+
+def _group_rows(
+    rows: list[dict], *, group_by: Optional[str] = None
+) -> tuple[dict[str, list[dict]], Optional[str]]:
+    """Group rows by key, falling back to per-row keys for a degenerate group.
+
+    Corpora produced by ``maatml datagen`` / ``maatml ingest`` share one
+    ``source`` and carry no ``family``, so every row hashed to the same group
+    and the whole corpus landed in a single split (empty val/test, a green
+    prepare, and nothing to evaluate on). When one group covers ~the whole
+    corpus its members are split per row instead, loudly.
+
+    Returns ``(groups, degenerate_key)``.
+    """
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        groups[_group_key(row, group_by=group_by)].append(row)
+    if len(rows) < 2:
+        return groups, None
+
+    dominant_key, members = max(groups.items(), key=lambda kv: len(kv[1]))
+    if len(members) < 2 or len(members) / len(rows) < _DEGENERATE_GROUP_SHARE:
+        return groups, None
+
+    message = (
+        f"group key {dominant_key!r} covers {len(members)}/{len(rows)} rows: "
+        "splitting those rows individually so val/test are not empty. "
+        "Group-level leakage protection does NOT apply to them; stamp a "
+        "real family/group_by field (seed builders do) to restore it."
+    )
+    warnings.warn(message, RuntimeWarning, stacklevel=3)
+    console.print(f"[yellow]warning[/] {message}")
+    del groups[dominant_key]
+    for row in members:
+        groups[f"{dominant_key}#row:{_row_identity(row)}"].append(row)
+    return groups, dominant_key
+
+
 def _assign_group_splits(
     rows: list[dict],
     ratios: tuple[float, float, float],
     *,
     group_by: Optional[str] = None,
-) -> dict[Split, list[dict]]:
-    """Hash each group once; every member inherits that split."""
-    groups: dict[str, list[dict]] = defaultdict(list)
-    for row in rows:
-        groups[_group_key(row, group_by=group_by)].append(row)
+) -> tuple[dict[Split, list[dict]], dict[str, Split], Optional[str]]:
+    """Hash each group once; every member inherits that split.
+
+    Returns ``(by_split, group_assignment, degenerate_key)`` so the caller can
+    check benchmark rows against the split each group landed in.
+    """
+    groups, degenerate_key = _group_rows(rows, group_by=group_by)
 
     by_split: dict[Split, list[dict]] = {
         Split.train: [],
         Split.val: [],
         Split.test: [],
     }
+    assignment: dict[str, Split] = {}
     for gkey, members in groups.items():
         split = _split_from_hash(gkey, ratios)
+        assignment[gkey] = split
         for row in members:
             tagged = dict(row)
             tagged["split"] = split.value
             by_split[split].append(tagged)
-    return by_split
+    return by_split, assignment, degenerate_key
+
+
+def _warn_on_empty_splits(by_split: dict[Split, list[dict]], *, n_groups: int) -> None:
+    """Say so when a split came out empty instead of reporting a clean prepare.
+
+    Whole-group hashing with only a handful of groups can leave val (or test)
+    with nothing in it. Training then skips evaluation entirely and still
+    reports success, so the operator needs to hear about it here.
+    """
+    empty = [split.value for split, rows in by_split.items() if not rows]
+    if not empty or not any(by_split.values()):
+        return
+    message = (
+        f"split(s) {', '.join(sorted(empty))} are empty: {n_groups} group(s) "
+        "cannot fill the configured split_ratios. Add more groups (family / "
+        "dataset.group_by values) or widen split_ratios; training will skip "
+        "evaluation on an empty val split."
+    )
+    warnings.warn(message, RuntimeWarning, stacklevel=3)
+    console.print(f"[yellow]warning[/] {message}")
+
+
+def _check_benchmark_leakage(
+    benchmark_rows: list[dict],
+    group_assignment: dict[str, Split],
+    *,
+    group_by: Optional[str] = None,
+) -> None:
+    """Refuse to pin a benchmark row whose group already trains.
+
+    Benchmark rows are pinned to test unconditionally. If one shares a group
+    key with rows the hash sent to train or val, the same family is on both
+    sides of the split and the benchmark number is inflated.
+    """
+    leaked: dict[str, str] = {}
+    for row in benchmark_rows:
+        key = _group_key(row, group_by=group_by)
+        split = group_assignment.get(key)
+        if split in (Split.train, Split.val):
+            leaked.setdefault(key, split.value)
+    if leaked:
+        detail = ", ".join(f"{key} (in {split})" for key, split in sorted(leaked.items()))
+        raise ValueError(
+            "benchmark_samples share group keys with the training splits: "
+            f"{detail}. A benchmark is pinned to test, so those groups would sit "
+            "on both sides of the split. Re-tag the benchmark rows (family / "
+            "dataset.group_by) or remove them from the seed corpus."
+        )
 
 
 def prepare_rows(
@@ -179,8 +284,9 @@ def prepare_rows(
     if group_by is not None:
         group_by = str(group_by).strip() or None
 
-    by_split = _assign_group_splits(seed_rows, ratios, group_by=group_by)
-
+    by_split, group_assignment, degenerate_key = _assign_group_splits(
+        seed_rows, ratios, group_by=group_by
+    )
     category_counts: Counter[str] = Counter()
     source_counts: Counter[str] = Counter()
     family_counts: Counter[str] = Counter()
@@ -192,6 +298,7 @@ def prepare_rows(
                 family_counts[str(row["family"])] += 1
 
     if benchmark_rows:
+        _check_benchmark_leakage(benchmark_rows, group_assignment, group_by=group_by)
         for row in benchmark_rows:
             tagged = dict(row)
             tagged["split"] = Split.test.value
@@ -200,6 +307,9 @@ def prepare_rows(
             source_counts[str(tagged.get("source") or "unknown")] += 1
             if tagged.get("family"):
                 family_counts[str(tagged["family"])] += 1
+
+    # After benchmark pinning: test may be non-empty only because of it.
+    _warn_on_empty_splits(by_split, n_groups=len(group_assignment))
 
     paths = {
         split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()
@@ -217,6 +327,7 @@ def prepare_rows(
             f"Sources: {dict(source_counts)}",
             f"Families: {dict(family_counts) if family_counts else '{}'}",
             f"Sanitize: {list(sanitize_applied) if sanitize_applied else 'none'}",
+            f"Degenerate group split per row: {degenerate_key or 'none'}",
         ],
     )
 
@@ -228,6 +339,7 @@ def prepare_rows(
         "source_counts": dict(source_counts),
         "family_counts": dict(family_counts),
         "split_counts": split_counts,
+        "degenerate_group": degenerate_key,
     }
     console.print(
         f"[green]prepare complete[/] ({model_def.identity}): {summary['split_counts']} "

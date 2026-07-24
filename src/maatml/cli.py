@@ -532,6 +532,7 @@ def cmd_datagen(
     md = load_model_def(model_dir)
     _boot_plugins(md)
     from .data.datagen import DatagenConfigError, run_datagen
+    from .data.gated import GenerationAbort
 
     try:
         result = run_datagen(
@@ -546,6 +547,9 @@ def cmd_datagen(
     except DatagenConfigError as exc:
         console.print(f"[red]datagen refused[/] {exc}")
         raise typer.Exit(code=1) from exc
+    except GenerationAbort as exc:
+        console.print(f"[red]datagen aborted[/] {exc}")
+        raise typer.Exit(code=1) from exc
     except (KeyError, ImportError) as exc:
         console.print(f"[red]datagen failed[/] {exc}")
         raise typer.Exit(code=1) from exc
@@ -553,11 +557,16 @@ def cmd_datagen(
     console.print(
         f"[green]datagen[/] status={status} generator={result['generator']} "
         f"accepted={result['accepted']} rejected={result['rejected']} "
-        f"out={result['out_path']}"
+        f"duplicates={result['duplicates']} out={result['out_path']}"
     )
+    if result["teacher_failures"]:
+        console.print(
+            f"[yellow]note[/] teacher request failures: {result['teacher_failures']} "
+            f"(see {result['card_path']})"
+        )
     if result["protected_existing"]:
         console.print(
-            "[yellow]note[/] nothing accepted; existing seed file left unchanged"
+            "[yellow]note[/] nothing new accepted; existing seed file left unchanged"
         )
 
 

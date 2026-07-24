@@ -7,6 +7,15 @@ GenerateFn = Callable[[], Optional[dict[str, Any]]]
 ValidateFn = Callable[[dict[str, Any]], bool]
 
 
+class GenerationAbort(RuntimeError):
+    """A generator gave up (e.g. the teacher endpoint keeps failing).
+
+    Raised through :func:`build_gated_corpus` instead of being recorded as one
+    more rejected row, so a dead endpoint stops the run immediately rather
+    than burning the whole attempts cap and reporting "0 accepted".
+    """
+
+
 def build_gated_corpus(
     *,
     generate_fn: GenerateFn,
@@ -35,6 +44,8 @@ def build_gated_corpus(
         attempts += 1
         try:
             row = generate_fn()
+        except GenerationAbort:
+            raise
         except Exception as exc:  # noqa: BLE001  treat generate errors as rejects
             rejected.append({"error": str(exc), "_generate_failed": True})
             if on_reject is not None:

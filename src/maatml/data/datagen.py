@@ -8,7 +8,8 @@ from typing import Any, Callable, Optional
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import GENERATORS, VALIDATORS
 from ..utils.io import iter_jsonl, write_jsonl_atomic
-from .gated import build_gated_corpus
+from .gated import GenerationAbort, build_gated_corpus
+from .ingest import _row_id
 from .teacher import TeacherClient
 
 
@@ -73,12 +74,24 @@ def _default_validate_fn(
     return _fn
 
 
+MAX_CONSECUTIVE_TEACHER_FAILURES = 5
+
+
 def _teacher_generate_fn(
     model_def: ModelDefinition,
     teacher: TeacherClient,
     *,
     seed: int,
+    stats: dict[str, Any],
+    max_consecutive_failures: int = MAX_CONSECUTIVE_TEACHER_FAILURES,
 ) -> Callable[[], Optional[dict[str, Any]]]:
+    """Teacher-backed generator that counts and surfaces its failures.
+
+    Swallowing every exception into ``None`` made a dead endpoint or a bad API
+    key look like a generator that simply produced nothing: datagen burned the
+    whole attempts cap and reported "0 accepted" with no reason. Failures are
+    counted, the first exception is kept, and K consecutive failures abort.
+    """
     cfg = get_dataset_cfg(model_def)
     target_field = str(cfg.get("target_field") or "target")
     request_field = str(cfg.get("request_field") or cfg.get("raw_field") or "request")
@@ -98,12 +111,27 @@ def _teacher_generate_fn(
         )
         try:
             row = teacher.propose_json_row(system, user)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            stats["failures"] += 1
+            stats["consecutive"] += 1
+            if stats["first_error"] is None:
+                stats["first_error"] = f"{type(exc).__name__}: {exc}"
+            if stats["consecutive"] >= max_consecutive_failures:
+                raise GenerationAbort(
+                    f"teacher failed {stats['consecutive']} times in a row "
+                    f"({stats['failures']} total); first error: "
+                    f"{stats['first_error']}"
+                ) from exc
             return None
+        stats["consecutive"] = 0
         if not isinstance(row, dict):
+            stats["malformed"] += 1
             return None
         row.setdefault("sample_id", f"teacher-{seed}-{counter['n']}")
         row.setdefault("source", "teacher")
+        # Teacher rows share one source and carry no family, so they would all
+        # hash into a single split group. Give each row its own identity.
+        row.setdefault("family", str(row["sample_id"]))
         return row
 
     return _fn
@@ -130,9 +158,17 @@ def run_datagen(
     gated = bool(validator_name)
     validate_fn = _default_validate_fn(model_def, allow_ungated=allow_ungated)
 
+    teacher_stats: dict[str, Any] = {
+        "failures": 0,
+        "consecutive": 0,
+        "malformed": 0,
+        "first_error": None,
+    }
     if use_teacher:
         teacher = TeacherClient()
-        generate_fn = _teacher_generate_fn(model_def, teacher, seed=seed)
+        generate_fn = _teacher_generate_fn(
+            model_def, teacher, seed=seed, stats=teacher_stats
+        )
         gen_name = "teacher"
     else:
         raw_gen = cfg.get("generator")
@@ -157,19 +193,30 @@ def run_datagen(
     reject_path = dest.with_name(dest.stem + ".datagen_rejected.jsonl")
     if rejected:
         write_jsonl_atomic(reject_path, rejected)
+    else:
+        # A stale report from a previous run would otherwise be read as this
+        # run's rejects.
+        reject_path.unlink(missing_ok=True)
 
     # D2: never truncate or rewrite a non-empty seed file when nothing was
     # accepted. A validator that rejected everything (or an empty run) must not
     # destroy a hand-curated corpus.
     seed_existing_nonempty = dest.is_file() and dest.stat().st_size > 0
+    duplicates = 0
     if not accepted:
         seed_written = False
         protected_existing = seed_existing_nonempty
     else:
         existing = list(iter_jsonl(dest)) if (append and dest.is_file()) else []
-        write_jsonl_atomic(dest, existing + accepted)
-        seed_written = True
-        protected_existing = False
+        accepted, duplicates = _dedup_against(existing, accepted)
+        if accepted:
+            write_jsonl_atomic(dest, existing + accepted)
+            seed_written = True
+            protected_existing = False
+        else:
+            # Everything generated was already in the corpus: leave it alone.
+            seed_written = False
+            protected_existing = seed_existing_nonempty
 
     card_path = _write_datagen_card(
         dest,
@@ -178,9 +225,11 @@ def run_datagen(
         gated=gated,
         accepted=len(accepted),
         rejected=len(rejected),
+        duplicates=duplicates,
         seed_written=seed_written,
         protected_existing=protected_existing,
         append=append,
+        teacher_stats=teacher_stats if use_teacher else None,
     )
 
     return {
@@ -189,12 +238,35 @@ def run_datagen(
         "gated": gated,
         "accepted": len(accepted),
         "rejected": len(rejected),
+        "duplicates": duplicates,
+        "teacher_failures": teacher_stats["failures"] if use_teacher else 0,
         "seed_written": seed_written,
         "protected_existing": protected_existing,
         "out_path": str(dest),
         "reject_path": str(reject_path) if rejected else None,
         "card_path": str(card_path),
     }
+
+
+def _dedup_against(
+    existing: list[dict[str, Any]], accepted: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], int]:
+    """Drop accepted rows already present in the corpus (by ingest row id).
+
+    Appending re-generated rows silently doubled the corpus, which then shows
+    up as leakage across splits rather than as an obvious duplicate.
+    """
+    seen = {_row_id(row) for row in existing}
+    unique: list[dict[str, Any]] = []
+    duplicates = 0
+    for row in accepted:
+        rid = _row_id(row)
+        if rid in seen:
+            duplicates += 1
+            continue
+        seen.add(rid)
+        unique.append(row)
+    return unique, duplicates
 
 
 def _write_datagen_card(
@@ -208,6 +280,8 @@ def _write_datagen_card(
     seed_written: bool,
     protected_existing: bool,
     append: bool,
+    duplicates: int = 0,
+    teacher_stats: Optional[dict[str, Any]] = None,
 ) -> Path:
     """Write a provenance card next to the seed file recording gate status."""
     status = "GATED" if gated else "UNGATED"
@@ -219,10 +293,17 @@ def _write_datagen_card(
         f"- validator: {validator or 'none (UNGATED)'}",
         f"- accepted: {accepted}",
         f"- rejected: {rejected}",
+        f"- duplicates_skipped: {duplicates}",
         f"- append: {append}",
         f"- seed_written: {seed_written}",
         f"- protected_existing_seed: {protected_existing}",
     ]
+    if teacher_stats is not None:
+        lines += [
+            f"- teacher_failures: {teacher_stats['failures']}",
+            f"- teacher_malformed_rows: {teacher_stats['malformed']}",
+            f"- teacher_first_error: {teacher_stats['first_error'] or 'none'}",
+        ]
     if not gated:
         lines += [
             "",

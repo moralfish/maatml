@@ -7,12 +7,16 @@ rule loader + apply helpers.
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Optional
 
 from ..utils.io import read_yaml
+
+# Backreference forms that make a replacement's length depend on the match.
+_BACKREF_RX = re.compile(r"\\\d|\\g<[^>]+>")
 
 
 @dataclass(frozen=True)
@@ -24,14 +28,39 @@ class SanitizationRule:
     length_preserving: bool
 
 
+def _min_match_width(pattern: str) -> Optional[int]:
+    """Shortest string the pattern can match, or None if it cannot be derived."""
+    try:  # re._parser on 3.11+, sre_parse before that; both are private.
+        try:
+            from re import _parser as parser  # type: ignore[attr-defined]
+        except ImportError:  # pragma: no cover - Python < 3.11
+            import sre_parse as parser  # type: ignore[no-redef]
+        lo, _hi = parser.parse(pattern).getwidth()
+        return int(lo)
+    except Exception:  # noqa: BLE001  a check we cannot make is not a failure
+        return None
+
+
 def _compile_rule(raw: dict) -> SanitizationRule:
-    return SanitizationRule(
+    rule = SanitizationRule(
         name=raw["name"],
         pattern=re.compile(raw["pattern"]),
         replacement=raw["replacement"],
         applies_to=frozenset(raw.get("applies_to", [])),
         length_preserving=bool(raw.get("length_preserving", False)),
     )
+    if rule.length_preserving and not _BACKREF_RX.search(rule.replacement):
+        # A fixed replacement longer than the shortest possible match would be
+        # silently cut to fit, corrupting the text it was meant to redact.
+        lo = _min_match_width(raw["pattern"])
+        if lo is not None and len(rule.replacement) > lo:
+            raise ValueError(
+                f"sanitization rule {rule.name!r} is length_preserving but its "
+                f"replacement {rule.replacement!r} ({len(rule.replacement)} chars) "
+                f"cannot fit a match as short as {lo} chars; shorten the "
+                "replacement or drop length_preserving"
+            )
+    return rule
 
 
 def load_rules(path: str | Path) -> list[SanitizationRule]:
@@ -44,6 +73,9 @@ def _expand(rule: SanitizationRule, m: re.Match[str]) -> str:
     return m.expand(rule.replacement)
 
 
+_warned_truncating_rules: set[str] = set()
+
+
 def _apply_one(text: str, rule: SanitizationRule) -> str:
     if not rule.length_preserving:
         return rule.pattern.sub(lambda m: _expand(rule, m), text)
@@ -52,6 +84,18 @@ def _apply_one(text: str, rule: SanitizationRule) -> str:
         repl = _expand(rule, m)
         original_len = m.end() - m.start()
         if len(repl) > original_len:
+            # Truncating to preserve column layout loses part of the
+            # replacement, so say so once per rule instead of silently
+            # emitting a half-written redaction.
+            if rule.name not in _warned_truncating_rules:
+                _warned_truncating_rules.add(rule.name)
+                warnings.warn(
+                    f"sanitization rule {rule.name!r}: replacement "
+                    f"{repl!r} truncated to {original_len} chars to preserve "
+                    "length; the redaction is incomplete",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             return repl[:original_len]
         return repl + (" " * (original_len - len(repl)))
 

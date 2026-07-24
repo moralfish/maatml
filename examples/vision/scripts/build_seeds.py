@@ -67,10 +67,27 @@ def main() -> int:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    # Fixed benchmark: first N families, re-keyed.
-    bench = rows[: args.benchmark_n]
-    for b in bench:
-        b["source"] = "benchmark:fixed"
+    # Fixed benchmark: rows generated *after* the seed corpus and re-keyed into
+    # their own family namespace. Copying the first N seed rows made the
+    # benchmark a subset of train, so the pinned test score measured
+    # memorisation (and `maatml prepare` now refuses that overlap).
+    bench: list[dict] = []
+    while len(bench) < args.benchmark_n:
+        row = build_sample_row(
+            i,
+            base_seed=args.seed,
+            size=args.size,
+            image_rel="datasets/samples/images/{id}.png",
+            images_dir=images_dir,
+        )
+        i += 1
+        vr = validate_vision_scene(json.dumps(row["expected"]), schema_path=schema)
+        if not vr.ok:
+            rejected += 1
+            continue
+        row["source"] = "benchmark:fixed"
+        row["family"] = f"bench_{row['family']}"
+        bench.append(row)
     with args.benchmark.open("w", encoding="utf-8") as fh:
         for row in bench:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")

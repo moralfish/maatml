@@ -67,9 +67,29 @@ def main() -> int:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    bench = rows[: args.benchmark_n]
-    for b in bench:
-        b["source"] = "benchmark:fixed"
+    # Fixed benchmark: rows generated *after* the seed corpus and re-keyed into
+    # their own family namespace, so no family sits in both train and test
+    # (copying the first N seed rows made the benchmark a subset of train).
+    bench: list[dict] = []
+    while len(bench) < args.benchmark_n:
+        row = build_described_row(
+            i,
+            base_seed=args.seed,
+            size=args.size,
+            image_rel="datasets/samples/images/{id}.png",
+            images_dir=images_dir,
+        )
+        i += 1
+        vr = validate_vision_vlm(
+            json.dumps(row["expected_output"]),
+            schema_path=schema,
+        )
+        if not vr.ok:
+            rejected += 1
+            continue
+        row["source"] = "benchmark:fixed"
+        row["family"] = f"bench_{row['family']}"
+        bench.append(row)
     with args.benchmark.open("w", encoding="utf-8") as fh:
         for row in bench:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")

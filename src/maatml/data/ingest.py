@@ -114,6 +114,9 @@ def ingest_samples(
         sid = _row_id(sample)
         sample.setdefault("sample_id", sid)
         sample["source"] = provenance
+        # Every ingested row shares one source, so without a per-row family
+        # they would hash into a single split group and land in one split.
+        sample.setdefault("family", str(sample["sample_id"]))
 
         if sid in seen:
             rejected.append({**sample, "_reject_reason": "duplicate"})
