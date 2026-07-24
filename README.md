@@ -116,8 +116,10 @@ line; `maatml --debug <command>` prints the traceback.
 | `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss. The token budget defaults to `packaging.max_input_tokens` |
 | `export` | Deployable bundle + `manifest.json` (`--format`, `--parity`) |
 | `verify` | Recompute sha256 of an export against its `manifest.json` |
-| `serve` | JSON inference API; `--enforce` rejects invalid outputs (HTTP 422) |
+| `serve` | JSON inference API; `--enforce` (422), `--max-retries`, `--auth-token`, `--capture` |
 | `datagen` | Validator-gated seed generation (`--teacher`, `--allow-ungated`) |
+| `distill` | Validator-gated teacher labels over a prompt pool (`--replay` offline) |
+| `mint` | Preference pairs (`chosen`/`rejected`) from validator-scored candidates |
 | `ingest` | Import external samples (`--map field=col`, `--sanitize tag`) |
 | `runs` | List recorded training runs (`--compare` tabulates their metrics) |
 | `plan` | Show which lifecycle steps are stale (alias for `run --dry-run`) |

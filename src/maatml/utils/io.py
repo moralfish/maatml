@@ -104,6 +104,11 @@ def stable_hash(*parts: Any) -> str:
     return h.hexdigest()
 
 
+def sha256_bytes(data: bytes) -> str:
+    """Hex sha256 of raw bytes (content-addressed keys, prompt hashes)."""
+    return hashlib.sha256(data).hexdigest()
+
+
 def sha256_file(path: str | Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:

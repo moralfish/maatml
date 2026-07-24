@@ -1,0 +1,4 @@
+{"key": "recorded-teacher@2026-07:c250470cfeb244ee", "response": "{\"priority\": \"p2\", \"category\": \"billing\", \"team\": \"payments\", \"summary\": \"Duplicate Team plan charge, refund requested\"}"}
+{"key": "recorded-teacher@2026-07:b0ace5489c4a27ba", "response": "{\"priority\": \"p1\", \"category\": \"access\", \"team\": \"identity\", \"summary\": \"SSO login loop locks out the whole team\"}"}
+{"key": "recorded-teacher@2026-07:4d41ee19246bb1fe", "response": "{\"priority\": \"p4\", \"category\": \"how_to\", \"team\": \"docs\", \"summary\": \"Asks how to export a project to CSV\"}"}
+{"key": "recorded-teacher@2026-07:ea9c309960432ad4", "response": "{\"priority\": \"p3\", \"category\": \"billing\", \"team\": \"platform\", \"summary\": \"Invoice shows wrong VAT number\"}"}

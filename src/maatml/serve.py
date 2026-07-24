@@ -13,6 +13,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import hmac
 import inspect
 import json
 import logging
@@ -20,9 +21,10 @@ import threading
 import time
 import traceback
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from .config import ModelDefinition, get_dataset_cfg
@@ -30,6 +32,7 @@ from .device import resolve_device
 from .registry import PREDICTORS, VALIDATORS, discover_plugins, load_model_plugins
 from .runs import resolve_checkpoint
 from .scaffold import normalize_architecture
+from .utils.io import sha256_bytes
 from .validation.base import ValidationResult, strip_fences
 
 # Reject request bodies larger than this by default (1 MiB). Predict rows are
@@ -43,6 +46,72 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
 
 class RequestTooLarge(Exception):
     """Request body exceeded the configured size cap (maps to HTTP 413)."""
+
+
+class CaptureWriter:
+    """Appends served predictions to a JSONL file for later human review.
+
+    Captured rows are explicitly **not** gold: each carries ``approved: false``
+    and ``needs_review: true``, and ``maatml ingest`` refuses to accept a
+    captured row until a human (or teacher) has corrected and approved it. The
+    file is size-capped so an unattended server cannot fill the disk, and it
+    only ever holds the sanitized request and the model's own output.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        request_field: str,
+        max_rows: int = 10_000,
+        max_bytes: int = 32 * 1024 * 1024,
+    ) -> None:
+        self.path = Path(path)
+        self.request_field = request_field
+        self.max_rows = max_rows
+        self.max_bytes = max_bytes
+        self._rows = 0
+        self._lock = threading.Lock()
+        if self.path.is_file():
+            with open(self.path, "r", encoding="utf-8") as handle:
+                self._rows = sum(1 for line in handle if line.strip())
+
+    def capped(self) -> bool:
+        if self._rows >= self.max_rows:
+            return True
+        return self.path.is_file() and self.path.stat().st_size >= self.max_bytes
+
+    def record(self, row: dict[str, Any], output: Any, raw: str) -> bool:
+        """Append one capture row; returns False when the cap is reached."""
+        with self._lock:
+            if self.capped():
+                return False
+            request = row.get(self.request_field)
+            entry = {
+                "sample_id": f"capture-{sha256_bytes(raw.encode('utf-8'))[:16]}",
+                "source": "serve_capture",
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                self.request_field: request,
+                "model_output": output,
+                # A served prediction is a proposal, not a label. ingest gates
+                # on approved: only a reviewed, approved row becomes a seed.
+                "approved": False,
+                "needs_review": True,
+            }
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.path, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            self._rows += 1
+            return True
+
+
+def _token_matches(provided: Optional[str], expected: str) -> bool:
+    """Constant-time bearer-token comparison (avoids a timing side channel)."""
+    if not provided:
+        return False
+    if provided.startswith("Bearer "):
+        provided = provided[len("Bearer ") :]
+    return hmac.compare_digest(provided, expected)
 
 
 @dataclass
@@ -71,6 +140,14 @@ class ServeContext:
     # Subset of {user_prompt, schema_path, contracts_path} the validator accepts,
     # resolved once at startup; None means it accepts anything (**kwargs).
     validator_params: frozenset[str] | None = None
+    # Bearer token required on protected endpoints (always for /predict?capture,
+    # and for every request when set). None means no auth (loopback only).
+    auth_token: Optional[str] = None
+    # On a validation failure under --enforce, feed the error back and re-ask
+    # the model once more before giving up. 0 disables (reject on first failure).
+    max_retries: int = 0
+    # Capture writer: when set, accepted /predict rows are appended for review.
+    capture: Optional["CaptureWriter"] = None
     started_at: float = field(default_factory=time.time)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -138,6 +215,9 @@ def build_serve_context(
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     enforce: bool = False,
     debug: bool = False,
+    auth_token: Optional[str] = None,
+    max_retries: int = 0,
+    capture_path: Optional[str | Path] = None,
 ) -> ServeContext:
     """Load plugins, resolve checkpoint, instantiate and setup the predictor."""
     discover_plugins()
@@ -199,6 +279,26 @@ def build_serve_context(
             "serve --enforce requires evaluation.validator in model.yml so live "
             "inference can be gated; none is configured."
         )
+    if max_retries and validator is None:
+        raise ValueError(
+            "serve --max-retries needs evaluation.validator: there is no way to "
+            "tell a retry succeeded without a validator to re-check the output."
+        )
+
+    capture = None
+    if capture_path is not None:
+        # Capture writes model output that is not yet reviewed, so it is gated
+        # behind the auth token: an open capture endpoint is an unbounded write
+        # sink and a way to poison the corpus.
+        if not auth_token:
+            raise ValueError(
+                "serve --capture requires --auth-token (or MAATML_SERVE_TOKEN): "
+                "captured rows are unreviewed writes and must not be open to "
+                "anonymous clients."
+            )
+        cfg = get_dataset_cfg(model_def)
+        request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
+        capture = CaptureWriter(Path(capture_path), request_field=request_field)
 
     return ServeContext(
         model_def=model_def,
@@ -214,6 +314,9 @@ def build_serve_context(
         enforce=enforce,
         debug=debug,
         validator_params=_resolve_validator_params(validator) if validator else None,
+        auth_token=auth_token,
+        max_retries=max_retries,
+        capture=capture,
     )
 
 
@@ -240,6 +343,44 @@ def _validation_payload(result: ValidationResult) -> dict[str, Any]:
     }
 
 
+def _validate_output(ctx: ServeContext, row: dict[str, Any], raw: Any) -> ValidationResult:
+    assert ctx.validator is not None  # callers guard on this
+    cfg = get_dataset_cfg(ctx.model_def)
+    request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
+    user_prompt = row.get(request_field)
+    if not isinstance(user_prompt, str):
+        user_prompt = None
+    raw_str = raw if isinstance(raw, str) else json.dumps(raw)
+    available: dict[str, Any] = {"user_prompt": user_prompt}
+    if ctx.schema_path is not None:
+        available["schema_path"] = ctx.schema_path
+    if ctx.contracts_path is not None:
+        available["contracts_path"] = ctx.contracts_path
+    if ctx.validator_params is None:
+        kwargs = available
+    else:
+        kwargs = {k: v for k, v in available.items() if k in ctx.validator_params}
+    return ctx.validator(raw_str, **kwargs)
+
+
+def _feedback_row(
+    ctx: ServeContext, row: dict[str, Any], result: ValidationResult
+) -> dict[str, Any]:
+    """Row for a retry: the original plus the validation error to correct.
+
+    The predictor decides how to use ``_validation_feedback`` (a chat predictor
+    appends it as a user turn); a predictor that ignores the key simply re-runs
+    unchanged, which is a harmless no-op rather than an error.
+    """
+    errors = "; ".join(f"{e.code}: {e.message}" for e in result.errors) or "invalid output"
+    retry = dict(row)
+    retry["_validation_feedback"] = (
+        f"The previous response failed validation ({errors}). "
+        "Return a corrected response that satisfies the contract."
+    )
+    return retry
+
+
 def _run_predict(
     ctx: ServeContext,
     row: dict[str, Any],
@@ -248,14 +389,27 @@ def _run_predict(
 ) -> dict[str, Any]:
     predict = ctx.predictor.predict if hasattr(ctx.predictor, "predict") else ctx.predictor
     t0 = time.perf_counter()
+    attempts = 0
+    result: Optional[ValidationResult] = None
     with ctx.lock:
         raw = predict(row)
+        attempts += 1
+        if do_validate and ctx.validator is not None:
+            result = _validate_output(ctx, row, raw)
+            # Bounded retry-with-feedback: feed the error back and re-ask, up to
+            # max_retries times. Each retry is counted and reported, never silent.
+            while not result.ok and attempts <= ctx.max_retries:
+                raw = predict(_feedback_row(ctx, row, result))
+                attempts += 1
+                result = _validate_output(ctx, row, raw)
     latency_ms = (time.perf_counter() - t0) * 1000.0
 
     payload: dict[str, Any] = {
         "output": _try_parse_json(raw) if isinstance(raw, str) else raw,
         "raw": raw if isinstance(raw, str) else json.dumps(raw),
         "latency_ms": round(latency_ms, 3),
+        "attempts": attempts,
+        "retries": attempts - 1,
     }
 
     if do_validate:
@@ -269,25 +423,7 @@ def _run_predict(
                     "location": None,
                 }
             ]
-        else:
-            cfg = get_dataset_cfg(ctx.model_def)
-            request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
-            user_prompt = row.get(request_field)
-            if not isinstance(user_prompt, str):
-                user_prompt = None
-            raw_str = raw if isinstance(raw, str) else json.dumps(raw)
-            available: dict[str, Any] = {"user_prompt": user_prompt}
-            if ctx.schema_path is not None:
-                available["schema_path"] = ctx.schema_path
-            if ctx.contracts_path is not None:
-                available["contracts_path"] = ctx.contracts_path
-            # Call the validator with exactly the kwargs its signature accepts,
-            # resolved once at startup; no silent TypeError fallback.
-            if ctx.validator_params is None:
-                kwargs = available
-            else:
-                kwargs = {k: v for k, v in available.items() if k in ctx.validator_params}
-            result = ctx.validator(raw_str, **kwargs)
+        elif result is not None:
             payload.update(_validation_payload(result))
     return payload
 
@@ -384,10 +520,19 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                         },
                         "predictor": _resolve_predictor_name(md),
                         "validator": (md.evaluation or {}).get("validator"),
+                        "enforce": ctx.enforce,
+                        "max_retries": ctx.max_retries,
+                        "auth_required": ctx.auth_token is not None,
+                        "capture_enabled": ctx.capture is not None,
                     },
                 )
                 return
             self._send_json(404, {"error": f"Unknown path {path!r}"})
+
+        def _authorized(self) -> bool:
+            if ctx.auth_token is None:
+                return True
+            return _token_matches(self.headers.get("Authorization"), ctx.auth_token)
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
@@ -396,6 +541,20 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": f"Unknown path {path!r}"})
                 return
             qs = parse_qs(parsed.query)
+            want_capture = any(
+                v.lower() in ("1", "true", "yes") for v in qs.get("capture", [])
+            )
+            # Capture always needs the token; when a token is configured it is
+            # required for every /predict.
+            if (want_capture or ctx.auth_token is not None) and not self._authorized():
+                self._send_json(401, {"error": "missing or invalid auth token"})
+                return
+            if want_capture and ctx.capture is None:
+                self._send_json(
+                    400,
+                    {"error": "capture not enabled; start serve with --capture PATH"},
+                )
+                return
             # Under --enforce the validator gates every /predict regardless of
             # whether the client asked for validation.
             do_validate = ctx.enforce or any(
@@ -404,6 +563,11 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
             try:
                 row = self._read_json_body()
                 result = _run_predict(ctx, row, do_validate=do_validate)
+                if want_capture and ctx.capture is not None:
+                    stored = ctx.capture.record(row, result["output"], result["raw"])
+                    result["captured"] = stored
+                    if not stored:
+                        result["capture_note"] = "capture cap reached; row not stored"
                 status = 200
                 if ctx.enforce and result.get("valid") is False:
                     status = 422
@@ -470,6 +634,9 @@ def run_server(
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     enforce: bool = False,
     debug: bool = False,
+    auth_token: Optional[str] = None,
+    max_retries: int = 0,
+    capture_path: Optional[str | Path] = None,
 ) -> None:
     """Block serving until KeyboardInterrupt."""
     from rich.console import Console
@@ -483,6 +650,9 @@ def run_server(
         max_body_bytes=max_body_bytes,
         enforce=enforce,
         debug=debug,
+        auth_token=auth_token,
+        max_retries=max_retries,
+        capture_path=capture_path,
     )
     server = serve_model(
         model_def,
@@ -492,15 +662,19 @@ def run_server(
         device=device,
         context=ctx,
     )
-    if host not in _LOOPBACK_HOSTS:
+    if host not in _LOOPBACK_HOSTS and auth_token is None:
         console.print(
-            f"[yellow]warning[/] binding non-loopback host {host!r}; there is no "
-            "authentication. Expose only on a trusted network."
+            f"[yellow]warning[/] binding non-loopback host {host!r} with no "
+            "auth token; anyone who can reach the port can query the model. "
+            "Pass --auth-token or expose only on a trusted network."
         )
     console.print(
         f"[green]serving[/] {model_def.identity} ({model_def.architecture}) "
         f"ckpt={ctx.checkpoint_dir} device={ctx.device}"
         + (" [bold]enforce[/]" if enforce else "")
+        + (f" [bold]retries={max_retries}[/]" if max_retries else "")
+        + (" [bold]auth[/]" if auth_token else "")
+        + (" [bold]capture[/]" if capture_path else "")
     )
     console.print(f"  GET  http://{host}:{port}/health")
     console.print(f"  GET  http://{host}:{port}/info")

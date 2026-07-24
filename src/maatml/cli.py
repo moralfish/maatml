@@ -526,6 +526,25 @@ def cmd_serve(
         help="Return HTTP 422 when the configured validator rejects a prediction "
         "(gate live inference). Off by default (annotate only).",
     ),
+    max_retries: int = typer.Option(
+        0,
+        "--max-retries",
+        help="On a validation failure under --enforce, feed the error back and "
+        "re-ask the model up to this many times. Retries are counted in the "
+        "response. Needs evaluation.validator.",
+    ),
+    auth_token: Optional[str] = typer.Option(
+        None,
+        "--auth-token",
+        help="Require this bearer token on /predict (also reads "
+        "MAATML_SERVE_TOKEN). Required for --capture and non-loopback binds.",
+    ),
+    capture: Optional[Path] = typer.Option(
+        None,
+        "--capture",
+        help="Append served predictions to this JSONL for review. Captured rows "
+        "are NOT gold: ingest refuses them until approved. Requires --auth-token.",
+    ),
     debug: bool = typer.Option(
         False,
         "--debug",
@@ -535,7 +554,7 @@ def cmd_serve(
 ) -> None:
     """Serve a checkpoint or export bundle as a JSON inference API.
 
-    Endpoints: GET /health, GET /info, POST /predict (?validate=1 optional).
+    Endpoints: GET /health, GET /info, POST /predict (?validate=1, ?capture=1).
     Works for any architecture with a registered predictor (text + vision).
     """
     md = load_model_def(model_dir)
@@ -543,6 +562,7 @@ def cmd_serve(
     from .serve import run_server
 
     cors_origin = cors if cors is not None else os.environ.get("MAATML_SERVE_CORS")
+    token = auth_token if auth_token is not None else os.environ.get("MAATML_SERVE_TOKEN")
     try:
         run_server(
             md,
@@ -554,6 +574,9 @@ def cmd_serve(
             max_body_bytes=max_body_bytes,
             enforce=enforce,
             debug=debug,
+            auth_token=token,
+            max_retries=max_retries,
+            capture_path=capture,
         )
     except (FileNotFoundError, KeyError, ImportError, RuntimeError, ValueError) as exc:
         console.print(f"[red]serve failed[/] {exc}")
@@ -623,6 +646,61 @@ def cmd_datagen(
         )
 
 
+@app.command("distill")
+def cmd_distill(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    prompts: Optional[str] = typer.Option(
+        None, "--prompts", help="Prompt pool path (JSONL or text); overrides distill.prompt_source"
+    ),
+    replay: bool = typer.Option(
+        False,
+        "--replay",
+        help="Use only cached teacher responses (no network); reproduces a "
+        "prior run's corpus offline",
+    ),
+    offline: bool = typer.Option(
+        False, "--offline", help="Never call the teacher; an uncached prompt is skipped"
+    ),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Cap prompts processed"),
+    out: Optional[str] = typer.Option(None, "--out", help="Override seed JSONL path"),
+    append: bool = typer.Option(True, "--append/--no-append"),
+) -> None:
+    """Label a prompt pool with a validator-gated teacher (data flywheel).
+
+    Every teacher label is gated by evaluation.validator before it enters the
+    seed corpus; accepted rows carry teacher provenance. Teacher responses are
+    cached, so `--replay` reproduces the same corpus with no network.
+    """
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .data.distill import DistillConfigError, run_distill
+
+    try:
+        result = run_distill(
+            md, prompt_source=prompts, replay=replay, offline=offline,
+            limit=limit, append=append, out_path=out,
+        )
+    except DistillConfigError as exc:
+        console.print(f"[red]distill refused[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    mode = "replay" if result["replay"] else "live"
+    console.print(
+        f"[green]distill[/] mode={mode} teacher={result['teacher_model']} "
+        f"prompts={result['prompts']} accepted={result['accepted']} "
+        f"rejected={result['rejected']} duplicates={result['duplicates']} "
+        f"out={result['out_path']}"
+    )
+    if result["teacher_failures"]:
+        console.print(
+            f"[yellow]note[/] teacher request failures: {result['teacher_failures']}"
+        )
+    if result["replay"] and result["cache_misses"]:
+        console.print(
+            f"[yellow]note[/] {result['cache_misses']} prompt(s) not in the cache "
+            "were skipped (record a live run first)"
+        )
+
+
 @app.command("ingest")
 def cmd_ingest(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
@@ -666,6 +744,47 @@ def cmd_ingest(
         f"skipped_unvalidated={result['skipped_unvalidated']} "
         f"seeds={result['seeds_path']}"
     )
+    if result.get("unapproved_capture"):
+        console.print(
+            f"[yellow]note[/] refused {result['unapproved_capture']} unapproved "
+            "serve-capture row(s); set approved: true after review to ingest them"
+        )
+
+
+@app.command("mint")
+def cmd_mint(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    input_path: Path = typer.Option(
+        ..., "--input", exists=True, help="JSONL of {prompt, candidates: [...]}"
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Override seed JSONL path"),
+    append: bool = typer.Option(True, "--append/--no-append"),
+) -> None:
+    """Mint dpo/orpo preference pairs from candidate completions.
+
+    For each prompt the model's registered validator splits its candidates into
+    pass / fail; a prompt with both yields one {prompt, chosen, rejected} pair.
+    An explicit source op, never a default `run` step.
+    """
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .data.preference import MintConfigError, run_mint
+
+    try:
+        result = run_mint(md, input_path, out_path=out, append=append)
+    except MintConfigError as exc:
+        console.print(f"[red]mint refused[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]mint[/] prompts={result['prompts']} pairs={result['pairs']} "
+        f"duplicates={result['duplicates']} malformed={result['malformed']} "
+        f"out={result['out_path']}"
+    )
+    if result["pairs"] == 0:
+        console.print(
+            "[yellow]note[/] no pairs minted; each prompt needs at least one "
+            "passing and one failing candidate"
+        )
 
 
 @app.command("runs")

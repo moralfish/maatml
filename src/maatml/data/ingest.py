@@ -43,6 +43,19 @@ def _row_id(row: dict[str, Any]) -> str:
     return stable_hash(json.dumps(row, sort_keys=True, default=str))[:16]
 
 
+def _is_unapproved_capture(row: dict[str, Any]) -> bool:
+    """A serve-captured row that has not been reviewed and approved.
+
+    Capture writes ``source: serve_capture`` with ``approved: false``. A
+    reviewer sets ``approved: true`` (and typically fixes the target) before
+    ingesting; anything still marked unapproved, or a capture with the approval
+    flag stripped out, is refused.
+    """
+    if row.get("source") != "serve_capture":
+        return False
+    return row.get("approved") is not True
+
+
 def ingest_samples(
     model_def: ModelDefinition,
     input_path: str | Path,
@@ -106,8 +119,22 @@ def ingest_samples(
     skipped_unvalidated: list[dict[str, Any]] = []
     provenance = f"ingest:{input_path.name}"
 
+    unapproved_capture = 0
     for row in mapped:
         sample = dict(row)
+
+        # A serve-captured row is a model proposal, not a label. It only becomes
+        # a seed after a human (or teacher) has corrected and explicitly approved
+        # it; an unapproved capture is refused rather than trusted.
+        if _is_unapproved_capture(sample):
+            unapproved_capture += 1
+            rejected.append({**sample, "_reject_reason": "unapproved_capture"})
+            continue
+        # A row that was reviewed and approved sheds its review markers so it
+        # reads as an ordinary seed downstream.
+        sample.pop("approved", None)
+        sample.pop("needs_review", None)
+
         if sanitizer is not None and request_field in sample:
             sample[request_field] = sanitizer(str(sample[request_field]))
 
@@ -160,6 +187,7 @@ def ingest_samples(
         "accepted": len(accepted),
         "rejected": len(rejected),
         "skipped_unvalidated": len(skipped_unvalidated),
+        "unapproved_capture": unapproved_capture,
         "total_seeds": len(out_rows),
         "rejected_rows": rejected,
         "skipped_unvalidated_rows": skipped_unvalidated,
@@ -171,5 +199,6 @@ def ingest_samples(
         "accepted": len(accepted),
         "rejected": len(rejected),
         "skipped_unvalidated": len(skipped_unvalidated),
+        "unapproved_capture": unapproved_capture,
         "total_seeds": len(out_rows),
     }
