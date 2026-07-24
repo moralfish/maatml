@@ -141,3 +141,60 @@ dataset:
     md = load_model_def(mdir)
     with pytest.raises(ValueError, match="does not sanitize"):
         prepare_preference_jsonl(md)
+
+
+def test_run_mint_gates_candidates_with_the_validator(tmp_path) -> None:
+    from maatml.config import ModelDefinition
+    from maatml.data.preference import run_mint
+    from maatml.registry import register_validator
+    from maatml.validation.base import ValidationError, ValidationResult
+    from maatml.utils.io import iter_jsonl
+
+    @register_validator("mint_test_validator")
+    def _v(raw_output, *, schema_path=None, contracts_path=None, user_prompt=None, **_kw):
+        r = ValidationResult(raw_output=raw_output, n_layers=1, required_layers={1})
+        # "good" completions pass; everything else fails.
+        if "good" in raw_output:
+            r.passed_layers.add(1)
+        else:
+            r.errors.append(ValidationError(layer=1, code="bad", message="x"))
+        return r
+
+    model_dir = tmp_path / "m"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    md = ModelDefinition(
+        name="m", model_id="m", architecture="dpo", version="0.1.0",
+        dataset={"seed_samples": "datasets/samples/seed_samples.jsonl"},
+        evaluation={"validator": "mint_test_validator"},
+    )
+    object.__setattr__(md, "model_dir", model_dir)
+
+    inp = tmp_path / "candidates.jsonl"
+    write_jsonl(inp, [
+        {"prompt": "p1", "candidates": ["a good answer", "a bad answer"]},
+        {"prompt": "p2", "candidates": ["all bad", "still bad"]},   # no winner: skipped
+        {"prompt": "p3", "candidates": ["only one"]},               # malformed: <2
+    ])
+
+    result = run_mint(md, inp, append=False)
+    assert result["pairs"] == 1
+    assert result["malformed"] == 1
+    rows = list(iter_jsonl(md.resolve("datasets/samples/seed_samples.jsonl")))
+    assert len(rows) == 1
+    assert "good" in rows[0]["chosen"]
+    assert "good" not in rows[0]["rejected"]
+    assert rows[0]["source"] == "mint"
+
+
+def test_run_mint_requires_a_validator(tmp_path) -> None:
+    from maatml.config import ModelDefinition
+    from maatml.data.preference import MintConfigError, run_mint
+
+    model_dir = tmp_path / "m"
+    model_dir.mkdir()
+    md = ModelDefinition(name="m", model_id="m", architecture="dpo", version="0.1.0")
+    object.__setattr__(md, "model_dir", model_dir)
+    inp = tmp_path / "c.jsonl"
+    write_jsonl(inp, [{"prompt": "p", "candidates": ["a", "b"]}])
+    with pytest.raises(MintConfigError, match="needs evaluation.validator"):
+        run_mint(md, inp)

@@ -751,6 +751,42 @@ def cmd_ingest(
         )
 
 
+@app.command("mint")
+def cmd_mint(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    input_path: Path = typer.Option(
+        ..., "--input", exists=True, help="JSONL of {prompt, candidates: [...]}"
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Override seed JSONL path"),
+    append: bool = typer.Option(True, "--append/--no-append"),
+) -> None:
+    """Mint dpo/orpo preference pairs from candidate completions.
+
+    For each prompt the model's registered validator splits its candidates into
+    pass / fail; a prompt with both yields one {prompt, chosen, rejected} pair.
+    An explicit source op, never a default `run` step.
+    """
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .data.preference import MintConfigError, run_mint
+
+    try:
+        result = run_mint(md, input_path, out_path=out, append=append)
+    except MintConfigError as exc:
+        console.print(f"[red]mint refused[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]mint[/] prompts={result['prompts']} pairs={result['pairs']} "
+        f"duplicates={result['duplicates']} malformed={result['malformed']} "
+        f"out={result['out_path']}"
+    )
+    if result["pairs"] == 0:
+        console.print(
+            "[yellow]note[/] no pairs minted; each prompt needs at least one "
+            "passing and one failing candidate"
+        )
+
+
 @app.command("runs")
 def cmd_runs(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
