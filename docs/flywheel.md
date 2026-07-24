@@ -1,0 +1,92 @@
+# The data flywheel
+
+Training data is the scarce input, and a validator-gated model turns its own
+contract into a way to make more of it. Every source operation below is
+explicit, and every row it produces is gated by the same `evaluation.validator`
+that gates eval and serve, so a row that enters the corpus is a row the model is
+graded against.
+
+These are deliberate operations, not steps of `maatml run`. They change the seed
+corpus, and that is exactly what makes `prepare` stale on the next run:
+
+```
+datagen / ingest / distill / mint / (reviewed capture)
+        │  append validator-gated rows to the seed corpus
+        ▼
+maatml run   # prepare is now stale, so the loop retrains
+```
+
+## `maatml datagen`: generate rows
+
+Runs a registered generator (or a teacher) and keeps only rows the validator
+accepts. Fails closed when no validator is configured unless you pass
+`--allow-ungated`. See [the lifecycle](lifecycle.md) for the gating contract.
+
+## `maatml distill`: label a prompt pool
+
+Where `datagen` invents whole rows, `distill` starts from prompts you already
+have and asks a teacher only for the label. Every response is gated before it
+enters the corpus, so a wrong label is dropped rather than trusted.
+
+```bash
+maatml distill <model> --prompts prompts.jsonl
+maatml distill <model> --replay          # reproduce the corpus offline
+```
+
+Accepted rows carry provenance (teacher model and revision, prompt hash,
+source, family), and rejections are kept in a report. Teacher responses are
+recorded in a cache keyed on the prompt hash plus the teacher's model and
+revision, so `--replay` reproduces exactly the same accepted corpus with no
+network, and a different teacher never silently reuses another's labels. Point
+it at a pool with `--prompts`, or declare a `distill:` section in `model.yml`:
+
+```yaml
+distill:
+  prompt_source: datasets/distill/prompts.jsonl
+  teacher_model: gpt-4o-mini
+  teacher_revision: "2026-07"
+  cache: datasets/distill/cache.jsonl
+```
+
+The [triage example](examples/support-ticket-triage.md) ships a prompt pool and
+a recorded cache, so `maatml distill examples/support-ticket-triage --replay`
+runs offline. One recorded label routes a billing ticket to the wrong team; the
+routing contract rejects it, so it never reaches the seeds.
+
+## `maatml ingest`: import external rows
+
+Maps external columns into the seed shape, optionally sanitizes, and validates
+gold targets when a validator is configured. It also guards the capture loop
+below: a `serve_capture` row is refused unless a reviewer approved it.
+
+## `maatml mint`: preference pairs for DPO / ORPO
+
+Turns candidate completions into `{prompt, chosen, rejected}` pairs. For each
+prompt the validator splits the candidates into pass and fail; a prompt with
+both yields one pair. So a minted pair means "this completion passes the
+contract and that one does not", not a hand-labelled guess.
+
+```bash
+maatml mint <dpo-model> --input candidates.jsonl
+```
+
+Input is JSONL of `{prompt, candidates: [completion, ...]}`. Pairs append to the
+preference seed corpus, stamped `source: mint`.
+
+## Reviewed capture: learn from production
+
+`maatml serve --capture` records real traffic for review. A captured prediction
+is **not** automatically training data, it is a proposal a human or teacher must
+correct and approve first:
+
+```bash
+maatml serve <model> --auth-token "$TOKEN" --capture captures.jsonl
+# review captures.jsonl: fix the target, set "approved": true on keepers
+maatml ingest <model> --input captures.jsonl   # refuses unapproved rows
+maatml run <model>                              # retrains on the new seeds
+```
+
+Capture requires the serve auth token (an open capture endpoint is an unbounded
+write sink and a way to poison the corpus), the file is size-capped, and
+`ingest` refuses any row still marked unapproved. See
+[serving](serving.md#capture-and-the-reviewed-flywheel) for the endpoint side.

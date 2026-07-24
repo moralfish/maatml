@@ -49,7 +49,7 @@ Canonical references in the repo:
 | `maatml export` | Bundle checkpoint (safetensors / gguf / mlx / onnx) + `manifest.json` |
 | `maatml verify` | Recompute sha256 of manifest files |
 | `maatml serve` | JSON inference API, validator inline (`/predict?validate=1`) |
-| `maatml datagen` / `ingest` | Validator-gated data flywheel |
+| `maatml datagen` / `distill` / `ingest` / `mint` | Validator-gated [data flywheel](flywheel.md) |
 
 See the [Plugin author guide](plugins.md) for registering generators, exporters,
 validators, and metrics.

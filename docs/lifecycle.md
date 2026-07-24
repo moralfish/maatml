@@ -106,8 +106,10 @@ train     run      changed: training_config
 evaluate  run      changed: upstream
 ```
 
-`datagen` and `ingest` stay outside the runner. They change the seed corpus,
-and that is precisely what makes `prepare` stale on the next run.
+The source operations (`datagen`, `distill`, `ingest`, `mint`, and reviewed
+`serve --capture`) stay outside the runner. They change the seed corpus, and
+that is precisely what makes `prepare` stale on the next run. See
+[the data flywheel](flywheel.md) for how each one gates what it adds.
 
 `--from` / `--until` restrict the walk, `--force` re-runs everything selected,
 and `--set` overrides feed the fingerprint (an invalid one exits non-zero

@@ -41,6 +41,7 @@ are ordered but unversioned.
 | v0.6 | Truth and safety II: gates tell the truth | Done |
 | v0.7 | Silent-failure hardening + test floor | Done |
 | (unreleased) | Fixed lifecycle runner: `maatml run` | Done |
+| (unreleased) | Distill + reviewed flywheel + serve contract | Done |
 
 ## Non-goals
 
@@ -351,7 +352,7 @@ reports: a rehearsal cannot earn the production thresholds, and a 0.0 gate
 would pass vacuously, but "the checkpoint saved, reloaded, and produced output"
 is a real claim a smoke run can make.
 
-## Distill + reviewed flywheel + serve contract (Planned)
+## Distill + reviewed flywheel + serve contract (Done)
 
 **Tracking:** #16
 
@@ -385,12 +386,18 @@ runner (staleness).
 - **Preference minting CLI**: surface `mint_preference_pairs` as an optional
   source operation (not a default `run` step) feeding `dpo` / `orpo`
 
-**Exit criteria:** a validator-rejected teacher row is absent from the
+**Exit criteria (met):** a validator-rejected teacher row is absent from the
 produced seed corpus (test); `ingest` rejects a captured row lacking explicit
 approval (test); `serve --capture` without the auth token refuses to start
-(test); distill replay with network disabled reproduces the accepted corpus
-(CI); a serve request failing validation under `--enforce` returns 422 with
-the retry count in the response metadata (test).
+(test); distill replay with the network disabled reproduces the accepted corpus
+(a torch-free CLI step in CI plus a test against the shipped triage cache); a
+serve request failing validation under `--enforce` returns 422 with the retry
+count in the response (test).
+
+jsonschema-constrained decoding is deferred rather than dropped: it needs a
+serve extra (outlines / lm-format-enforcer) and only applies to generative
+architectures, whereas bounded retry-with-feedback (shipped) enforces the
+contract for every predictor today. Tracked for a serving follow-up.
 
 ## Slim artifact distribution (Planned)
 

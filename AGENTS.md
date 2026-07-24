@@ -41,8 +41,10 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml evaluate examples/<name>/ [--checkpoint X] [--split test|val] [--gate]
 .venv/bin/maatml export   examples/<name>/ [--checkpoint X] [--format safetensors|gguf|mlx|onnx] [--out PATH] [--parity]
 .venv/bin/maatml verify   examples/<name>/output/export/<run_id>
-.venv/bin/maatml serve    examples/<name>/ [--checkpoint X] [--host 127.0.0.1] [--port 8080]
+.venv/bin/maatml serve    examples/<name>/ [--enforce] [--max-retries N] [--auth-token T] [--capture PATH]
 .venv/bin/maatml datagen  examples/<name>/ [--target N] [--seed S] [--teacher] [--out PATH]
+.venv/bin/maatml distill  examples/<name>/ [--prompts PATH] [--replay] [--offline]
+.venv/bin/maatml mint     examples/<name>/ --input candidates.jsonl   # dpo/orpo pairs
 .venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
 .venv/bin/maatml runs     examples/<name>/ [--compare] [--metric K] [--limit N]
 .venv/bin/maatml doctor   [examples/<name>/] [--json]

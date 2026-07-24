@@ -8,11 +8,34 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
-The fixed lifecycle runner, plus the hygiene backlog that had been carried
-outside the tranches.
+The fixed lifecycle runner, the reviewed data flywheel and serve contract, plus
+the hygiene backlog that had been carried outside the tranches.
 
 ### Added
 
+- **`maatml distill`: validator-gated teacher labels over a prompt pool.**
+  Asks a teacher only for the label on prompts you already have; every response
+  is gated by `evaluation.validator` before it enters the corpus, so a wrong
+  label is dropped. Accepted rows carry provenance (teacher model / revision,
+  prompt hash, source, family), rejections are kept, and teacher responses are
+  cached so `--replay` reproduces the accepted corpus with no network. Typed
+  `distill:` config; worked example on triage.
+- **`maatml mint`: preference pairs for DPO / ORPO.** Splits each prompt's
+  candidate completions into pass / fail with the registered validator and
+  emits `{prompt, chosen, rejected}` pairs. An explicit source op, never a
+  default `run` step.
+- **`serve --auth-token`** (or `MAATML_SERVE_TOKEN`): bearer token required on
+  `/predict`, compared in constant time, mandatory for `--capture`, and warned
+  about when a non-loopback bind has none.
+- **`serve --capture PATH`**: append served predictions for review. Captured
+  rows are not gold (`approved: false`, row/byte capped); `maatml ingest`
+  refuses a `serve_capture` row until a reviewer sets `approved: true`. The
+  loop is `serve --capture` → review → `ingest` → `run`.
+- **`serve --max-retries N`**: on a validation failure under `--enforce`, feed
+  the error back and re-ask up to N times. Responses report `attempts` /
+  `retries`; a request still failing returns 422 with the retry count.
+- **The data-flywheel docs page** (mkdocs) covering datagen, distill, ingest,
+  mint, and reviewed capture as gated source operations.
 - **`maatml run`: the fixed lifecycle in one command.** Walks prepare, train,
   evaluate (gates enforced), export, verify in order and stops non-zero at the
   first failure, so one green line means every stage passed. Flags: `--smoke`,

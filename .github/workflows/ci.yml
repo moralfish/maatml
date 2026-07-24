@@ -52,6 +52,22 @@ jobs:
           maatml validate examples/vision
           maatml validate examples/vision-describer
           maatml validate examples/vision-vlm
+      - name: Offline distill replay (no network, no torch)
+        run: |
+          # Exit criterion: distill --replay reproduces the accepted corpus from
+          # the shipped cache with the network disabled. Writes to a temp seed
+          # file so the committed corpus is untouched.
+          maatml distill examples/support-ticket-triage --replay --no-append \
+            --out /tmp/distill_replay.jsonl
+          python - <<'PY'
+          import json
+          rows = [json.loads(x) for x in open("/tmp/distill_replay.jsonl")]
+          teams = {r["expected_output"]["team"] for r in rows}
+          # Three valid labels enter; the billing->platform label is rejected.
+          assert len(rows) == 3, rows
+          assert teams == {"payments", "identity", "docs"}, teams
+          print("distill replay reproduced", len(rows), "gated rows offline")
+          PY
 
   macos:
     # Torch-free job (free minutes on a public repo): catches import, path,

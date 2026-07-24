@@ -39,6 +39,7 @@ nav:
   - Home: index.md
   - Get started: getting-started.md
   - The validator-gated lifecycle: lifecycle.md
+  - The data flywheel: flywheel.md
   - Serving & deployment: serving.md
   - Plugin author guide: plugins.md
   - Examples:
