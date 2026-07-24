@@ -39,7 +39,7 @@ def test_resolve_export_format_accepts_registered_plugin_format() -> None:
     try:
         assert resolve_export_format("vision_multitask", "toy_fmt") == "toy_fmt"
     finally:
-        EXPORTERS._entries.pop("toy_fmt", None)
+        EXPORTERS.unregister("toy_fmt")
 
 
 def test_export_safetensors_bundle(tmp_path: Path) -> None:

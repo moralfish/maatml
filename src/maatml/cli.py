@@ -65,14 +65,19 @@ def _boot_plugins(md) -> None:
         load_model_plugins(md.model_dir, md.plugins)
 
 
-def _default_eval_keys(md) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Infer predictor/validator/metrics from evaluation: or architecture/task."""
+def _default_eval_keys(md) -> tuple[Optional[str], Optional[str], Any]:
+    """Infer predictor/validator/metrics from evaluation: or architecture/task.
+
+    ``evaluation.metrics`` may be a single name or a list; every entry runs and
+    the results are merged (the harness rejects two plugins claiming the same
+    metric key). A list is no longer silently truncated to its first entry.
+    """
     ev = md.evaluation or {}
     predictor = ev.get("predictor")
     validator = ev.get("validator")
     metrics = ev.get("metrics")
-    if isinstance(metrics, list):
-        metrics = metrics[0] if metrics else None
+    if isinstance(metrics, list) and not metrics:
+        metrics = None
 
     arch = normalize_architecture(md.architecture)
     if predictor is None:
@@ -264,7 +269,12 @@ def cmd_evaluate(
     split: str = typer.Option("test", "--split"),
     device: str = typer.Option("auto", "--device"),
     baseline: Optional[Path] = typer.Option(None, "--baseline"),
-    max_input_tokens: int = typer.Option(2048, "--max-input-tokens"),
+    max_input_tokens: Optional[int] = typer.Option(
+        None,
+        "--max-input-tokens",
+        help="Input token budget; defaults to packaging.max_input_tokens so "
+        "eval measures the same budget serve and export --parity enforce",
+    ),
     limit: Optional[int] = typer.Option(None, "--limit"),
     gate: bool = typer.Option(
         False,
@@ -279,6 +289,7 @@ def cmd_evaluate(
     from .evaluation import predictors as _predictors  # noqa: F401
     from .evaluation.harness import (
         GateConfigError,
+        _resolve_metrics,
         resolve_gate_spec,
         resolve_validator,
         run_evaluation,
@@ -313,6 +324,19 @@ def cmd_evaluate(
         except GateConfigError as exc:
             raise typer.BadParameter(str(exc), param_hint="evaluation.validator") from exc
 
+    # Same fast-fail for metrics: an unregistered name is a config error, not a
+    # crash after the checkpoint load.
+    try:
+        _resolve_metrics(metrics)
+    except KeyError as exc:
+        raise typer.BadParameter(str(exc), param_hint="evaluation.metrics") from exc
+
+    token_budget = (
+        max_input_tokens
+        if max_input_tokens is not None
+        else md.packaging.max_input_tokens
+    )
+
     report = run_evaluation(
         checkpoint_dir=ckpt,
         dataset_dir=md.prepared_dir,
@@ -323,7 +347,7 @@ def cmd_evaluate(
         metrics_fn=metrics,
         device=device,
         split=split,
-        max_input_tokens=max_input_tokens,
+        max_input_tokens=token_budget,
         baseline_path=baseline,
         limit=limit,
         task=md.task,

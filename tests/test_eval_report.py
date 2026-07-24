@@ -97,3 +97,80 @@ def pytest_approx(v):
     import pytest
 
     return pytest.approx(v)
+
+
+def _row_eval(category: str, ok: bool):
+    from maatml.evaluation.harness import RowEval
+    from maatml.validation.base import ValidationError, ValidationResult
+
+    result = ValidationResult(raw_output="{}", n_layers=1)
+    if ok:
+        result.passed_layers.add(1)
+    else:
+        result.errors.append(ValidationError(layer=1, code="bad", message="nope"))
+    return RowEval(row={"category": category}, gen_text="{}", result=result)
+
+
+def test_category_buckets_report_pass_rate_not_fabricated_prf() -> None:
+    from maatml.evaluation.harness import _category_buckets
+
+    buckets = _category_buckets(
+        [
+            _row_eval("missing_dd", True),
+            _row_eval("missing_dd", False),
+            _row_eval("valid", True),
+        ]
+    )
+    assert buckets["missing_dd"] == {"pass_rate": 0.5, "passed": 1.0, "n": 2.0}
+    assert buckets["valid"] == {"pass_rate": 1.0, "passed": 1.0, "n": 1.0}
+    # The old shape invented recall=1.0 / f1=0.0 for every bucket.
+    for stats in buckets.values():
+        assert "recall" not in stats
+        assert "f1" not in stats
+
+
+def test_markdown_summary_renders_bucket_and_prf_shapes(tmp_path: Path) -> None:
+    r = Report(
+        model_id="m",
+        task="t",
+        dataset="d",
+        n=3,
+        per_class={
+            "missing_dd": {"pass_rate": 0.5, "passed": 1.0, "n": 2.0},
+            "valid": {"precision": 1.0, "recall": 0.5, "f1": 0.66, "support": 2.0},
+        },
+    )
+    body = write_markdown_summary(r, tmp_path / "report.md").read_text(encoding="utf-8")
+    assert "- missing_dd: n=2 pass_rate=0.500 passed=1" in body
+    assert "- valid: f1=0.660 precision=1.000 recall=0.500 support=2" in body
+
+
+def test_metrics_list_runs_every_entry() -> None:
+    from maatml.evaluation.harness import _merge_metrics, _resolve_metrics
+    from maatml.registry import METRICS
+
+    METRICS.register("t_a", lambda rows: {"a": 1.0}, source="test")
+    METRICS.register("t_b", lambda rows: {"b": 2.0}, source="test")
+    try:
+        callables = _resolve_metrics(["t_a", "t_b"])
+        assert _merge_metrics(callables, [], ["t_a", "t_b"]) == {"a": 1.0, "b": 2.0}
+    finally:
+        METRICS.unregister("t_a")
+        METRICS.unregister("t_b")
+
+
+def test_metrics_key_collision_is_a_config_error() -> None:
+    import pytest
+
+    from maatml.evaluation.harness import GateConfigError, _merge_metrics, _resolve_metrics
+    from maatml.registry import METRICS
+
+    METRICS.register("t_a", lambda rows: {"same": 1.0}, source="test")
+    METRICS.register("t_b", lambda rows: {"same": 2.0}, source="test")
+    try:
+        callables = _resolve_metrics(["t_a", "t_b"])
+        with pytest.raises(GateConfigError, match="both report"):
+            _merge_metrics(callables, [], ["t_a", "t_b"])
+    finally:
+        METRICS.unregister("t_a")
+        METRICS.unregister("t_b")

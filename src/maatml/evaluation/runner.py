@@ -43,6 +43,26 @@ __all__ = [
 ]
 
 
+_COUNT_KEYS = frozenset({"n", "support", "passed"})
+
+
+def _format_class_stats(vals: dict[str, float]) -> str:
+    """Render whatever per-class keys the report carries.
+
+    Category buckets report ``pass_rate`` / ``passed`` / ``n``; metrics plugins
+    that compute real per-class P/R/F1 report those instead. Neither shape is
+    padded with invented keys.
+    """
+    parts = []
+    for key in sorted(vals):
+        value = vals[key]
+        if key in _COUNT_KEYS:
+            parts.append(f"{key}={int(value)}")
+        else:
+            parts.append(f"{key}={value:.3f}")
+    return " ".join(parts)
+
+
 def write_markdown_summary(report: Report, path: str | Path) -> Path:
     title = report.task or report.name or "eval"
     lines = [
@@ -89,10 +109,7 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
     if report.per_class:
         lines.extend(["", "## Per-class", ""])
         for label, vals in sorted(report.per_class.items()):
-            lines.append(
-                f"- {label}: P={vals['precision']:.3f} R={vals['recall']:.3f} "
-                f"F1={vals['f1']:.3f} support={int(vals['support'])}"
-            )
+            lines.append(f"- {label}: {_format_class_stats(vals)}")
     if report.baseline_delta:
         lines.extend(["", "## Baseline delta", ""])
         for k, v in sorted(report.baseline_delta.items()):

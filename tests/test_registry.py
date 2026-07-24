@@ -18,19 +18,7 @@ from maatml.registry import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _isolate_registries():
-    """Snapshot + restore all registries so tests don't leak registrations."""
-    import maatml.registry as reg
-
-    snaps = {kind: dict(r._entries) for kind, r in reg._ALL_REGISTRIES.items()}
-    discovered_snap = reg._discovered
-    yield
-    for kind, entries in snaps.items():
-        r = reg._ALL_REGISTRIES[kind]
-        r._entries.clear()
-        r._entries.update(entries)
-    reg._discovered = discovered_snap
+# Registry isolation is the autouse fixture in tests/conftest.py.
 
 
 def test_register_get_require() -> None:

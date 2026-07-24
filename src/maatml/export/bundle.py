@@ -245,8 +245,8 @@ def run_parity_check(
     predictor = ev.get("predictor")
     validator = ev.get("validator")
     metrics = ev.get("metrics")
-    if isinstance(metrics, list):
-        metrics = metrics[0] if metrics else None
+    if isinstance(metrics, list) and not metrics:
+        metrics = None
     arch = normalize_architecture(model_def.architecture)
     if predictor is None:
         if PREDICTORS.get(model_def.architecture):

@@ -56,8 +56,21 @@ class _Registry:
     def items(self) -> list[PluginEntry]:
         return [self._entries[k] for k in sorted(self._entries)]
 
+    def unregister(self, name: str) -> bool:
+        """Drop one registration. Returns True when something was removed."""
+        return self._entries.pop(name, None) is not None
+
+    def snapshot(self) -> dict[str, PluginEntry]:
+        """Copy of the current registrations (restore with :meth:`restore`)."""
+        return dict(self._entries)
+
+    def restore(self, entries: dict[str, PluginEntry]) -> None:
+        """Replace registrations with a previous :meth:`snapshot`."""
+        self._entries.clear()
+        self._entries.update(entries)
+
     def clear(self) -> None:
-        """Test helper, wipe registrations."""
+        """Wipe registrations (tests, and ``discover_plugins(force=True)``)."""
         self._entries.clear()
 
 
@@ -137,6 +150,27 @@ def get_registry(kind: str) -> _Registry:
 def list_all_plugins() -> dict[str, list[PluginEntry]]:
     """Return every registered plugin grouped by registry kind."""
     return {kind: reg.items() for kind, reg in _ALL_REGISTRIES.items()}
+
+
+def snapshot_registries() -> dict[str, dict[str, PluginEntry]]:
+    """Snapshot every registry (public API for tests and embedding hosts)."""
+    return {kind: reg.snapshot() for kind, reg in _ALL_REGISTRIES.items()}
+
+
+def restore_registries(snapshot: dict[str, dict[str, PluginEntry]]) -> None:
+    """Restore a :func:`snapshot_registries` result."""
+    for kind, entries in snapshot.items():
+        _ALL_REGISTRIES[kind].restore(entries)
+
+
+def reset_registries(*, rediscover: bool = False) -> None:
+    """Wipe every registry. With ``rediscover``, re-import the built-ins after."""
+    global _discovered
+    for reg in _ALL_REGISTRIES.values():
+        reg.clear()
+    _discovered = False
+    if rediscover:
+        discover_plugins(force=True)
 
 
 def _load_module_from_path(path: Path, module_name: str) -> Any:

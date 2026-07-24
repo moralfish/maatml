@@ -238,7 +238,9 @@ _DATASET_KNOWN_KEYS = frozenset({
     "tokenizer", "generator", "benchmark_samples", "contracts", "template_dir",
     "sources", "base_model_name_or_path",
 })
-_EVALUATION_KNOWN_KEYS = frozenset({"predictor", "validator", "metrics", "gates"})
+_EVALUATION_KNOWN_KEYS = frozenset(
+    {"predictor", "validator", "metrics", "gates", "repair_braces"}
+)
 
 
 def config_key_warnings(md: ModelDefinition) -> list[str]:

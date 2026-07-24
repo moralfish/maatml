@@ -16,6 +16,23 @@ from ..registry import TRANSFORMS, register_predictor
 from .harness import resolve_eval_asset
 
 
+def _count_truncation(tokenizer, text: str, max_len: int, encoded_len: int) -> bool:
+    """Did ``max_len`` actually cut this input?
+
+    Only pays for a second tokenization when the encoded length sits at the cap,
+    so the common (untruncated) row costs nothing extra.
+    """
+    if not max_len or encoded_len < max_len:
+        return False
+    try:
+        full = tokenizer(text, truncation=False, return_tensors=None)["input_ids"]
+    except Exception:  # noqa: BLE001  a tokenizer that refuses is not a failure
+        return False
+    if full and isinstance(full[0], list):
+        full = full[0]
+    return len(full) > max_len
+
+
 def _load_head_specs(checkpoint_dir: Path, model_def: Optional[ModelDefinition]) -> list[dict]:
     """Load head configs from run_metadata.json, falling back to model.yml."""
     meta_path = Path(checkpoint_dir) / "run_metadata.json"
@@ -73,6 +90,10 @@ class MultiHeadClassifierPredictor:
         self._text_transform = None
         self._request_field = "request"
         self._torch: Any = None
+        self._truncated = 0
+
+    def report_extras(self) -> dict[str, Any]:
+        return {"truncated_inputs": self._truncated}
 
     def setup(
         self,
@@ -171,6 +192,10 @@ class MultiHeadClassifierPredictor:
             return_offsets_mapping=True,
             return_tensors=None,
         )
+        if _count_truncation(
+            self._tokenizer, pre, self._max_input_tokens, len(encoding["input_ids"])
+        ):
+            self._truncated += 1
         input_ids = torch.tensor(
             [encoding["input_ids"]], dtype=torch.long, device=self._device
         )
@@ -217,7 +242,13 @@ class MultiHeadClassifierPredictor:
 
 
 class Seq2SeqPredictor:
-    """Encoder-decoder generate (T5 / flan-t5) with optional task prefix."""
+    """Encoder-decoder generate (T5 / flan-t5) with optional task prefix.
+
+    ``evaluation.repair_braces: true`` re-adds the outer ``{`` / ``}`` that T5
+    SentencePiece tokenizers map to ``<unk>``. It is off by default: repairing
+    output before scoring turns a pass rate into a measurement of maatml's
+    repair, so it must be opted into and it is counted in ``Report.extras``.
+    """
 
     def __init__(self, task_prefix: str = "") -> None:
         self._model: Any = None
@@ -227,6 +258,16 @@ class Seq2SeqPredictor:
         self._task_prefix = task_prefix
         self._max_new_tokens = 512
         self._request_field = "request"
+        self._repair_braces = False
+        self._repairs = 0
+        self._truncated = 0
+
+    def report_extras(self) -> dict[str, Any]:
+        return {
+            "truncated_inputs": self._truncated,
+            "brace_repairs": self._repairs,
+            "repair_braces": self._repair_braces,
+        }
 
     def setup(
         self,
@@ -259,6 +300,9 @@ class Seq2SeqPredictor:
             gen = (model_def.training or {}).get("generation") or {}
             if "max_new_tokens" in gen:
                 self._max_new_tokens = int(gen["max_new_tokens"])
+            self._repair_braces = bool(
+                (model_def.evaluation or {}).get("repair_braces", False)
+            )
 
         checkpoint_dir = Path(checkpoint_dir)
         self._tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir, use_fast=True)
@@ -281,6 +325,13 @@ class Seq2SeqPredictor:
             truncation=True,
             return_tensors="pt",
         ).to(self._device)
+        if _count_truncation(
+            self._tokenizer,
+            source,
+            self._max_input_tokens,
+            int(enc["input_ids"].shape[-1]),
+        ):
+            self._truncated += 1
 
         with torch.inference_mode():
             generated = self._model.generate(
@@ -294,12 +345,17 @@ class Seq2SeqPredictor:
         gen_text = self._tokenizer.decode(
             generated[0], skip_special_tokens=True
         ).strip()
+        if not self._repair_braces or not gen_text:
+            return gen_text
         # T5 SentencePiece maps `{`/`}` to <unk>; skip_special_tokens strips them.
-        if gen_text and not gen_text.startswith("{"):
-            gen_text = "{" + gen_text
-        if gen_text and not gen_text.endswith("}"):
-            gen_text = gen_text + "}"
-        return gen_text
+        repaired = gen_text
+        if not repaired.startswith("{"):
+            repaired = "{" + repaired
+        if not repaired.endswith("}"):
+            repaired = repaired + "}"
+        if repaired != gen_text:
+            self._repairs += 1
+        return repaired
 
 
 class CausalSFTPredictor:
@@ -314,6 +370,10 @@ class CausalSFTPredictor:
         self._prompt_spec: dict = {}
         self._user_placeholder = "<<USER_REQUEST>>"
         self._request_field = "request"
+        self._truncated = 0
+
+    def report_extras(self) -> dict[str, Any]:
+        return {"truncated_inputs": self._truncated}
 
     def setup(
         self,
@@ -414,6 +474,7 @@ class CausalSFTPredictor:
             user_placeholder=self._user_placeholder,
         )
         if self._max_input_tokens and len(input_ids) > self._max_input_tokens:
+            self._truncated += 1
             input_ids = input_ids[-self._max_input_tokens :]
         tensor = torch.tensor([input_ids], dtype=torch.long, device=self._device)
         with torch.inference_mode():
