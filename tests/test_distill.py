@@ -57,10 +57,19 @@ class _FakeTeacher:
         return json.dumps({"ok": True, "label": prompt.upper()})
 
 
-def _model(tmp_path: Path, *, distill_section: dict | None = None):
+def _model(
+    tmp_path: Path,
+    *,
+    distill_section: dict | None = None,
+    validator: str = "distill_test_validator",
+    prompts: list[str] | None = None,
+):
     mdir = tmp_path / "model"
     (mdir / "datasets").mkdir(parents=True, exist_ok=True)
-    write_jsonl(mdir / "datasets" / "prompts.jsonl", [{"request": p} for p in PROMPTS])
+    write_jsonl(
+        mdir / "datasets" / "prompts.jsonl",
+        [{"request": p} for p in (prompts if prompts is not None else PROMPTS)],
+    )
     section = distill_section or {
         "prompt_source": "datasets/prompts.jsonl",
         "teacher_model": "fake",
@@ -76,7 +85,7 @@ def _model(tmp_path: Path, *, distill_section: dict | None = None):
             "seed_samples": "datasets/samples/seed_samples.jsonl",
             "target_field": "expected_output",
         },
-        "evaluation": {"validator": "distill_test_validator"},
+        "evaluation": {"validator": validator},
         "distill": section,
     }
     import yaml
@@ -328,3 +337,70 @@ def test_cache_flushes_incrementally(tmp_path) -> None:
     # A rewritten identical value stays clean: no dirty flag, no rewrite.
     cache.put("k0", "v")
     assert cache._dirty is False
+
+
+# --- robustness ------------------------------------------------------------
+
+
+def test_parse_target_accepts_reasoning_teacher_output() -> None:
+    """A reasoning teacher emits its trace in the message content. The local
+    fence-only parser rejected all of it as unparseable; _parse_target now uses
+    the canonical strip_fences, which also drops <think> blocks."""
+    from maatml.data.distill import _parse_target
+
+    assert _parse_target('<think>weighing it up</think>{"ok": true}') == {"ok": True}
+    assert _parse_target('```json\n{"ok": true}\n```') == {"ok": True}
+    assert _parse_target(
+        '<think>hmm</think>\n```json\n{"ok": true}\n```'
+    ) == {"ok": True}
+    assert _parse_target("not json at all") is None
+
+
+def test_validator_exception_rejects_the_row_without_aborting(tmp_path, monkeypatch):
+    """A validator that raises on one row must not discard the whole run: the
+    row is rejected and counted, and the good rows still reach the corpus."""
+    from maatml.registry import register_validator
+
+    @register_validator("distill_raises_on_bad")
+    def _raiser(raw_output, **_kw):
+        parsed = json.loads(raw_output)
+        # Only the 'bad prompt' response carries this key.
+        if parsed.get("why") == "wrong":
+            raise RuntimeError("validator blew up")
+        result = ValidationResult(raw_output=raw_output, n_layers=1, required_layers={1})
+        result.parsed = parsed
+        result.passed_layers.add(1)
+        return result
+
+    md = _model(tmp_path, validator="distill_raises_on_bad")
+    monkeypatch.setattr(distill_mod, "TeacherClient", _FakeTeacher)
+
+    summary = run_distill(md)
+    assert summary["validator_errors"] == 1
+    assert summary["accepted"] == 2
+    assert summary["aborted"] is None
+    reasons = [r["_reject_reason"] for r in iter_jsonl(Path(summary["out_path"]).with_name(
+        Path(summary["out_path"]).stem + ".distill_rejected.jsonl"))]
+    assert any(r.startswith("validator_error:") for r in reasons)
+
+
+def test_consecutive_teacher_failures_abort_the_run(tmp_path, monkeypatch) -> None:
+    """An unreachable endpoint fails every prompt identically; stop rather than
+    walking the whole pool to produce a run that accepted nothing."""
+
+    class _DeadTeacher:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def chat_completions(self, messages, **kwargs):
+            raise ConnectionError("connection refused")
+
+    md = _model(tmp_path, prompts=[f"prompt {i}" for i in range(20)])
+    monkeypatch.setattr(distill_mod, "TeacherClient", _DeadTeacher)
+
+    summary = run_distill(md)
+    assert summary["accepted"] == 0
+    assert summary["aborted"] is not None
+    assert "consecutive teacher failures" in summary["aborted"]
+    # Stopped early rather than calling the dead endpoint for every prompt.
+    assert summary["teacher_failures"] == 5

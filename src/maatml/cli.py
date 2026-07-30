@@ -707,6 +707,23 @@ def cmd_distill(
             f"[yellow]note[/] {result['cache_misses']} prompt(s) not in the cache "
             "were skipped (record a live run first)"
         )
+    if result.get("validator_errors"):
+        console.print(
+            f"[yellow]note[/] validator raised on {result['validator_errors']} "
+            "row(s); they were rejected, see the rejection report"
+        )
+    if result.get("aborted"):
+        console.print(f"[red]distill aborted[/] {result['aborted']}")
+        raise typer.Exit(code=1)
+    # A run over a non-empty pool that accepted nothing gained no data. Exiting
+    # zero here would let a scheduled or CI-driven flywheel report success while
+    # the teacher was unreachable or misconfigured.
+    if result["prompts"] and not result["accepted"] and not result["duplicates"]:
+        console.print(
+            "[red]distill failed[/] no rows accepted from "
+            f"{result['prompts']} prompt(s); nothing was added to the corpus"
+        )
+        raise typer.Exit(code=1)
 
 
 @app.command("ingest")

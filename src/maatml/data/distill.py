@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import VALIDATORS
 from ..utils.io import iter_jsonl, sha256_bytes, write_jsonl_atomic
+from ..validation.base import strip_fences
 from .ingest import _row_id
 from .teacher import TeacherClient
 
@@ -230,7 +231,19 @@ def run_distill(
 
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    stats = {"cache_hits": 0, "teacher_calls": 0, "teacher_failures": 0, "cache_misses": 0}
+    stats = {
+        "cache_hits": 0,
+        "teacher_calls": 0,
+        "teacher_failures": 0,
+        "cache_misses": 0,
+        "validator_errors": 0,
+    }
+    # An unreachable endpoint, a wrong base URL or a revoked key fails every
+    # prompt identically. Stop instead of walking the whole pool to produce a
+    # run that accepted nothing.
+    max_consecutive_failures = 5
+    consecutive_failures = 0
+    aborted_reason: Optional[str] = None
 
     for index, prompt in enumerate(prompts):
         phash = _prompt_hash(prompt)
@@ -266,21 +279,41 @@ def run_distill(
                 )
             except Exception as exc:  # noqa: BLE001  a teacher failure is a rejected row
                 stats["teacher_failures"] += 1
+                consecutive_failures += 1
                 rejected.append(
                     {"prompt_sha256": phash, "_reject_reason": f"teacher_error: {exc}"}
                 )
+                if consecutive_failures >= max_consecutive_failures:
+                    aborted_reason = (
+                        f"{consecutive_failures} consecutive teacher failures; "
+                        f"last error: {exc}"
+                    )
+                    break
                 continue
             stats["teacher_calls"] += 1
+            consecutive_failures = 0
             cache.put(key, response)
 
         target = _parse_target(response)
-        if target is None or not validate_fn(prompt, target):
+        ok = False
+        reason = "unparseable"
+        if target is not None:
+            reason = "invalid_target"
+            try:
+                ok = bool(validate_fn(prompt, target))
+            except Exception as exc:  # noqa: BLE001  a raising validator is a rejected row
+                # Without this, one malformed target aborts the whole run and
+                # discards every accepted row plus any teacher response since
+                # the last cache flush.
+                reason = f"validator_error: {exc}"
+                stats["validator_errors"] += 1
+        if not ok:
             rejected.append(
                 {
                     "prompt_sha256": phash,
                     request_field: prompt[:500],
                     "teacher_response": response[:1500],
-                    "_reject_reason": "invalid_target" if target is not None else "unparseable",
+                    "_reject_reason": reason,
                 }
             )
             continue
@@ -333,6 +366,7 @@ def run_distill(
         "rejected": len(rejected),
         "duplicates": duplicates,
         "seed_written": seed_written,
+        "aborted": aborted_reason,
         "replay": bool(replay or offline),
         "teacher_model": cfg.teacher_model,
         "teacher_revision": cfg.teacher_revision,
@@ -345,16 +379,14 @@ def run_distill(
 
 
 def _parse_target(response: str) -> Optional[Any]:
-    text = response.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
+    """Parse the teacher's JSON target.
+
+    Uses the canonical ``strip_fences`` so a reasoning teacher that emits a
+    ``<think>`` block in the message content parses instead of being rejected
+    as unparseable; a local copy here previously handled fences only.
+    """
     try:
-        return json.loads(text)
+        return json.loads(strip_fences(response))
     except (json.JSONDecodeError, ValueError):
         return None
 
@@ -371,6 +403,8 @@ def _write_distill_card(dest: Path, summary: dict[str, Any]) -> Path:
         f"- replay: {summary['replay']}",
         f"- cache: hits={summary['cache_hits']} calls={summary['teacher_calls']} "
         f"misses={summary['cache_misses']} failures={summary['teacher_failures']}",
+        f"- validator_errors: {summary['validator_errors']}",
+        *([f"- aborted: {summary['aborted']}"] if summary.get("aborted") else []),
         "",
         "Every accepted row was gated by evaluation.validator before entering "
         "the corpus, and carries teacher provenance. Teacher responses are "
