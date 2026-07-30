@@ -65,6 +65,28 @@ def test_teacher_chat_completions(monkeypatch: pytest.MonkeyPatch) -> None:
     assert row["target"]["ok"] is True
 
 
+def test_teacher_requires_explicit_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No implicit third-party default: the prompt pool is sent to whatever the
+    base URL points at, so the destination must be stated."""
+    monkeypatch.delenv("MAATML_TEACHER_BASE_URL", raising=False)
+    with pytest.raises(ValueError, match="base URL is not set"):
+        TeacherClient(api_key="x")
+
+
+def test_teacher_base_url_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MAATML_TEACHER_BASE_URL", "http://127.0.0.1:8000/v1/")
+    assert TeacherClient().base_url == "http://127.0.0.1:8000/v1"
+
+
+@pytest.mark.parametrize("bad", ["ftp://host/v1", "example.test/v1", "  "])
+def test_teacher_rejects_non_http_base_url(
+    monkeypatch: pytest.MonkeyPatch, bad: str
+) -> None:
+    monkeypatch.delenv("MAATML_TEACHER_BASE_URL", raising=False)
+    with pytest.raises(ValueError):
+        TeacherClient(base_url=bad)
+
+
 def test_teacher_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     import builtins
 
@@ -79,7 +101,7 @@ def test_teacher_install_hint(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(builtins, "__import__", _fake_import)
     # Clear any cached import path by calling the real helper.
-    client = TeacherClient(api_key="x")
+    client = TeacherClient(base_url="http://127.0.0.1:9/v1", api_key="x")
     with pytest.raises(ImportError, match=r"maatml\[teacher\]"):
         client.chat_completions([{"role": "user", "content": "x"}])
     assert "httpx" in teacher_mod._INSTALL_HINT

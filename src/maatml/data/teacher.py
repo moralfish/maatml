@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 _INSTALL_HINT = "Teacher client requires httpx; install with `pip install maatml[teacher]`"
 
@@ -31,11 +32,26 @@ class TeacherClient:
         model: str = "gpt-4o-mini",
         timeout: float = 60.0,
     ) -> None:
-        self.base_url = (
-            base_url
-            or os.environ.get("MAATML_TEACHER_BASE_URL")
-            or "https://api.openai.com/v1"
-        ).rstrip("/")
+        resolved = base_url or os.environ.get("MAATML_TEACHER_BASE_URL")
+        if not resolved or not resolved.strip():
+            # No implicit third-party default: datagen and distill send the
+            # prompt pool to whatever this points at, and for the shipped
+            # domains (JCL, spool output, support tickets) the prompt pool is
+            # the sensitive asset. The destination is always a stated choice.
+            raise ValueError(
+                "teacher base URL is not set. Export MAATML_TEACHER_BASE_URL "
+                "(for example http://127.0.0.1:8000/v1 for a local server, or "
+                "https://api.openai.com/v1) or pass base_url explicitly. "
+                "maatml does not default to a third-party endpoint because "
+                "your prompts are sent to it."
+            )
+        resolved = resolved.strip().rstrip("/")
+        scheme = urlparse(resolved).scheme
+        if scheme not in ("http", "https"):
+            raise ValueError(
+                f"teacher base URL must be http or https, got {resolved!r}"
+            )
+        self.base_url = resolved
         self.api_key = api_key or os.environ.get("MAATML_TEACHER_API_KEY") or ""
         self.model = model
         self.timeout = timeout
