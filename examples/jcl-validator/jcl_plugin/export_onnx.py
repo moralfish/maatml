@@ -5,6 +5,7 @@ and a serving.json contract, so Flow's ONNX engine can serve the model without
 torch. Heads are baked into the graph: pooled linear heads on the CLS position
 and a per-token linear head for the line pointer.
 """
+
 from __future__ import annotations
 
 import shutil
@@ -39,9 +40,7 @@ def build_serving_config(
     evaluate and serve enforce.
     """
     if not head_specs:
-        raise ValueError(
-            "No head specs found (run_metadata.json heads or training.heads)"
-        )
+        raise ValueError("No head specs found (run_metadata.json heads or training.heads)")
     heads: list[dict[str, Any]] = []
     for spec in head_specs:
         head: dict[str, Any] = {

@@ -5,6 +5,7 @@ semantics. Asset paths (schema, contracts, prompt_spec, tokenizer) resolve
 from ``model_def`` / explicit kwargs / ``checkpoint_dir``: never from a
 hardcoded repo-relative fallback.
 """
+
 from __future__ import annotations
 
 import time
@@ -330,9 +331,7 @@ def _noop_validate(
     except json.JSONDecodeError as exc:
         from ..validation.base import ValidationError
 
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
     return result
 
 
@@ -561,9 +560,7 @@ def run_evaluation(
     request_field = "request"
     if model_def is not None:
         cfg = get_dataset_cfg(model_def)
-        request_field = str(
-            cfg.get("request_field") or cfg.get("raw_field") or "request"
-        )
+        request_field = str(cfg.get("request_field") or cfg.get("raw_field") or "request")
 
     predict = pred_obj.predict if hasattr(pred_obj, "predict") else pred_obj
 
@@ -637,9 +634,7 @@ def run_evaluation(
                 layer_pass[layer] = layer_pass.get(layer, 0) + 1
             if item.result.ok:
                 all_ok += 1
-        metrics = {
-            f"layer_{k}_pass_rate": layer_pass.get(k, 0) / n for k in sorted(layer_pass)
-        }
+        metrics = {f"layer_{k}_pass_rate": layer_pass.get(k, 0) / n for k in sorted(layer_pass)}
         metrics["all_layers_pass_rate"] = all_ok / n if n else 0.0
 
     for key, value in coverage_metrics(row_results).items():
@@ -674,11 +669,7 @@ def run_evaluation(
 
     identity_name = model_def.name if model_def else checkpoint_dir.name
     identity_version = model_def.version if model_def else ""
-    identity_id = (
-        model_def.model_id
-        if model_def
-        else str(checkpoint_dir)
-    )
+    identity_id = model_def.model_id if model_def else str(checkpoint_dir)
     report_task = task or (model_def.task if model_def else "")
 
     gates_payload: Optional[dict[str, Any]] = None

@@ -6,6 +6,7 @@ registry), splits by group key (``dataset.group_by`` when set, else
 ``family`` → ``source`` → ``sample_id``), pins benchmarks to test, and
 writes splits + a dataset card.
 """
+
 from __future__ import annotations
 
 import json
@@ -352,8 +353,7 @@ def prepare_rows(
             group_assignment,
             group_by=group_by,
             seed_rows=seed_rows,
-            request_field=str(cfg.get("request_field") or cfg.get("raw_field") or "")
-            or None,
+            request_field=str(cfg.get("request_field") or cfg.get("raw_field") or "") or None,
         )
         for row in benchmark_rows:
             tagged = dict(row)
@@ -367,9 +367,7 @@ def prepare_rows(
     # After benchmark pinning: test may be non-empty only because of it.
     _warn_on_empty_splits(by_split, n_groups=len(group_assignment))
 
-    paths = {
-        split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()
-    }
+    paths = {split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()}
     split_counts = {split.value: len(rows) for split, rows in by_split.items()}
     card = _write_dataset_card(
         out,

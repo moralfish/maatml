@@ -1,4 +1,5 @@
 """Ingest external JSON/JSONL into a model's seed corpus with validation."""
+
 from __future__ import annotations
 
 import json
@@ -93,9 +94,7 @@ def ingest_samples(
     rows_in = _read_input(input_path)
     for dest, src in fmap.items():
         if not any(src in r for r in rows_in):
-            raise ValueError(
-                f"--map {dest}={src}: source column {src!r} matches zero input rows"
-            )
+            raise ValueError(f"--map {dest}={src}: source column {src!r} matches zero input rows")
     mapped = [_apply_field_map(r, fmap) for r in rows_in]
 
     sanitizer = None
@@ -198,13 +197,11 @@ def ingest_samples(
     else:
         seed_written = False
         protected_existing = seed_existing_nonempty
-        out_rows = existing if append else (
-            list(iter_jsonl(seeds_path)) if seeds_path.is_file() else []
+        out_rows = (
+            existing if append else (list(iter_jsonl(seeds_path)) if seeds_path.is_file() else [])
         )
 
-    reject_path = seeds_path.with_name(
-        seeds_path.stem + ".ingest_rejected.json"
-    )
+    reject_path = seeds_path.with_name(seeds_path.stem + ".ingest_rejected.json")
     report = {
         "input": str(input_path),
         "input_sha256": sha256_file(input_path) if input_path.is_file() else None,

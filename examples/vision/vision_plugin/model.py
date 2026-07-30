@@ -1,4 +1,5 @@
 """MultitaskNet: MobileNetV3-Large backbone + scene / CenterNet / pose heads."""
+
 from __future__ import annotations
 
 import json
@@ -53,8 +54,7 @@ class MultitaskConfig:
             shape_labels=list(heads.get("shape_labels") or SHAPE_LABELS),
             keypoint_names=list(heads.get("keypoint_names") or KEYPOINT_NAMES),
             loss_weights=dict(
-                train.get("loss_weights")
-                or {"scene": 1.0, "detect": 1.0, "pose": 1.0}
+                train.get("loss_weights") or {"scene": 1.0, "detect": 1.0, "pose": 1.0}
             ),
             score_thresh=float(train.get("score_thresh") or 0.25),
         )
@@ -165,9 +165,7 @@ class MultitaskNet:
                 w = self.config.loss_weights
                 scene_loss = F.cross_entropy(outputs["scene_logits"], targets["scene_idx"])
                 # Focal loss on heatmaps
-                hm_loss = _focal_loss(
-                    outputs["heatmaps"], targets["heatmaps"]
-                )
+                hm_loss = _focal_loss(outputs["heatmaps"], targets["heatmaps"])
                 # Size / offset L1 only at positive centers
                 mask = targets["center_mask"]  # (B,1,H,W)
                 n_pos = mask.sum().clamp(min=1.0)
@@ -210,10 +208,7 @@ def _focal_loss(pred: Any, gt: Any, alpha: float = 2.0, beta: float = 4.0) -> An
     neg_weights = torch.pow(1 - gt, beta)
     pos_loss = -torch.log(pred_sig.clamp(min=1e-6)) * torch.pow(1 - pred_sig, alpha) * pos
     neg_loss = (
-        -torch.log((1 - pred_sig).clamp(min=1e-6))
-        * torch.pow(pred_sig, alpha)
-        * neg_weights
-        * neg
+        -torch.log((1 - pred_sig).clamp(min=1e-6)) * torch.pow(pred_sig, alpha) * neg_weights * neg
     )
     n_pos = pos.sum().clamp(min=1.0)
     return (pos_loss.sum() + neg_loss.sum()) / n_pos

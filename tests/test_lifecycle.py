@@ -4,6 +4,7 @@ The executors are swapped for fakes so the ordering, skipping, and failure
 behaviour can be tested without training anything; the real end-to-end path
 runs in the ml CI job.
 """
+
 from __future__ import annotations
 
 import json
@@ -148,8 +149,10 @@ def test_changed_seed_corpus_makes_prepare_stale(tmp_path: Path) -> None:
     )
     write_jsonl(
         md.resolve("datasets/samples/seed_samples.jsonl"),
-        [{"sample_id": "a", "request": "r", "expected_output": {"ok": True}},
-         {"sample_id": "b", "request": "r2", "expected_output": {"ok": False}}],
+        [
+            {"sample_id": "a", "request": "r", "expected_output": {"ok": True}},
+            {"sample_id": "b", "request": "r2", "expected_output": {"ok": False}},
+        ],
     )
 
     plan = _plans(md, device="cpu")["prepare"]
@@ -310,9 +313,7 @@ def test_upstream_rerun_invalidates_downstream(tmp_path: Path, fake_steps) -> No
 
 def test_from_and_until_limit_the_steps(tmp_path: Path, fake_steps) -> None:
     md = _model(tmp_path)
-    result = run_pipeline(
-        md, RunOptions(device="cpu", from_step="train", until_step="evaluate")
-    )
+    result = run_pipeline(md, RunOptions(device="cpu", from_step="train", until_step="evaluate"))
     assert result.ok
     assert fake_steps == ["train", "evaluate"]
     statuses = {o.name: o.status for o in result.outcomes}
@@ -320,9 +321,7 @@ def test_from_and_until_limit_the_steps(tmp_path: Path, fake_steps) -> None:
     assert statuses["export"] == "not selected"
 
 
-def test_run_pipeline_validates_config_before_running_anything(
-    tmp_path: Path, fake_steps
-) -> None:
+def test_run_pipeline_validates_config_before_running_anything(tmp_path: Path, fake_steps) -> None:
     md = _model(tmp_path)
     md.evaluation["validator"] = "not_registered"
     with pytest.raises(Exception, match="not_registered"):

@@ -1,4 +1,5 @@
 """Validator for multitask vision JSON outputs."""
+
 from __future__ import annotations
 
 import json
@@ -28,9 +29,7 @@ def validate_vision_scene(
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
         return result
     if not isinstance(parsed, dict):
         result.errors.append(
@@ -49,9 +48,7 @@ def validate_vision_scene(
             jsonschema.validate(parsed, schema)
             result.passed_layers.add(2)
         except Exception as exc:  # noqa: BLE001
-            result.errors.append(
-                ValidationError(layer=2, code="schema", message=str(exc))
-            )
+            result.errors.append(ValidationError(layer=2, code="schema", message=str(exc)))
     else:
         result.passed_layers.add(2)
 

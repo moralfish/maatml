@@ -17,6 +17,7 @@ Usage:
     python scripts/check_examples.py
     python scripts/check_examples.py --only vision jcl-validator
 """
+
 from __future__ import annotations
 
 import argparse
@@ -111,9 +112,7 @@ def check(model_dir: Path) -> list[str]:
 
     failed_gold = sum(1 for r in row_evals if not r.result.ok)
     if failed_gold:
-        errors.append(
-            f"{name}: {failed_gold}/{len(row_evals)} gold rows fail the validator"
-        )
+        errors.append(f"{name}: {failed_gold}/{len(row_evals)} gold rows fail the validator")
 
     errors.extend(_check_readme_gates(model_dir, name, gates))
     return errors

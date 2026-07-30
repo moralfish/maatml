@@ -4,6 +4,7 @@ Heavy trainer modules pull ML deps at import time (notably ``sft_base``).
 CLI commands like ``scaffold`` / ``plugins`` / ``validate`` only need the
 architecture names registered, so discovery loads this shim instead.
 """
+
 from __future__ import annotations
 
 from typing import Any

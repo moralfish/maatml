@@ -4,6 +4,7 @@ Task evaluation goes through :func:`maatml.evaluation.harness.run_evaluation`
 (via the CLI). Shared report types live in ``harness`` and are re-exported
 here for backward compatibility.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -109,9 +110,7 @@ def evaluate_model(
     model_def.eval_dir.mkdir(parents=True, exist_ok=True)
     out_path = model_def.eval_dir / f"{ckpt.name}.json"
     budget = (
-        max_input_tokens
-        if max_input_tokens is not None
-        else model_def.packaging.max_input_tokens
+        max_input_tokens if max_input_tokens is not None else model_def.packaging.max_input_tokens
     )
 
     report = run_evaluation(

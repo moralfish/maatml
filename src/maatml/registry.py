@@ -5,6 +5,7 @@ Plugins can come from:
   - Setuptools entry points group ``maatml.plugins``
   - Per-model ``model.yml`` ``plugins:`` list (module paths or folder-local packages)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -51,9 +52,7 @@ class _Registry:
         self.kind = kind
         self._entries: dict[str, PluginEntry] = {}
 
-    def register(
-        self, name: str, obj: Any, *, source: str = "unknown"
-    ) -> Any:
+    def register(self, name: str, obj: Any, *, source: str = "unknown") -> Any:
         # Allow overwrite so discover_plugins(force=True) / module reload can
         # re-bind the same plugin name after a registry wipe. Re-binding from
         # the same source is that case and stays silent; a *different* source
@@ -346,9 +345,7 @@ def load_model_plugins(
                     _loaded_model_plugins[mod_name] = str(path)
                 loaded.append(mod_name)
             else:
-                raise FileNotFoundError(
-                    f"Model plugin not found: {path} (from plugins: {entry!r})"
-                )
+                raise FileNotFoundError(f"Model plugin not found: {path} (from plugins: {entry!r})")
         else:
             if force or entry not in sys.modules:
                 importlib.import_module(entry)
@@ -372,9 +369,7 @@ def _model_plugin_namespace(model_dir: Path) -> str:
 
 def _already_loaded(mod_name: str, path: Path) -> bool:
     """Has this exact plugin path already been executed as ``mod_name``?"""
-    return (
-        _loaded_model_plugins.get(mod_name) == str(path) and mod_name in sys.modules
-    )
+    return _loaded_model_plugins.get(mod_name) == str(path) and mod_name in sys.modules
 
 
 _BUILTIN_PLUGIN_MODULES = (

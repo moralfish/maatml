@@ -19,6 +19,7 @@ Outputs land under ``<model-dir>/output/`` (gitignored).
   maatml plan      <model-dir>
   maatml plugins
 """
+
 from __future__ import annotations
 
 import os
@@ -115,9 +116,7 @@ def _print_run_comparison(
 
     from .runs import compare_runs
 
-    keys, rows, hidden = compare_runs(
-        records, metrics=metrics, include_telemetry=include_telemetry
-    )
+    keys, rows, hidden = compare_runs(records, metrics=metrics, include_telemetry=include_telemetry)
     # Metrics run down the left and runs across the top: a run usually reports
     # more metrics than there are runs to compare, and this way the metric
     # names stay readable instead of being truncated into column headers.
@@ -139,10 +138,7 @@ def _print_run_comparison(
         # A metric a run never reported stays "-" instead of reading as 0.
         table.add_row(
             key,
-            *[
-                "-" if row["metrics"][key] is None else f"{row['metrics'][key]:.4g}"
-                for row in rows
-            ],
+            *["-" if row["metrics"][key] is None else f"{row['metrics'][key]:.4g}" for row in rows],
         )
     console.print(table)
     if not keys:
@@ -194,7 +190,9 @@ def cmd_prepare(
 def cmd_train(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
     smoke: bool = typer.Option(False, "--smoke", help="Use the `smoke:` overrides in model.yml"),
-    limit: Optional[int] = typer.Option(None, "--limit", help="Cap number of train rows for ad-hoc smoke"),
+    limit: Optional[int] = typer.Option(
+        None, "--limit", help="Cap number of train rows for ad-hoc smoke"
+    ),
     device: str = typer.Option("auto", "--device", help="auto|mps|cpu|cuda"),
     seed: Optional[int] = typer.Option(None, "--seed"),
     resume: Optional[str] = typer.Option(
@@ -218,9 +216,7 @@ def cmd_train(
     _boot_plugins(md)
     arch = normalize_architecture(md.architecture)
     trainer = TRAINERS.get(md.architecture) or TRAINERS.require(arch)
-    result = trainer(
-        md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume
-    )
+    result = trainer(md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume)
     console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
 
 
@@ -273,9 +269,7 @@ def cmd_sweep(
         except ValueError as exc:
             raise typer.BadParameter(str(exc), param_hint="--set/--param") from exc
         trial_meta = {"index": i, "params": trial_map}
-        console.print(
-            f"[cyan]sweep[/] trial {i + 1}/{len(grid)} params={trial_map}"
-        )
+        console.print(f"[cyan]sweep[/] trial {i + 1}/{len(grid)} params={trial_map}")
         # One bad combination used to abort the whole sweep after the earlier
         # trials had already trained. Record it and keep going; the exit code
         # still reports the failure at the end.
@@ -315,8 +309,7 @@ def cmd_sweep(
         console.print(f"[bold]sweep ranking[/] ({ranked_key}, {direction})")
         for rank, (val, trial_map, result, key) in enumerate(comparable, start=1):
             console.print(
-                f"  {rank}. {key}={val:.6g}  params={trial_map}  "
-                f"out={Path(result.out_dir).name}"
+                f"  {rank}. {key}={val:.6g}  params={trial_map}  out={Path(result.out_dir).name}"
             )
     else:
         console.print("[yellow]sweep finished with no numeric metrics to rank[/]")
@@ -325,8 +318,7 @@ def cmd_sweep(
         console.print(f"[yellow]unranked[/] params={trial_map} (no numeric metric)")
     for _val, trial_map, _result, key in incomparable:
         console.print(
-            f"[yellow]unranked[/] params={trial_map} reported {key!r}, "
-            f"not {ranked_key!r}"
+            f"[yellow]unranked[/] params={trial_map} reported {key!r}, not {ranked_key!r}"
         )
     if failures:
         console.print(f"[red]{len(failures)} trial(s) failed[/]")
@@ -565,9 +557,7 @@ def cmd_datagen(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
     target: int = typer.Option(100, "--target", help="Number of accepted samples"),
     seed: int = typer.Option(0, "--seed"),
-    out: Optional[Path] = typer.Option(
-        None, "--out", help="Override seed JSONL path"
-    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Override seed JSONL path"),
     teacher: bool = typer.Option(
         False,
         "--teacher",
@@ -618,9 +608,7 @@ def cmd_datagen(
             f"(see {result['card_path']})"
         )
     if result["protected_existing"]:
-        console.print(
-            "[yellow]note[/] nothing new accepted; existing seed file left unchanged"
-        )
+        console.print("[yellow]note[/] nothing new accepted; existing seed file left unchanged")
 
 
 @app.command("distill")
@@ -654,8 +642,13 @@ def cmd_distill(
 
     try:
         result = run_distill(
-            md, prompt_source=prompts, replay=replay, offline=offline,
-            limit=limit, append=append, out_path=out,
+            md,
+            prompt_source=prompts,
+            replay=replay,
+            offline=offline,
+            limit=limit,
+            append=append,
+            out_path=out,
         )
     except DistillConfigError as exc:
         console.print(f"[red]distill refused[/] {exc}")
@@ -668,9 +661,7 @@ def cmd_distill(
         f"out={result['out_path']}"
     )
     if result["teacher_failures"]:
-        console.print(
-            f"[yellow]note[/] teacher request failures: {result['teacher_failures']}"
-        )
+        console.print(f"[yellow]note[/] teacher request failures: {result['teacher_failures']}")
     if result["replay"] and result["cache_misses"]:
         console.print(
             f"[yellow]note[/] {result['cache_misses']} prompt(s) not in the cache "
@@ -804,9 +795,7 @@ def cmd_runs(
         "--all-metrics",
         help="Include trainer timing metrics (runtime, samples/s) in --compare",
     ),
-    limit: Optional[int] = typer.Option(
-        None, "--limit", help="Only the most recent N runs"
-    ),
+    limit: Optional[int] = typer.Option(None, "--limit", help="Only the most recent N runs"),
 ) -> None:
     """List training runs recorded in <model-dir>/output/runs.jsonl."""
     md = load_model_def(model_dir)
@@ -893,9 +882,7 @@ def cmd_validate(
     for warn in config_key_warnings(md):
         console.print(f"[yellow]warning[/] {warn}")
     if no_plugins:
-        console.print(
-            "[dim]architecture and dataset.format not verified (--no-plugins)[/]"
-        )
+        console.print("[dim]architecture and dataset.format not verified (--no-plugins)[/]")
     console.print(f"[green]OK[/] {md.identity} ({md.architecture})")
 
 
@@ -944,15 +931,11 @@ def cmd_run(
     smoke: bool = typer.Option(
         False, "--smoke", help="Use the smoke: overlay, including smoke.gates"
     ),
-    force: bool = typer.Option(
-        False, "--force", help="Re-run every selected step, fresh or not"
-    ),
+    force: bool = typer.Option(False, "--force", help="Re-run every selected step, fresh or not"),
     from_step: Optional[str] = typer.Option(
         None, "--from", help="First step to run (prepare|train|evaluate|export|verify)"
     ),
-    until_step: Optional[str] = typer.Option(
-        None, "--until", help="Last step to run"
-    ),
+    until_step: Optional[str] = typer.Option(None, "--until", help="Last step to run"),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Show each step's fresh/stale status and stop"
     ),
@@ -1101,8 +1084,7 @@ def cmd_doctor(
                 # Details mention extras like [ml] / [vision]; escape them so
                 # rich prints the name instead of eating it as markup.
                 console.print(
-                    f"  {marks[check.status]} {escape(check.name)}: "
-                    f"{escape(check.detail)}"
+                    f"  {marks[check.status]} {escape(check.name)}: {escape(check.detail)}"
                 )
 
     errors = diag.errors

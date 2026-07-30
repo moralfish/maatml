@@ -8,6 +8,7 @@ Public surface:
   - ``Seq2SeqConfig``: typed config built from ``model.yml::training``
   - ``train_seq2seq_model(model_def, ...)``: entry point invoked by the CLI
 """
+
 from __future__ import annotations
 
 import json
@@ -36,14 +37,33 @@ class GenerationCfg:
 
 
 # Every `training:` key this architecture reads, here and in the trainer body.
-_SEQ2SEQ_KEYS = frozenset({
-    "model_id", "source_max_len", "target_max_len", "batch_size", "grad_accum",
-    "learning_rate", "epochs", "weight_decay", "warmup_ratio", "seed",
-    "precision", "grad_checkpointing", "eval_steps", "save_steps",
-    "logging_steps", "max_steps", "generation", "attn_implementation",
-    "dataloader_workers", "model_revision", "embedding_strategy", "report_to",
-    "group_by_length",
-})
+_SEQ2SEQ_KEYS = frozenset(
+    {
+        "model_id",
+        "source_max_len",
+        "target_max_len",
+        "batch_size",
+        "grad_accum",
+        "learning_rate",
+        "epochs",
+        "weight_decay",
+        "warmup_ratio",
+        "seed",
+        "precision",
+        "grad_checkpointing",
+        "eval_steps",
+        "save_steps",
+        "logging_steps",
+        "max_steps",
+        "generation",
+        "attn_implementation",
+        "dataloader_workers",
+        "model_revision",
+        "embedding_strategy",
+        "report_to",
+        "group_by_length",
+    }
+)
 
 
 @dataclass
@@ -98,9 +118,7 @@ class Seq2SeqConfig:
             ),
             attn_implementation=d.get("attn_implementation"),
             dataloader_workers=(
-                int(d["dataloader_workers"])
-                if d.get("dataloader_workers") is not None
-                else None
+                int(d["dataloader_workers"]) if d.get("dataloader_workers") is not None else None
             ),
             model_revision=d.get("model_revision"),
         )
@@ -136,9 +154,7 @@ def _drop_targetless(rows: list[dict], target_field: str) -> tuple[list[dict], i
     return kept, len(rows) - len(kept)
 
 
-def _serialise_target(
-    target, *, key_order: Optional[list[str]] = None
-) -> str:
+def _serialise_target(target, *, key_order: Optional[list[str]] = None) -> str:
     """Canonical compact-JSON (or passthrough string) serialisation of the target."""
     if target is None or (hasattr(target, "__len__") and len(target) == 0):
         raise ValueError(
@@ -249,9 +265,7 @@ def _train_loop(
         revision=cfg.model_revision,
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg.model_id, **load_kwargs)
-    ensure_tokenizer_model_contract(
-        model, tokenizer, embedding_strategy=embedding_strategy
-    )
+    ensure_tokenizer_model_contract(model, tokenizer, embedding_strategy=embedding_strategy)
     model.generation_config.max_new_tokens = cfg.generation.max_new_tokens
     model.generation_config.num_beams = cfg.generation.num_beams
 
@@ -264,9 +278,7 @@ def _train_loop(
     )
     warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
 
-    use_bf16, use_fp16 = precision_flags(
-        cfg.precision, device=device_name, distributed=distributed
-    )
+    use_bf16, use_fp16 = precision_flags(cfg.precision, device=device_name, distributed=distributed)
     use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)

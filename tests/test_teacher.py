@@ -1,4 +1,5 @@
 """Teacher client unit tests (no network)."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -38,11 +39,7 @@ class _FakeClient:
         assert "Authorization" in headers
         _FakeClient.last_payload = json
         return _FakeResponse(
-            {
-                "choices": [
-                    {"message": {"content": '{"request":"hi","target":{"ok":true}}'}}
-                ]
-            }
+            {"choices": [{"message": {"content": '{"request":"hi","target":{"ok":true}}'}}]}
         )
 
 
@@ -79,9 +76,7 @@ def test_teacher_base_url_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize("bad", ["ftp://host/v1", "example.test/v1", "  "])
-def test_teacher_rejects_non_http_base_url(
-    monkeypatch: pytest.MonkeyPatch, bad: str
-) -> None:
+def test_teacher_rejects_non_http_base_url(monkeypatch: pytest.MonkeyPatch, bad: str) -> None:
     monkeypatch.delenv("MAATML_TEACHER_BASE_URL", raising=False)
     with pytest.raises(ValueError):
         TeacherClient(base_url=bad)

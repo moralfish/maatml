@@ -1,4 +1,5 @@
 """Safetensors export bundle (fake checkpoint, no real weights required)."""
+
 from __future__ import annotations
 
 import json

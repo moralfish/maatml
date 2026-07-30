@@ -17,6 +17,7 @@ Usage:
     python examples/spool-interpreter/scripts/build_seeds.py --target 800
     python examples/spool-interpreter/scripts/build_seeds.py --append
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,13 +44,31 @@ SEEDS_PATH = DATASETS / "samples" / "seed_samples.jsonl"
 
 
 # Pools used by parametric templates.  All values are sanitized.
-JOBNAMES = ["MYJOB001", "ACCTBTCH", "RPTGEN01", "DLYLOAD2", "ETLEXTR3", "RECONJOB", "DBA0001", "BKUPJOB"]
+JOBNAMES = [
+    "MYJOB001",
+    "ACCTBTCH",
+    "RPTGEN01",
+    "DLYLOAD2",
+    "ETLEXTR3",
+    "RECONJOB",
+    "DBA0001",
+    "BKUPJOB",
+]
 JOBIDS = ["JOB04211", "JOB05172", "JOB06033", "JOB07788", "JOB08120", "JOB09445"]
 STEPNAMES = ["STEP01", "STEP02", "LOAD", "SORT", "EXTRACT", "BUILD", "REPORT", "BACKUP"]
 DSNS = [
-    "USER.MY.INPUT", "PROD.DAILY.LOAD", "ETL.STG.RAW", "RPT.OUTPUT.YEAR",
-    "TEST.WORK.FILE", "ACCT.MASTER.IDX", "DBA.UTIL.LIB", "PROD.SORT.IN",
-    "PROD.SORT.OUT", "USER.LOAD.LIB", "DEV.PGM.LIB", "ARCHIVE.MONTHLY",
+    "USER.MY.INPUT",
+    "PROD.DAILY.LOAD",
+    "ETL.STG.RAW",
+    "RPT.OUTPUT.YEAR",
+    "TEST.WORK.FILE",
+    "ACCT.MASTER.IDX",
+    "DBA.UTIL.LIB",
+    "PROD.SORT.IN",
+    "PROD.SORT.OUT",
+    "USER.LOAD.LIB",
+    "DEV.PGM.LIB",
+    "ARCHIVE.MONTHLY",
 ]
 USERS = ["TSOU01", "BATCH02", "OPSADM", "DBA01", "RPTRUN"]
 ABEND_CODES = ["S0C7", "S0C4", "S322", "S806", "S913", "S013", "S04E"]
@@ -349,7 +368,9 @@ def build_scheduler_or_environment_issue(rng: random.Random) -> tuple[str, dict]
             f"$HASP110 {job}    NO ELIGIBLE INITIATORS FOR CLASS Z\n"
             f"$HASP190 {job}    HELD AT JOB QUEUE EXIT"
         )
-        root = "No initiators are configured for the requested CLASS; the job sat on the input queue."
+        root = (
+            "No initiators are configured for the requested CLASS; the job sat on the input queue."
+        )
         fix = "Submit under a class with active initiators or ask the scheduler to start one for class Z."
     elif variant == "submit_held":
         diag = (
@@ -366,10 +387,7 @@ def build_scheduler_or_environment_issue(rng: random.Random) -> tuple[str, dict]
         )
         root = "SMF environment exit signalled an installation policy violation and cancelled the job before step start."
         fix = "Review the SMF exit configuration with systems programming; resubmit once cleared."
-    request = (
-        f"{diag}\n"
-        f"$HASP395 {job}    ENDED - RC={rc}\n"
-    )
+    request = f"{diag}\n$HASP395 {job}    ENDED - RC={rc}\n"
     interp = {
         "summary": f"Job {job} failed before any step ran due to a scheduler/environment condition.",
         "status": "failed",
@@ -386,11 +404,13 @@ def build_other(rng: random.Random) -> tuple[str, dict]:
     job = _pick(rng, JOBNAMES)
     step = _pick(rng, STEPNAMES)
     rc = _pick(rng, RC_ERR + RC_WARN)
-    diag_msg = rng.choice([
-        "Application returned a non-zero condition code without a recognised diagnostic.",
-        "Step was flushed by a prior step's COND= and reported an unusual code.",
-        "Externally-orchestrated dependency (FTP, MQ, …) reported a soft failure that propagated here.",
-    ])
+    diag_msg = rng.choice(
+        [
+            "Application returned a non-zero condition code without a recognised diagnostic.",
+            "Step was flushed by a prior step's COND= and reported an unusual code.",
+            "Externally-orchestrated dependency (FTP, MQ, …) reported a soft failure that propagated here.",
+        ]
+    )
     request = (
         f"$HASP373 {job}    STARTED\n"
         f"IEF142I {job} {step}        - STEP WAS EXECUTED - COND CODE {rc[-4:]}\n"
@@ -455,7 +475,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--append", action="store_true")
     parser.add_argument("--out", default=str(SEEDS_PATH))
     parser.add_argument("--benchmark-n", type=int, default=60)
-    parser.add_argument("--benchmark-out", default=str(DATASETS / "samples" / "test_prompt_set.jsonl"))
+    parser.add_argument(
+        "--benchmark-out", default=str(DATASETS / "samples" / "test_prompt_set.jsonl")
+    )
     args = parser.parse_args(argv)
 
     rng = random.Random(args.seed)

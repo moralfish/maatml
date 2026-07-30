@@ -1,4 +1,5 @@
 """Core schema smoke tests (Split enum only)."""
+
 from __future__ import annotations
 
 from maatml.data.schemas import Split

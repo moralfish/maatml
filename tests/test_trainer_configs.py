@@ -4,6 +4,7 @@ seq2seq / multi_head keep their torch imports inside functions, so their
 config surface is unit-testable on the torch-free matrix. The tokenization
 and label-masking tests live in test_trainers_torch.py.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -47,9 +48,12 @@ def test_precision_validated_at_parse_time() -> None:
 
 def test_fractional_epochs_survive_config_parse() -> None:
     assert Seq2SeqConfig.from_dict({"epochs": 0.5}).epochs == 0.5
-    assert MultiHeadConfig.from_dict(
-        {"epochs": 0.25, "heads": [{"name": "h", "labels": ["a", "b"]}]}
-    ).epochs == 0.25
+    assert (
+        MultiHeadConfig.from_dict(
+            {"epochs": 0.25, "heads": [{"name": "h", "labels": ["a", "b"]}]}
+        ).epochs
+        == 0.25
+    )
     # Parity with the SFT config, which already modelled epochs as a float.
     assert SFTTrainConfig(epochs=0.5).epochs == 0.5
 
@@ -97,9 +101,7 @@ def test_scan_label_coverage_counts_unknown_gold() -> None:
         {"target": {"code": "zzz"}},
         {"target": {"code": "zzz"}},
     ]
-    assert scan_label_coverage(rows, heads, target_field="target") == {
-        "code": {"'zzz'": 2}
-    }
+    assert scan_label_coverage(rows, heads, target_field="target") == {"code": {"'zzz'": 2}}
     assert scan_label_coverage(rows[:1], heads, target_field="target") == {}
 
 
@@ -133,9 +135,7 @@ def test_structured_completions_serialise_as_json_not_repr() -> None:
     assert as_completion_text({"a": 1, "b": None}) == '{"a":1,"b":null}'
     assert as_completion_text(["x"]) == '["x"]'
     assert as_completion_text("already text") == "already text"
-    row = normalize_preference(
-        {"prompt": "p", "chosen": {"ok": True}, "rejected": {"ok": False}}
-    )
+    row = normalize_preference({"prompt": "p", "chosen": {"ok": True}, "rejected": {"ok": False}})
     assert row["chosen"] == '{"ok":true}'
     assert "'" not in row["chosen"]
 
@@ -177,12 +177,7 @@ def test_total_steps_divides_by_world_size() -> None:
 def test_total_steps_honours_explicit_max_steps() -> None:
     from maatml.training.schedule import total_training_steps
 
-    assert (
-        total_training_steps(
-            10_000, batch_size=2, grad_accum=8, epochs=3.0, max_steps=50
-        )
-        == 50
-    )
+    assert total_training_steps(10_000, batch_size=2, grad_accum=8, epochs=3.0, max_steps=50) == 50
 
 
 @pytest.mark.parametrize("device", ["cpu", "cpu:0", None])
@@ -287,9 +282,7 @@ def test_trainer_and_predictor_resolve_identical_special_tokens(tmp_path) -> Non
     def _tok(names):
         path = tmp_path / f"tok_{abs(hash(tuple(names)))}.json"
         path.write_text(
-            json.dumps(
-                {"added_tokens": [{"content": n, "special": True} for n in names]}
-            ),
+            json.dumps({"added_tokens": [{"content": n, "special": True} for n in names]}),
             encoding="utf-8",
         )
         return path

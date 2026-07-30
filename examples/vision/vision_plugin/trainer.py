@@ -1,4 +1,5 @@
 """``vision_multitask`` trainer, plain torch loop with maatml run registry."""
+
 from __future__ import annotations
 
 import time
@@ -81,12 +82,12 @@ def train_vision_multitask(
     elif cfg_train.get("seed") is not None:
         torch.manual_seed(int(cfg_train["seed"]))
 
-    ds = VisionSceneDataset.build(
-        rows, model_dir=model_def.model_dir, cfg=mt_cfg, limit=None
-    )
+    ds = VisionSceneDataset.build(rows, model_dir=model_def.model_dir, cfg=mt_cfg, limit=None)
     batch_size = int(cfg_train.get("batch_size") or 4)
-    workers = 0 if profile.dataloader_workers == 0 else int(
-        cfg_train.get("dataloader_workers") or profile.dataloader_workers
+    workers = (
+        0
+        if profile.dataloader_workers == 0
+        else int(cfg_train.get("dataloader_workers") or profile.dataloader_workers)
     )
     loader = DataLoader(
         ds,

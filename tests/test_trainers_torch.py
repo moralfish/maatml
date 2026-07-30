@@ -4,6 +4,7 @@ Skipped on the torch-free matrix; the ml CI job runs them. Stub tokenizers
 keep the tests hermetic (no hub download), so what is under test is maatml's
 masking and tensor assembly, not a specific tokenizer's vocabulary.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -22,9 +23,7 @@ class _CharTokenizer:
     pad_token_id = 0
     eos_token_id = 1
 
-    def apply_chat_template(
-        self, messages, tokenize=False, add_generation_prompt=False, **kwargs
-    ):
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False, **kwargs):
         del tokenize, kwargs
         text = "".join(f"[{m['role']}]{m['content']}" for m in messages)
         if add_generation_prompt:
@@ -175,7 +174,9 @@ def test_seq2seq_dataset_refuses_an_empty_target() -> None:
 
 def test_multi_head_dataset_builds_class_and_line_targets() -> None:
     heads = [
-        HeadSpec(name="validity", kind="classification", labels=["invalid", "valid"], target_path="valid"),
+        HeadSpec(
+            name="validity", kind="classification", labels=["invalid", "valid"], target_path="valid"
+        ),
         HeadSpec(name="line", kind="line_pointer", target_path="errors[0].line"),
     ]
     ds = build_head_dataset(
@@ -200,9 +201,7 @@ def test_multi_head_dataset_builds_class_and_line_targets() -> None:
 def test_multi_head_dataset_rejects_unknown_gold_labels() -> None:
     from maatml.training.multi_head import UnknownLabelError
 
-    heads = [
-        HeadSpec(name="code", kind="classification", labels=["a", "none"], target_path="code")
-    ]
+    heads = [HeadSpec(name="code", kind="classification", labels=["a", "none"], target_path="code")]
     ds = build_head_dataset(
         [{"request": "x", "target": {"code": "unknown"}}],
         _PaddingTokenizer(),

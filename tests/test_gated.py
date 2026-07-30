@@ -1,4 +1,5 @@
 """Shared gated corpus builder."""
+
 from __future__ import annotations
 
 from maatml.data.gated import build_gated_corpus

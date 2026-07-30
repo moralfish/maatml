@@ -1,4 +1,5 @@
 """Safetensors (HF-style) export bundle + top-level ``export_model`` dispatcher."""
+
 from __future__ import annotations
 
 import shutil
@@ -60,9 +61,7 @@ def resolve_export_format(
     fmt = requested.lower().strip()
     known = set(EXPORTERS.names()) or {"safetensors", "gguf", "mlx"}
     if fmt not in known:
-        raise ValueError(
-            f"Unknown export format {requested!r}; known: {', '.join(sorted(known))}"
-        )
+        raise ValueError(f"Unknown export format {requested!r}; known: {', '.join(sorted(known))}")
 
     if fmt == "gguf" and arch not in ("causal_sft", "dpo", "orpo"):
         raise ValueError(

@@ -1,4 +1,5 @@
 """Ingest external JSONL into seed corpus."""
+
 from __future__ import annotations
 
 import json
@@ -180,11 +181,21 @@ def test_ingest_refuses_unapproved_serve_capture(tmp_path: Path) -> None:
         inp,
         [
             # Straight off serve --capture: unreviewed, must be refused.
-            {"request": "unreviewed", "target": {"x": 1}, "source": "serve_capture",
-             "approved": False, "needs_review": True},
+            {
+                "request": "unreviewed",
+                "target": {"x": 1},
+                "source": "serve_capture",
+                "approved": False,
+                "needs_review": True,
+            },
             # A reviewer corrected and approved this one.
-            {"request": "reviewed", "target": {"x": 2}, "source": "serve_capture",
-             "approved": True, "needs_review": False},
+            {
+                "request": "reviewed",
+                "target": {"x": 2},
+                "source": "serve_capture",
+                "approved": True,
+                "needs_review": False,
+            },
         ],
     )
     result = ingest_samples(md, inp, append=False)

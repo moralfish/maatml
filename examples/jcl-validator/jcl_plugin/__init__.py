@@ -1,4 +1,5 @@
 """JCL example plugin, validators, metrics, predictor, sanitizer, transform."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,9 +27,7 @@ register_validator("jcl")(validate_jcl_result)
 register_metrics("jcl")(compute_jcl_metrics)
 register_predictor("jcl_classifier")(JclClassifierPredictor)
 register_generator("jcl")(jcl_generator)
-register_sanitizer("jcl")(
-    make_tag_sanitizer(_RULES, tag="jcl", length_preserving_only=True)
-)
+register_sanitizer("jcl")(make_tag_sanitizer(_RULES, tag="jcl", length_preserving_only=True))
 register_transform("jcl_columns")(pre_tokenize_jcl)
 
 __all__ = [

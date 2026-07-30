@@ -1,4 +1,5 @@
 """Evaluation metrics for vision-describer."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -79,9 +80,7 @@ def compute_vision_describer_metrics(row_results: list["RowEval"]) -> dict[str, 
                     counts[str(det["label"])] += 1
             object_total += 1
             if not counts:
-                if "no shapes" in pred.lower() or not any(
-                    s in pred.lower() for s in SHAPE_LABELS
-                ):
+                if "no shapes" in pred.lower() or not any(s in pred.lower() for s in SHAPE_LABELS):
                     object_ok += 1
             elif all(lab in pred.lower() for lab in counts):
                 object_ok += 1
@@ -106,12 +105,8 @@ def compute_vision_describer_metrics(row_results: list["RowEval"]) -> dict[str, 
         "schema_conformance_rate": layer_pass[2] / n,
         "field_shape_rate": layer_pass[3] / n,
         "conciseness_rate": layer_pass[4] / n if layer_pass[4] else concise / n,
-        "scene_grounding_rate": (
-            scene_ok / scene_total if scene_total else layer_pass[5] / n
-        ),
-        "object_grounding_rate": (
-            object_ok / object_total if object_total else layer_pass[6] / n
-        ),
+        "scene_grounding_rate": (scene_ok / scene_total if scene_total else layer_pass[5] / n),
+        "object_grounding_rate": (object_ok / object_total if object_total else layer_pass[6] / n),
         "pose_grounding_rate": pose_ok / pose_total if pose_total else 1.0,
         "all_layers_pass_rate": all_ok / n,
         "exact_match_rate": exact / n,

@@ -1,4 +1,5 @@
 """Tests for the decorator-based plugin registry."""
+
 from __future__ import annotations
 
 import os

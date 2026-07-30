@@ -18,6 +18,7 @@ Usage:
     python examples/jcl-validator/scripts/build_seeds.py --target 800
     python examples/jcl-validator/scripts/build_seeds.py --append
 """
+
 from __future__ import annotations
 
 import argparse

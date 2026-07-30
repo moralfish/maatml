@@ -7,6 +7,7 @@ CUDA can run more aggressively; CPU sits in between.
 Torch is imported lazily so CPU-only installs (``pip install maatml`` without
 the ``[ml]`` extra) can still import this module for CLI plugins / validate.
 """
+
 from __future__ import annotations
 
 import os
@@ -72,9 +73,7 @@ def _torch() -> Any:
     try:
         import torch
     except ImportError as exc:  # pragma: no cover - exercised by wheel smoke
-        raise ImportError(
-            "torch is required for device resolution; install maatml[ml]"
-        ) from exc
+        raise ImportError("torch is required for device resolution; install maatml[ml]") from exc
     return torch
 
 
@@ -190,9 +189,7 @@ def resolve_load_dtype(profile: DeviceProfile, precision: str) -> Any | None:
     return None
 
 
-def effective_dataloader_workers(
-    profile: DeviceProfile, override: Optional[int] = None
-) -> int:
+def effective_dataloader_workers(profile: DeviceProfile, override: Optional[int] = None) -> int:
     """Profile default, overridable via ``training.dataloader_workers``."""
     if override is not None:
         return int(override)

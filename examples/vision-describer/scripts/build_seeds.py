@@ -9,6 +9,7 @@ Usage:
     python examples/vision-describer/scripts/build_seeds.py --target 400
     python examples/vision-describer/scripts/build_seeds.py --benchmark-only
 """
+
 from __future__ import annotations
 
 import argparse
@@ -65,9 +66,7 @@ def build_corpus(target: int, seed: int) -> list[dict]:
         if _gate(row):
             rows.append(row)
     if len(rows) < target:
-        raise RuntimeError(
-            f"Only accepted {len(rows)}/{target} rows after {attempts} attempts"
-        )
+        raise RuntimeError(f"Only accepted {len(rows)}/{target} rows after {attempts} attempts")
     return rows
 
 

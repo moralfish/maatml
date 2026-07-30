@@ -1,4 +1,5 @@
 """Vision-VLM tests, pure-python by default; torch optional."""
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ def plugin():
         compute_vision_vlm_metrics,
         validate_vision_vlm,
     )
+
     return True
 
 

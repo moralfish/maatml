@@ -1,4 +1,5 @@
 """Torch Dataset over prepared JSONL + image paths + CenterNet target encoding."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -54,11 +55,7 @@ def encode_targets(
         center_mask[0, iy, ix] = 1.0
 
     scene_label = (expected.get("scene") or {}).get("label")
-    scene_idx = (
-        cfg.scene_labels.index(scene_label)
-        if scene_label in cfg.scene_labels
-        else 0
-    )
+    scene_idx = cfg.scene_labels.index(scene_label) if scene_label in cfg.scene_labels else 0
 
     kps = {k["name"]: k for k in (expected.get("pose") or {}).get("keypoints") or []}
     pose = []
@@ -118,9 +115,7 @@ def resolve_image_bytes_or_path(
     # Otherwise treat as a filesystem path, confined to model_dir. This runs on
     # client-controlled input at serve time, so reject absolute and '..' paths.
     if model_dir is None:
-        raise ValueError(
-            f"image path {value!r} given but no model_dir to resolve it against"
-        )
+        raise ValueError(f"image path {value!r} given but no model_dir to resolve it against")
     rel = Path(value)
     if rel.is_absolute() or ".." in rel.parts:
         raise ValueError(

@@ -1,4 +1,5 @@
 """Vision example tests, pure-python by default; torch/PIL optional."""
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ def plugin():
         compute_vision_metrics,
         validate_vision_scene,
     )
+
     return True
 
 

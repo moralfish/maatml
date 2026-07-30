@@ -4,6 +4,7 @@ Full-precision vision JSON can exceed flan-t5-small's comfortable source budget.
 This module filters low-confidence items, rounds floats, and emits a compact,
 stable JSON string so training rows and serve-time inputs match.
 """
+
 from __future__ import annotations
 
 import json
@@ -88,9 +89,7 @@ def clean_vision_result(
                 }
             )
     # Stable order: label, then top-left y/x, then confidence desc.
-    detections_out.sort(
-        key=lambda d: (d["label"], d["box"][1], d["box"][0], -d["confidence"])
-    )
+    detections_out.sort(key=lambda d: (d["label"], d["box"][1], d["box"][0], -d["confidence"]))
 
     kp_by_name: dict[str, dict[str, Any]] = {}
     pose_raw = payload.get("pose") if isinstance(payload.get("pose"), dict) else {}
@@ -133,9 +132,7 @@ def linearize_vision_result(
     ndigits: int = DEFAULT_NDIGITS,
 ) -> str:
     """Return compact JSON text suitable as the describer ``request`` field."""
-    cleaned = clean_vision_result(
-        payload, score_thresh=score_thresh, ndigits=ndigits
-    )
+    cleaned = clean_vision_result(payload, score_thresh=score_thresh, ndigits=ndigits)
     return json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
 
 

@@ -5,6 +5,7 @@ Usage:
   python examples/vision/scripts/build_seeds.py --target 16
   python examples/vision/scripts/build_seeds.py --target 2000
 """
+
 from __future__ import annotations
 
 import argparse

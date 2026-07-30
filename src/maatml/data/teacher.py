@@ -3,6 +3,7 @@
 Configured via ``MAATML_TEACHER_BASE_URL`` and ``MAATML_TEACHER_API_KEY``.
 Requires the optional ``[teacher]`` extra (``httpx``).
 """
+
 from __future__ import annotations
 
 import json
@@ -48,9 +49,7 @@ class TeacherClient:
         resolved = resolved.strip().rstrip("/")
         scheme = urlparse(resolved).scheme
         if scheme not in ("http", "https"):
-            raise ValueError(
-                f"teacher base URL must be http or https, got {resolved!r}"
-            )
+            raise ValueError(f"teacher base URL must be http or https, got {resolved!r}")
         self.base_url = resolved
         self.api_key = api_key or os.environ.get("MAATML_TEACHER_API_KEY") or ""
         self.model = model

@@ -1,4 +1,5 @@
 """Spool task schemas (sample + interpretation shapes)."""
+
 from __future__ import annotations
 
 from enum import Enum

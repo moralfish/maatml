@@ -8,6 +8,7 @@ Layers:
   5. Scene grounding: description mentions the request's scene label (when parsable)
   6. Object grounding: description reflects detection counts when objects exist
 """
+
 from __future__ import annotations
 
 import json
@@ -75,9 +76,7 @@ def validate_vision_describer(
         result.parsed = parsed
         result.passed_layers.add(1)
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
         return result
 
     # Layer 2: schema
@@ -86,9 +85,7 @@ def validate_vision_describer(
         jsonschema.validate(instance=result.parsed, schema=schema)
         result.passed_layers.add(2)
     except Exception as exc:  # noqa: BLE001
-        result.errors.append(
-            ValidationError(layer=2, code="schema_error", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=2, code="schema_error", message=str(exc)))
 
     description = result.parsed.get("description") if result.parsed else None
 
@@ -115,10 +112,7 @@ def validate_vision_describer(
                 ValidationError(
                     layer=4,
                     code="too_long",
-                    message=(
-                        f"description has {len(words)} words "
-                        f"(max {MAX_DESCRIPTION_WORDS})"
-                    ),
+                    message=(f"description has {len(words)} words (max {MAX_DESCRIPTION_WORDS})"),
                     location="description",
                 )
             )

@@ -1,4 +1,5 @@
 """JCL task schemas (sample + validation result shapes)."""
+
 from __future__ import annotations
 
 from enum import Enum

@@ -1,4 +1,5 @@
 """MLX export: seq2seq serving bundles directly, decoder-only via ``mlx_lm.convert``."""
+
 from __future__ import annotations
 
 import json
@@ -40,9 +41,7 @@ _SEQ2SEQ_BUNDLE_FILES = (
 )
 
 
-def build_seq2seq_serving(
-    model_def: ModelDefinition, checkpoint_dir: Path
-) -> dict[str, Any]:
+def build_seq2seq_serving(model_def: ModelDefinition, checkpoint_dir: Path) -> dict[str, Any]:
     """serving.json body for the ``seq2seq_lm`` serving contract.
 
     Token budgets use the same resolution as training and evaluation:
@@ -51,9 +50,7 @@ def build_seq2seq_serving(
     """
     config_path = Path(checkpoint_dir) / "config.json"
     if not config_path.is_file():
-        raise FileNotFoundError(
-            f"config.json not found in checkpoint: {checkpoint_dir}"
-        )
+        raise FileNotFoundError(f"config.json not found in checkpoint: {checkpoint_dir}")
     ckpt_cfg = json.loads(config_path.read_text(encoding="utf-8"))
 
     training = model_def.training or {}
@@ -106,9 +103,7 @@ def _export_seq2seq_mlx(
         if src.is_file():
             shutil.copy2(src, bundle_dir / name)
 
-    _untie_config_if_head_present(
-        bundle_dir / "config.json", checkpoint_dir / "model.safetensors"
-    )
+    _untie_config_if_head_present(bundle_dir / "config.json", checkpoint_dir / "model.safetensors")
 
     spiece = checkpoint_dir / "spiece.model"
     if spiece.is_file():

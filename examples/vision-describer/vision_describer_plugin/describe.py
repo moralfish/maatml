@@ -1,4 +1,5 @@
 """Deterministic short captions from cleaned vision results."""
+
 from __future__ import annotations
 
 from collections import Counter

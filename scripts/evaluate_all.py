@@ -8,6 +8,7 @@ Usage:
     .venv/bin/python scripts/evaluate_all.py --split val
     .venv/bin/python scripts/evaluate_all.py --limit 20
 """
+
 from __future__ import annotations
 
 import argparse
@@ -78,9 +79,7 @@ def _select_dirs(only: list[str] | None) -> list[Path]:
 def _latest_checkpoint(md: ModelDefinition) -> Path:
     ckpt_root = md.checkpoints_dir
     if not ckpt_root.exists():
-        raise FileNotFoundError(
-            f"No checkpoints under {ckpt_root}. Run train_all.py first."
-        )
+        raise FileNotFoundError(f"No checkpoints under {ckpt_root}. Run train_all.py first.")
     candidates = [p for p in ckpt_root.iterdir() if p.is_dir()]
     if not candidates:
         raise FileNotFoundError(f"No checkpoint dirs in {ckpt_root}")
@@ -127,9 +126,7 @@ def _run_one(
             # caller overrides it; a shared constant silently truncated any
             # model configured wider than it.
             max_input_tokens=(
-                max_input_tokens
-                if max_input_tokens is not None
-                else md.packaging.max_input_tokens
+                max_input_tokens if max_input_tokens is not None else md.packaging.max_input_tokens
             ),
             limit=limit,
             task=md.task,

@@ -1,4 +1,5 @@
 """S4: gguf convert script must be explicit-only (no PATH/cwd search)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,9 +11,7 @@ from maatml.export.gguf import _find_convert_script
 
 
 def _md(tmp_path: Path, *, extensions=None) -> ModelDefinition:
-    md = ModelDefinition(
-        name="g", model_id="g", version="0.1.0", extensions=extensions or {}
-    )
+    md = ModelDefinition(name="g", model_id="g", version="0.1.0", extensions=extensions or {})
     object.__setattr__(md, "model_dir", tmp_path)
     return md
 

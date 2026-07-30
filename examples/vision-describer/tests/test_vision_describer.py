@@ -1,4 +1,5 @@
 """Vision-describer tests, dependency-free (no torch required)."""
+
 from __future__ import annotations
 
 import json
@@ -119,9 +120,7 @@ def test_validator_accepts_seed_row(plugin) -> None:
     from vision_describer_plugin.validator import validate_vision_describer
 
     row = json.loads(
-        (ROOT / "datasets/samples/seed_samples.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()[0]
+        (ROOT / "datasets/samples/seed_samples.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
     result = validate_vision_describer(
         json.dumps(row["expected_description"]),
@@ -174,9 +173,7 @@ def test_schemas_round_trip(plugin) -> None:
         source="test",
         category="plain",
         request='{"scene":{"label":"plain"}}',
-        expected_description=DescriptionResult(
-            description="A plain scene contains no shapes."
-        ),
+        expected_description=DescriptionResult(description="A plain scene contains no shapes."),
     )
     assert sample.within_word_limit()
     dumped = sample.model_dump()
@@ -188,9 +185,7 @@ def test_metrics_perfect_match(plugin) -> None:
     from vision_describer_plugin.metrics import compute_vision_describer_metrics
 
     row = json.loads(
-        (ROOT / "datasets/samples/seed_samples.jsonl")
-        .read_text(encoding="utf-8")
-        .splitlines()[0]
+        (ROOT / "datasets/samples/seed_samples.jsonl").read_text(encoding="utf-8").splitlines()[0]
     )
     gen = json.dumps(row["expected_description"])
 
@@ -225,18 +220,14 @@ def test_compose_client_with_fake_servers(plugin) -> None:
     import importlib.util
 
     script = ROOT / "scripts" / "compose_client.py"
-    spec = importlib.util.spec_from_file_location(
-        "maatml_test_compose_client", script
-    )
+    spec = importlib.util.spec_from_file_location("maatml_test_compose_client", script)
     assert spec is not None and spec.loader is not None
     compose_mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(compose_mod)
 
     vision_payload = {
         "scene": {"label": "striped", "confidence": 0.9},
-        "detections": [
-            {"label": "star", "box": [0.1, 0.1, 0.2, 0.2], "confidence": 0.95}
-        ],
+        "detections": [{"label": "star", "box": [0.1, 0.1, 0.2, 0.2], "confidence": 0.95}],
         "pose": {
             "keypoints": [
                 {"name": n, "x": 0.5, "y": 0.5, "confidence": 1.0}
@@ -284,9 +275,7 @@ def test_compose_client_with_fake_servers(plugin) -> None:
             payload = json.loads(raw.decode())
             assert "request" in payload
             out = {"description": "A striped scene contains a star."}
-            body = json.dumps(
-                {"output": out, "raw": json.dumps(out), "latency_ms": 2.0}
-            ).encode()
+            body = json.dumps({"output": out, "raw": json.dumps(out), "latency_ms": 2.0}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -303,9 +292,7 @@ def test_compose_client_with_fake_servers(plugin) -> None:
         # Use a data-URI so we don't need a real file on disk.
         import base64
 
-        png = base64.b64encode(
-            b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
-        ).decode()
+        png = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16).decode()
         result = compose_mod.compose(
             f"data:image/png;base64,{png}",
             vision_url=f"http://127.0.0.1:{v_port}",

@@ -1,4 +1,5 @@
 """Synthetic vision-result → description generator for ``maatml datagen``."""
+
 from __future__ import annotations
 
 import random
@@ -94,9 +95,7 @@ def build_synthetic_vision_payload(
     scene = scene or rng.choice(SCENE_LABELS)
     if n_dets is None:
         n_dets = rng.randint(0, 3)
-    pose_style = pose_style or rng.choice(
-        ["both_up", "left_up", "right_up", "lowered", "upright"]
-    )
+    pose_style = pose_style or rng.choice(["both_up", "left_up", "right_up", "lowered", "upright"])
 
     detections = []
     for _ in range(n_dets):
@@ -136,9 +135,7 @@ def make_sample_row(
     pose_style: Optional[str] = None,
 ) -> dict[str, Any]:
     rng = random.Random(seed + idx * 9973)
-    payload = build_synthetic_vision_payload(
-        rng, scene=scene, n_dets=n_dets, pose_style=pose_style
-    )
+    payload = build_synthetic_vision_payload(rng, scene=scene, n_dets=n_dets, pose_style=pose_style)
     request = linearize_vision_result(payload)
     expected = description_payload(payload)
     category = str(payload["scene"]["label"])

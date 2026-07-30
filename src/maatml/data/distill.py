@@ -10,6 +10,7 @@ are recorded so a run replays offline and reproduces the same corpus.
 The stage config is typed (:class:`DistillConfig`); there is no new untyped
 ``dict[str, Any]`` surface.
 """
+
 from __future__ import annotations
 
 import json
@@ -157,13 +158,9 @@ def _build_validate_fn(model_def: ModelDefinition):
             f"evaluation.validator={validator_name!r} is not registered "
             f"(known: {', '.join(VALIDATORS.names()) or '(none)'})."
         ) from exc
-    schema_path = (
-        model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
-    )
+    schema_path = model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
     contracts_path = (
-        model_def.resolve(cfg["contracts"])
-        if isinstance(cfg.get("contracts"), str)
-        else None
+        model_def.resolve(cfg["contracts"]) if isinstance(cfg.get("contracts"), str) else None
     )
 
     def _fn(prompt: str, target: Any) -> bool:
@@ -265,8 +262,7 @@ def run_distill(
                 params = dict(cfg.request_params)
                 timeout = params.pop("timeout", None)
                 if timeout is not None:
-                    teacher = TeacherClient(model=cfg.teacher_model,
-                                            timeout=float(timeout))
+                    teacher = TeacherClient(model=cfg.teacher_model, timeout=float(timeout))
                 else:
                     teacher = TeacherClient(model=cfg.teacher_model)
             try:
@@ -280,13 +276,10 @@ def run_distill(
             except Exception as exc:  # noqa: BLE001  a teacher failure is a rejected row
                 stats["teacher_failures"] += 1
                 consecutive_failures += 1
-                rejected.append(
-                    {"prompt_sha256": phash, "_reject_reason": f"teacher_error: {exc}"}
-                )
+                rejected.append({"prompt_sha256": phash, "_reject_reason": f"teacher_error: {exc}"})
                 if consecutive_failures >= max_consecutive_failures:
                     aborted_reason = (
-                        f"{consecutive_failures} consecutive teacher failures; "
-                        f"last error: {exc}"
+                        f"{consecutive_failures} consecutive teacher failures; last error: {exc}"
                     )
                     break
                 continue
@@ -339,7 +332,9 @@ def run_distill(
     dest = (
         model_def.resolve(seed_target)
         if seed_target
-        else model_def.resolve(str(ds_cfg.get("seed_samples") or "datasets/samples/seed_samples.jsonl"))
+        else model_def.resolve(
+            str(ds_cfg.get("seed_samples") or "datasets/samples/seed_samples.jsonl")
+        )
     )
     duplicates = 0
     seed_written = False

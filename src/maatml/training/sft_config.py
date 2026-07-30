@@ -1,4 +1,5 @@
 """CPU-safe SFT config models (no torch / transformers import)."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,8 +38,7 @@ def validate_precision(value: Any) -> str:
     text = str(value)
     if text not in VALID_PRECISIONS:
         raise ValueError(
-            f"training.precision must be one of {', '.join(VALID_PRECISIONS)}; "
-            f"got {value!r}"
+            f"training.precision must be one of {', '.join(VALID_PRECISIONS)}; got {value!r}"
         )
     return text
 

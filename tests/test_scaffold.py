@@ -1,4 +1,5 @@
 """Tests for model scaffolding and validate_model_dir."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -25,9 +26,9 @@ def test_scaffold_classifier(tmp_path: Path) -> None:
     scaffold_model(target, architecture="classifier")
     body = (target / "model.yml").read_text(encoding="utf-8")
     assert "architecture: classifier" in body
-    assert "expected_output" in (
-        target / "datasets" / "samples" / "seed_samples.jsonl"
-    ).read_text(encoding="utf-8")
+    assert "expected_output" in (target / "datasets" / "samples" / "seed_samples.jsonl").read_text(
+        encoding="utf-8"
+    )
     errors = validate_model_dir(target)
     assert errors == [], errors
 
@@ -38,9 +39,7 @@ def test_scaffold_dpo(tmp_path: Path) -> None:
     body = (target / "model.yml").read_text(encoding="utf-8")
     assert "architecture: dpo" in body
     assert "preference_jsonl" in body
-    seed = (target / "datasets" / "samples" / "seed_samples.jsonl").read_text(
-        encoding="utf-8"
-    )
+    seed = (target / "datasets" / "samples" / "seed_samples.jsonl").read_text(encoding="utf-8")
     assert "chosen" in seed and "rejected" in seed
     errors = validate_model_dir(target)
     assert errors == [], errors
@@ -79,8 +78,16 @@ def test_validate_no_plugins_skips_plugin_import(tmp_path: Path, monkeypatch) ->
     (target / "model.yml").write_text(yml + "plugins:\n  - not_a_real_module\n", encoding="utf-8")
 
     calls = {"discover": 0, "load": 0}
-    monkeypatch.setattr(scaffold_mod, "discover_plugins", lambda *a, **k: calls.__setitem__("discover", calls["discover"] + 1))
-    monkeypatch.setattr(registry_mod, "load_model_plugins", lambda *a, **k: calls.__setitem__("load", calls["load"] + 1))
+    monkeypatch.setattr(
+        scaffold_mod,
+        "discover_plugins",
+        lambda *a, **k: calls.__setitem__("discover", calls["discover"] + 1),
+    )
+    monkeypatch.setattr(
+        registry_mod,
+        "load_model_plugins",
+        lambda *a, **k: calls.__setitem__("load", calls["load"] + 1),
+    )
 
     errors = validate_model_dir(target, load_plugins=False)
     assert calls == {"discover": 0, "load": 0}
@@ -113,9 +120,7 @@ def test_scaffold_seq2seq(tmp_path: Path) -> None:
     assert "target_field: expected_output" in body
     # seq2seq renders a prompt spec; the trainer and predictor both read it.
     assert (target / "datasets" / "prompt_spec.json").is_file()
-    seed = (target / "datasets" / "samples" / "seed_samples.jsonl").read_text(
-        encoding="utf-8"
-    )
+    seed = (target / "datasets" / "samples" / "seed_samples.jsonl").read_text(encoding="utf-8")
     assert "expected_output" in seed
     assert validate_model_dir(target) == []
 

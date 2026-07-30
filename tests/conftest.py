@@ -5,6 +5,7 @@ Registries are process-global, so a test that registers a plugin (or calls
 runs after it. The autouse fixture snapshots and restores them through the
 public registry API, so tests never reach into ``_entries``.
 """
+
 from __future__ import annotations
 
 import sys

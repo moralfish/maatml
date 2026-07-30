@@ -13,6 +13,7 @@ Six layers:
 Returns a gate result so callers (per-task evaluator, seed-row gating) can
 treat task validators uniformly.
 """
+
 from __future__ import annotations
 
 import json
@@ -61,9 +62,7 @@ def validate_jcl_result(
     try:
         result.parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
         return result
     if not isinstance(result.parsed, dict):
         # Valid JSON that is not an object (a bare list, string or number) has

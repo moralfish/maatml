@@ -1,4 +1,5 @@
 """serving.json contract for the ONNX serving bundle (no torch required)."""
+
 from __future__ import annotations
 
 import sys

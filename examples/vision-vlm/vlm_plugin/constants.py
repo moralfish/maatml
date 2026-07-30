@@ -1,4 +1,5 @@
 """Shared constants for the vision-vlm example."""
+
 from __future__ import annotations
 
 SCENE_LABELS: list[str] = ["plain", "gradient", "striped", "noisy", "checker"]

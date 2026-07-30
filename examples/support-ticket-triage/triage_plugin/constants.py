@@ -5,6 +5,7 @@ model must honour. It is stated in ``datasets/prompt_spec.json`` and enforced
 out-of-model here, so a triage response is checked against a contract rather
 than trusted because it looks well-formed.
 """
+
 from __future__ import annotations
 
 PRIORITIES = frozenset({"p1", "p2", "p3", "p4"})

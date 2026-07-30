@@ -1,4 +1,5 @@
 """Deterministic natural-language description of a synthetic scene."""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -87,11 +88,18 @@ def _shape_phrase(counts: dict[str, int]) -> str:
     parts = []
     for label, n in counts.items():
         word = _COUNT_WORDS.get(n, str(n))
-        noun = label if n == 1 else (
-            "circles" if label == "circle"
-            else "squares" if label == "square"
-            else "triangles" if label == "triangle"
-            else "stars"
+        noun = (
+            label
+            if n == 1
+            else (
+                "circles"
+                if label == "circle"
+                else "squares"
+                if label == "square"
+                else "triangles"
+                if label == "triangle"
+                else "stars"
+            )
         )
         if n == 1:
             noun = label

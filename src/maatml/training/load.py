@@ -1,4 +1,5 @@
 """Shared ``from_pretrained`` / quantization helpers for trainers."""
+
 from __future__ import annotations
 
 from typing import Any, Optional
@@ -28,8 +29,7 @@ def build_bitsandbytes_config(quantization: dict[str, Any] | Any) -> Any:
         from transformers import BitsAndBytesConfig
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "bitsandbytes / BitsAndBytesConfig required for quantization; "
-            "install maatml[cuda]"
+            "bitsandbytes / BitsAndBytesConfig required for quantization; install maatml[cuda]"
         ) from exc
 
     raw = quantization
@@ -41,9 +41,7 @@ def build_bitsandbytes_config(quantization: dict[str, Any] | Any) -> Any:
     load_in_4bit = bool(raw.get("load_in_4bit", False))
     load_in_8bit = bool(raw.get("load_in_8bit", False))
     if not load_in_4bit and not load_in_8bit:
-        raise ValueError(
-            "training.quantization requires load_in_4bit or load_in_8bit to be true"
-        )
+        raise ValueError("training.quantization requires load_in_4bit or load_in_8bit to be true")
     if load_in_4bit and load_in_8bit:
         raise ValueError("Set only one of load_in_4bit / load_in_8bit")
 
@@ -56,9 +54,7 @@ def build_bitsandbytes_config(quantization: dict[str, Any] | Any) -> Any:
             str(raw.get("bnb_4bit_compute_dtype", "bf16"))
         )
         kwargs["bnb_4bit_quant_type"] = str(raw.get("bnb_4bit_quant_type", "nf4"))
-        kwargs["bnb_4bit_use_double_quant"] = bool(
-            raw.get("bnb_4bit_use_double_quant", True)
-        )
+        kwargs["bnb_4bit_use_double_quant"] = bool(raw.get("bnb_4bit_use_double_quant", True))
     return BitsAndBytesConfig(**kwargs)
 
 

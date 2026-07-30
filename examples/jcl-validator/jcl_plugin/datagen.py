@@ -7,6 +7,7 @@ dicts (``request`` + ``expected_validation_result``).
 Registration happens in package ``__init__.py`` so it re-binds after registry
 wipes (cached submodule imports do not re-run decorators).
 """
+
 from __future__ import annotations
 
 import random

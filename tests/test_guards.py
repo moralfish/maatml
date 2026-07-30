@@ -1,4 +1,5 @@
 """Tests for training guards (tokenizer contract + run metadata)."""
+
 from __future__ import annotations
 
 from pathlib import Path

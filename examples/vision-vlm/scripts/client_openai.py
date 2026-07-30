@@ -9,6 +9,7 @@ Examples:
   python scripts/client_openai.py image.png --vllm http://127.0.0.1:8000 \\
       --model vision-vlm
 """
+
 from __future__ import annotations
 
 import argparse

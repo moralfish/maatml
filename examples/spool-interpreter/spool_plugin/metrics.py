@@ -1,4 +1,5 @@
 """Spool evaluation metrics, status/category/RC accuracy + layer pass rates."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -68,7 +69,5 @@ def compute_spool_metrics(row_results: list["RowEval"]) -> dict[str, float]:
         "status_accuracy": status_correct / n,
         "failure_category_accuracy": cat_correct / cat_total if cat_total else 0.0,
         "return_code_accuracy": rc_correct / rc_total if rc_total else 0.0,
-        "suggested_fix_present_rate": (
-            fix_present / fix_expected if fix_expected else 0.0
-        ),
+        "suggested_fix_present_rate": (fix_present / fix_expected if fix_expected else 0.0),
     }

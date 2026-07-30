@@ -11,6 +11,7 @@ Endpoints:
 * ``POST /predict``: dataset-shaped JSON row → prediction
   (``?validate=1`` runs the registered validator when configured)
 """
+
 from __future__ import annotations
 
 import hmac
@@ -201,9 +202,7 @@ def _resolve_eval_asset(
         # Declared and missing is a config error. Falling through to None would
         # start the server with the validator silently short of an asset it was
         # told to use, which under --enforce means gating on less than declared.
-        raise ValueError(
-            f"model.yml declares {key}={rel!r} but the file is missing: {path}"
-        )
+        raise ValueError(f"model.yml declares {key}={rel!r} but the file is missing: {path}")
     for name in filenames:
         cand = checkpoint_dir / name
         if cand.is_file():
@@ -344,9 +343,7 @@ def build_serve_context(
         # live client traffic to disk, and the shipped JCL and spool models
         # target z/OS output carrying user IDs and dataset names.
         sanitize_tags = [
-            str(tag).strip()
-            for tag in (cfg.get("sanitize") or [])
-            if str(tag).strip()
+            str(tag).strip() for tag in (cfg.get("sanitize") or []) if str(tag).strip()
         ]
         sanitizers = [SANITIZERS.require(tag) for tag in sanitize_tags]
         capture = CaptureWriter(
@@ -505,8 +502,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 raise ValueError("POST body required (JSON object)")
             if length > ctx.max_body_bytes:
                 raise RequestTooLarge(
-                    f"request body {length} bytes exceeds cap "
-                    f"{ctx.max_body_bytes} bytes"
+                    f"request body {length} bytes exceeds cap {ctx.max_body_bytes} bytes"
                 )
             raw = self.rfile.read(length)
             try:
@@ -564,9 +560,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                         },
                         "sidecars": {
                             "schema": str(ctx.schema_path) if ctx.schema_path else None,
-                            "contracts": (
-                                str(ctx.contracts_path) if ctx.contracts_path else None
-                            ),
+                            "contracts": (str(ctx.contracts_path) if ctx.contracts_path else None),
                             "prompt_spec": (
                                 str(ctx.prompt_spec_path) if ctx.prompt_spec_path else None
                             ),
@@ -594,9 +588,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": f"Unknown path {path!r}"})
                 return
             qs = parse_qs(parsed.query)
-            want_capture = any(
-                v.lower() in ("1", "true", "yes") for v in qs.get("capture", [])
-            )
+            want_capture = any(v.lower() in ("1", "true", "yes") for v in qs.get("capture", []))
             # Capture always needs the token; when a token is configured it is
             # required for every /predict.
             if (want_capture or ctx.auth_token is not None) and not self._authorized():

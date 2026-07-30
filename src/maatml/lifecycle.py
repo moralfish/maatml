@@ -18,6 +18,7 @@ and git SHA, plugin sources, device profile, exporter identity) in
 the prior step completed, and its declared outputs still exist. Anything else
 re-runs, and the plan says which component changed.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -170,9 +171,7 @@ def plugin_sources_hash(model_def: ModelDefinition) -> str:
             parts.append(
                 (
                     entry,
-                    stable_hash(
-                        [(str(p.relative_to(path)), sha256_file(p)) for p in files]
-                    ),
+                    stable_hash([(str(p.relative_to(path)), sha256_file(p)) for p in files]),
                 )
             )
         else:
@@ -198,10 +197,7 @@ def _declared_assets_hash(model_def: ModelDefinition) -> str:
 
 def _prepared_hash(model_def: ModelDefinition, splits: tuple[str, ...]) -> str:
     return stable_hash(
-        [
-            (split, _file_hash(model_def.prepared_dir / f"{split}.jsonl"))
-            for split in splits
-        ]
+        [(split, _file_hash(model_def.prepared_dir / f"{split}.jsonl")) for split in splits]
     )
 
 
@@ -365,9 +361,7 @@ def outputs_present(
 # ---------------------------------------------------------------------------
 
 
-def _selected_steps(
-    from_step: Optional[str], until_step: Optional[str]
-) -> tuple[str, ...]:
+def _selected_steps(from_step: Optional[str], until_step: Optional[str]) -> tuple[str, ...]:
     start = 0
     end = len(STEPS) - 1
     if from_step:
@@ -379,15 +373,11 @@ def _selected_steps(
             raise ValueError(f"--until must be one of {', '.join(STEPS)}; got {until_step!r}")
         end = STEPS.index(until_step)
     if start > end:
-        raise ValueError(
-            f"--from {from_step!r} comes after --until {until_step!r}; nothing to run"
-        )
+        raise ValueError(f"--from {from_step!r} comes after --until {until_step!r}; nothing to run")
     return STEPS[start : end + 1]
 
 
-def _stale_reason(
-    stored: Optional[dict[str, Any]], components: dict[str, str]
-) -> Optional[str]:
+def _stale_reason(stored: Optional[dict[str, Any]], components: dict[str, str]) -> Optional[str]:
     """None when the step is fresh, else why it is not."""
     if not stored:
         return "never run"
@@ -395,9 +385,7 @@ def _stale_reason(
         return f"last run {stored.get('status', 'unknown')}"
     stored_components = stored.get("components") or {}
     changed = [
-        name
-        for name, value in sorted(components.items())
-        if stored_components.get(name) != value
+        name for name, value in sorted(components.items()) if stored_components.get(name) != value
     ]
     if changed:
         return "changed: " + ", ".join(changed)
@@ -621,9 +609,7 @@ def _step_export(model_def: ModelDefinition, options: RunOptions) -> str:
     run = get_run(model_def, checkpoint.name)
     run_id = run.run_id if run else checkpoint.name
     out_dir = model_def.output_dir / "export" / run_id
-    export_model(
-        model_def, checkpoint, out_dir, format=options.export_format, run_id=run_id
-    )
+    export_model(model_def, checkpoint, out_dir, format=options.export_format, run_id=run_id)
     return f"export={out_dir.name}"
 
 

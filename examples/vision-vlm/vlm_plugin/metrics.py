@@ -1,4 +1,5 @@
 """Metrics for vision-vlm: scene mention, shape F1, pose phrase, brevity."""
+
 from __future__ import annotations
 
 import json

@@ -3,6 +3,7 @@
 Registered as architectures ``dpo`` and ``orpo``. Requires ``trl>=0.9``;
 missing TRL raises a clear install hint.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -149,13 +150,9 @@ def train_preference(
 
     # The run record exists from here on, so row loading failures abort it too.
     try:
-        train_rows, identical_train = _load_preference_rows(
-            dataset_dir / "train.jsonl", limit
-        )
+        train_rows, identical_train = _load_preference_rows(dataset_dir / "train.jsonl", limit)
         val_limit = None if limit is None else max(2, limit // 4)
-        val_rows, identical_val = _load_preference_rows(
-            dataset_dir / "val.jsonl", val_limit
-        )
+        val_rows, identical_val = _load_preference_rows(dataset_dir / "val.jsonl", val_limit)
         if not train_rows:
             raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
         if identical_train or identical_val:
@@ -166,9 +163,7 @@ def train_preference(
                 stacklevel=2,
             )
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            cfg.model_id, revision=cfg.model_revision
-        )
+        tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, revision=cfg.model_revision)
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
 

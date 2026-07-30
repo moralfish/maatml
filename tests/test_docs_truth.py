@@ -1,4 +1,5 @@
 """Doc claims stay truthful (DOCS-a/b/c) and free of em dashes."""
+
 from __future__ import annotations
 
 import re

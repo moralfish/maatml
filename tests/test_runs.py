@@ -1,4 +1,5 @@
 """Unit tests for the append-only run registry."""
+
 from __future__ import annotations
 
 from pathlib import Path

@@ -24,6 +24,7 @@ Public surface:
   - `SFTDataCollator(tokenizer, prompt_spec, *, max_length, target_field, request_field, user_placeholder)`
   - `train_sft(model_def, *, config_cls, target_field, request_field, user_placeholder, default_prompt_spec, ...)`
 """
+
 from __future__ import annotations
 
 import json
@@ -168,9 +169,7 @@ def _messages_from_sample(
         if out:
             return out
 
-    user_text = prompt_spec["user_template"].replace(
-        user_placeholder, sample[request_field]
-    )
+    user_text = prompt_spec["user_template"].replace(user_placeholder, sample[request_field])
     target_text = render_assistant_target(sample, target_field)
     return [
         {"role": "system", "content": prompt_spec["system"]},
@@ -210,9 +209,7 @@ def build_chat_example(
     for i, msg in enumerate(rendered):
         if msg.get("role") != "assistant":
             continue
-        prefix_ids = _render_then_tokenize(
-            rendered[:i], tokenizer, add_generation_prompt=True
-        )
+        prefix_ids = _render_then_tokenize(rendered[:i], tokenizer, add_generation_prompt=True)
         through_ids = _render_then_tokenize(
             rendered[: i + 1], tokenizer, add_generation_prompt=False
         )
@@ -265,9 +262,7 @@ class SFTDataCollator:
         self.user_placeholder = user_placeholder
         self.pretokenized = pretokenized
         self.pad_id = (
-            tokenizer.pad_token_id
-            if tokenizer.pad_token_id is not None
-            else tokenizer.eos_token_id
+            tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
         )
 
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
@@ -348,9 +343,7 @@ def _save_sft_artifacts(
     """
     mode = (save_mode or "merged").lower()
     if mode not in ("merged", "adapter", "both"):
-        raise ValueError(
-            f"training.lora.save_mode must be merged|adapter|both; got {save_mode!r}"
-        )
+        raise ValueError(f"training.lora.save_mode must be merged|adapter|both; got {save_mode!r}")
     meta: dict[str, Any] = {"lora_save_mode": mode, "base_model_id": base_model_id}
     is_peft = hasattr(model, "merge_and_unload") and hasattr(model, "save_pretrained")
 
@@ -454,10 +447,10 @@ def train_sft(
 
     ds_cfg = get_dataset_cfg(model_def)
     target_field = target_field or ds_cfg.get("target_field") or "expected_output"
-    request_field = request_field or ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
-    user_placeholder = (
-        user_placeholder or ds_cfg.get("user_placeholder") or "<<USER_REQUEST>>"
+    request_field = (
+        request_field or ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
     )
+    user_placeholder = user_placeholder or ds_cfg.get("user_placeholder") or "<<USER_REQUEST>>"
 
     if prompt_spec_path is not None:
         spec_path = Path(prompt_spec_path)
@@ -502,9 +495,7 @@ def train_sft(
             + (f" quant={cfg.quantization.enabled()}" if cfg.quantization else "")
         )
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            cfg.model_id, revision=cfg.model_revision
-        )
+        tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, revision=cfg.model_revision)
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -568,9 +559,7 @@ def train_sft(
             )
 
         train_tok = _load_or_build_tokenized_cache(train_rows, train_cache, _tok)
-        val_tok = (
-            _load_or_build_tokenized_cache(val_rows, val_cache, _tok) if val_rows else []
-        )
+        val_tok = _load_or_build_tokenized_cache(val_rows, val_cache, _tok) if val_rows else []
 
         collator = SFTDataCollator(
             tokenizer,
@@ -593,9 +582,7 @@ def train_sft(
         )
         use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
         run_eval_during_training = (
-            val_ds is not None
-            and profile.allow_mid_train_eval
-            and cfg.eval_steps < total_steps
+            val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
         )
         warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
         report_to = normalize_report_to(cfg.report_to)
@@ -665,9 +652,7 @@ def train_sft(
             spec_path=spec_path,
         )
 
-        metrics_out = {
-            k: float(v) for k, v in eval_metrics.items() if isinstance(v, (int, float))
-        }
+        metrics_out = {k: float(v) for k, v in eval_metrics.items() if isinstance(v, (int, float))}
         write_run_metadata(
             out_dir,
             model_def,
@@ -699,4 +684,3 @@ def train_sft(
     except Exception as exc:
         finish_run(model_def, run.run_id, "aborted", error=str(exc))
         raise
-

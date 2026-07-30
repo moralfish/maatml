@@ -2,6 +2,7 @@
 
 Uses the real example model folders (plugins register sanitizers).
 """
+
 from __future__ import annotations
 
 from pathlib import Path

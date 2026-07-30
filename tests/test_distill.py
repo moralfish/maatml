@@ -3,6 +3,7 @@
 A fake in-process teacher stands in for the OpenAI-compatible client, so the
 gating and record/replay behaviour is tested without a network.
 """
+
 from __future__ import annotations
 
 import json
@@ -175,6 +176,7 @@ def test_live_run_records_a_cache_that_replays_offline(tmp_path, teacher) -> Non
 
 def test_offline_run_skips_uncached_prompts(tmp_path) -> None:
     md = _model(tmp_path)
+
     # No cache exists and no teacher is available: every prompt is a cache miss.
     class _NoNetwork:
         def __init__(self, *a, **k):
@@ -306,17 +308,20 @@ def test_request_params_reach_the_teacher_call(tmp_path, teacher, monkeypatch) -
             return super().chat_completions(messages, **kwargs)
 
     monkeypatch.setattr(distill_mod, "TeacherClient", _Recording)
-    md = _model(tmp_path, distill_section={
-        "prompt_source": "datasets/prompts.jsonl",
-        "teacher_model": "fake",
-        "teacher_revision": "v1",
-        "cache": "datasets/cache.jsonl",
-        "request_params": {
-            "timeout": 300,
-            "max_tokens": 4096,
-            "chat_template_kwargs": {"enable_thinking": False},
+    md = _model(
+        tmp_path,
+        distill_section={
+            "prompt_source": "datasets/prompts.jsonl",
+            "teacher_model": "fake",
+            "teacher_revision": "v1",
+            "cache": "datasets/cache.jsonl",
+            "request_params": {
+                "timeout": 300,
+                "max_tokens": 4096,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
         },
-    })
+    )
     run_distill(md, append=False, out_path=str(tmp_path / "out.jsonl"))
 
     assert seen["client_kwargs"] == {"model": "fake", "timeout": 300.0}
@@ -350,9 +355,7 @@ def test_parse_target_accepts_reasoning_teacher_output() -> None:
 
     assert _parse_target('<think>weighing it up</think>{"ok": true}') == {"ok": True}
     assert _parse_target('```json\n{"ok": true}\n```') == {"ok": True}
-    assert _parse_target(
-        '<think>hmm</think>\n```json\n{"ok": true}\n```'
-    ) == {"ok": True}
+    assert _parse_target('<think>hmm</think>\n```json\n{"ok": true}\n```') == {"ok": True}
     assert _parse_target("not json at all") is None
 
 
@@ -379,8 +382,14 @@ def test_validator_exception_rejects_the_row_without_aborting(tmp_path, monkeypa
     assert summary["validator_errors"] == 1
     assert summary["accepted"] == 2
     assert summary["aborted"] is None
-    reasons = [r["_reject_reason"] for r in iter_jsonl(Path(summary["out_path"]).with_name(
-        Path(summary["out_path"]).stem + ".distill_rejected.jsonl"))]
+    reasons = [
+        r["_reject_reason"]
+        for r in iter_jsonl(
+            Path(summary["out_path"]).with_name(
+                Path(summary["out_path"]).stem + ".distill_rejected.jsonl"
+            )
+        )
+    ]
     assert any(r.startswith("validator_error:") for r in reasons)
 
 

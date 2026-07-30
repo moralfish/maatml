@@ -53,7 +53,9 @@ PLACEHOLDER_RE = re.compile(r"\{\{([A-Z][A-Z0-9_]*)\}\}")
 @dataclass(frozen=True)
 class Defect:
     category: ErrorCategory
-    inject: Callable[[random.Random, list[str]], Optional[tuple[list[str], int, Optional[int], str]]]
+    inject: Callable[
+        [random.Random, list[str]], Optional[tuple[list[str], int, Optional[int], str]]
+    ]
 
 
 def _render_template(rng: random.Random, text: str) -> str:
@@ -92,7 +94,9 @@ def _is_continuation_target(lines: list[str], i: int) -> bool:
     return lines[i].startswith("//") and re.match(r"//\s+\S", lines[i]) is not None
 
 
-def inject_missing_dd(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_missing_dd(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     candidates = [i for i in _find_indexes(lines, _is_dd_line) if "SYSPRINT" not in lines[i]]
     if not candidates:
         return None
@@ -109,7 +113,9 @@ def inject_missing_dd(rng: random.Random, lines: list[str]) -> Optional[tuple[li
     return new_lines, idx + 1, 1, f"Add 'DD' keyword for {ddname}"
 
 
-def inject_invalid_job_card(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_invalid_job_card(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     job_idx = next((i for i, ln in enumerate(lines) if " JOB " in ln), None)
     if job_idx is None:
         return None
@@ -128,7 +134,9 @@ def inject_invalid_job_card(rng: random.Random, lines: list[str]) -> Optional[tu
     return new_lines, job_idx + 1, 1, "Fix the JOB card (account, class, parameter syntax)"
 
 
-def inject_unresolved_symbolic_parameter(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_unresolved_symbolic_parameter(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     candidates = [i for i, ln in enumerate(lines) if "DSN=" in ln and "&" not in ln]
     if not candidates:
         return None
@@ -143,7 +151,9 @@ def inject_unresolved_symbolic_parameter(rng: random.Random, lines: list[str]) -
     return new_lines, idx + 1, col, "Define &UNDEF via // SET or remove the symbolic reference"
 
 
-def inject_continuation_error(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_continuation_error(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     candidates = [i for i in range(1, len(lines)) if _is_continuation_target(lines, i)]
     if not candidates:
         return None
@@ -157,7 +167,9 @@ def inject_continuation_error(rng: random.Random, lines: list[str]) -> Optional[
     return new_lines, idx + 1, 1, "Continuation lines must begin with // in cols 1-2"
 
 
-def inject_invalid_exec_statement(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_invalid_exec_statement(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     candidates = _find_indexes(lines, _is_exec_line)
     if not candidates:
         return None
@@ -181,7 +193,9 @@ def inject_invalid_exec_statement(rng: random.Random, lines: list[str]) -> Optio
     return new_lines, idx + 1, col, suggestion
 
 
-def inject_invalid_dataset_reference_structure(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_invalid_dataset_reference_structure(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     candidates = [i for i, ln in enumerate(lines) if re.search(r"DSN=[A-Z0-9.]+", ln)]
     if not candidates:
         return None
@@ -192,10 +206,17 @@ def inject_invalid_dataset_reference_structure(rng: random.Random, lines: list[s
     col = new_line.find("DSN=") + 5
     new_lines = lines.copy()
     new_lines[idx] = new_line
-    return new_lines, idx + 1, col, "Dataset names must be 1-8 char qualifiers separated by dots, starting with a letter"
+    return (
+        new_lines,
+        idx + 1,
+        col,
+        "Dataset names must be 1-8 char qualifiers separated by dots, starting with a letter",
+    )
 
 
-def inject_other(rng: random.Random, lines: list[str]) -> Optional[tuple[list[str], int, Optional[int], str]]:
+def inject_other(
+    rng: random.Random, lines: list[str]
+) -> Optional[tuple[list[str], int, Optional[int], str]]:
     candidates = [i for i, ln in enumerate(lines) if ln.startswith("//") and " " in ln[2:]]
     if not candidates:
         return None
@@ -210,10 +231,19 @@ def inject_other(rng: random.Random, lines: list[str]) -> Optional[tuple[list[st
 INJECTORS: dict[ErrorCategory, Defect] = {
     ErrorCategory.missing_dd: Defect(ErrorCategory.missing_dd, inject_missing_dd),
     ErrorCategory.invalid_job_card: Defect(ErrorCategory.invalid_job_card, inject_invalid_job_card),
-    ErrorCategory.unresolved_symbolic_parameter: Defect(ErrorCategory.unresolved_symbolic_parameter, inject_unresolved_symbolic_parameter),
-    ErrorCategory.continuation_error: Defect(ErrorCategory.continuation_error, inject_continuation_error),
-    ErrorCategory.invalid_exec_statement: Defect(ErrorCategory.invalid_exec_statement, inject_invalid_exec_statement),
-    ErrorCategory.invalid_dataset_reference_structure: Defect(ErrorCategory.invalid_dataset_reference_structure, inject_invalid_dataset_reference_structure),
+    ErrorCategory.unresolved_symbolic_parameter: Defect(
+        ErrorCategory.unresolved_symbolic_parameter, inject_unresolved_symbolic_parameter
+    ),
+    ErrorCategory.continuation_error: Defect(
+        ErrorCategory.continuation_error, inject_continuation_error
+    ),
+    ErrorCategory.invalid_exec_statement: Defect(
+        ErrorCategory.invalid_exec_statement, inject_invalid_exec_statement
+    ),
+    ErrorCategory.invalid_dataset_reference_structure: Defect(
+        ErrorCategory.invalid_dataset_reference_structure,
+        inject_invalid_dataset_reference_structure,
+    ),
     ErrorCategory.other: Defect(ErrorCategory.other, inject_other),
 }
 

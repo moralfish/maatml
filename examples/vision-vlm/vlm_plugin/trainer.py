@@ -1,4 +1,5 @@
 """``vlm_sft`` trainer, SmolVLM / Idefics3 LoRA SFT with frozen vision tower."""
+
 from __future__ import annotations
 
 import json
@@ -44,9 +45,7 @@ def _user_prompt(model_def: ModelDefinition) -> str:
                 pass
         except Exception:  # noqa: BLE001
             pass
-    return str(
-        (model_def.training or {}).get("user_prompt") or _DEFAULT_USER_PROMPT
-    )
+    return str((model_def.training or {}).get("user_prompt") or _DEFAULT_USER_PROMPT)
 
 
 def _build_messages(user_text: str, assistant_text: str | None = None) -> list[dict]:
@@ -122,9 +121,7 @@ def train_vlm_sft(
         torch.manual_seed(int(cfg_train["seed"]))
 
     model_id = str(
-        cfg_train.get("model_id")
-        or model_def.base_model
-        or "HuggingFaceTB/SmolVLM-256M-Instruct"
+        cfg_train.get("model_id") or model_def.base_model or "HuggingFaceTB/SmolVLM-256M-Instruct"
     )
     longest_edge = int(cfg_train.get("image_longest_edge") or 384)
     # Do not truncate VLM batches: image placeholder tokens must survive intact.
@@ -193,9 +190,7 @@ def train_vlm_sft(
         pad_id = processor.tokenizer.eos_token_id
     image_token_id = getattr(model.config, "image_token_id", None)
     if image_token_id is None:
-        image_token_id = getattr(
-            getattr(model.config, "text_config", None), "image_token_id", None
-        )
+        image_token_id = getattr(getattr(model.config, "text_config", None), "image_token_id", None)
 
     class _VlmDataset(Dataset):
         def __init__(self, data: list[dict]) -> None:
@@ -282,10 +277,7 @@ def train_vlm_sft(
     try:
         for epoch in range(epochs):
             for batch in loader:
-                batch = {
-                    k: v.to(torch_device) if hasattr(v, "to") else v
-                    for k, v in batch.items()
-                }
+                batch = {k: v.to(torch_device) if hasattr(v, "to") else v for k, v in batch.items()}
                 outputs = model(**batch)
                 loss = outputs.loss / max(1, grad_accum)
                 if not torch.isfinite(loss):

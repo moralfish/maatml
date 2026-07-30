@@ -1,4 +1,5 @@
 """Alpaca / ShareGPT format normalization and prepare smoke."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -82,9 +83,12 @@ dataset:
     )
     md = load_model_def(mdir)
     summary = prepare_alpaca(md)
-    assert summary["split_counts"]["train"] + summary["split_counts"]["val"] + summary[
-        "split_counts"
-    ]["test"] == 4
+    assert (
+        summary["split_counts"]["train"]
+        + summary["split_counts"]["val"]
+        + summary["split_counts"]["test"]
+        == 4
+    )
     # Canonical messages present in prepared rows
     any_row = next(iter_jsonl(md.prepared_dir / "train.jsonl"), None)
     if any_row is None:

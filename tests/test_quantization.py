@@ -1,4 +1,5 @@
 """QLoRA / quantization config parsing (no bitsandbytes required)."""
+
 from __future__ import annotations
 
 from unittest import mock
@@ -39,9 +40,7 @@ def test_from_pretrained_kwargs_rejects_quant_on_mps() -> None:
 def test_from_pretrained_kwargs_quant_builds_when_bnb_present() -> None:
     q = QuantizationSettings(load_in_4bit=True)
     fake_cfg = object()
-    with mock.patch(
-        "maatml.training.load.build_bitsandbytes_config", return_value=fake_cfg
-    ):
+    with mock.patch("maatml.training.load.build_bitsandbytes_config", return_value=fake_cfg):
         kwargs = from_pretrained_kwargs(get_profile("cuda"), quantization=q)
     assert kwargs["quantization_config"] is fake_cfg
     assert kwargs.get("device_map") == "auto"

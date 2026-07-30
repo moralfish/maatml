@@ -4,6 +4,7 @@ Each task validator (JCL, Spool, …) is an N-layer pipeline that returns a
 :class:`ValidationResult`. Shared helpers cover fence-stripping and JSON/schema
 loading so task modules stay focused on their layer logic.
 """
+
 from __future__ import annotations
 
 import json

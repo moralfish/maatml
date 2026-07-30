@@ -7,6 +7,7 @@ declared, while the predictor always kept the built-in ``<PAD>``. A model whose
 custom tokenizer names its pad token ``[PAD]`` therefore trained with one pad
 token and was evaluated with another.
 """
+
 from __future__ import annotations
 
 import json
@@ -43,9 +44,7 @@ def resolve_special_tokens(tokenizer_path: Optional[Path | str]) -> dict[str, An
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         added = data.get("added_tokens") or []
-        specials = [
-            t["content"] for t in added if isinstance(t, dict) and t.get("special")
-        ]
+        specials = [t["content"] for t in added if isinstance(t, dict) and t.get("special")]
         if not specials:
             return defaults
         known = set(specials)

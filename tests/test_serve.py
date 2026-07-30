@@ -1,4 +1,5 @@
 """Tests for ``maatml serve``: fake predictor, no torch required."""
+
 from __future__ import annotations
 
 import json
@@ -40,13 +41,9 @@ def _fake_validator(raw_output: str, **kwargs) -> ValidationResult:  # noqa: ANN
         if parsed.get("ok") is True:
             result.passed_layers.add(1)
         else:
-            result.errors.append(
-                ValidationError(layer=1, code="not_ok", message="ok flag missing")
-            )
+            result.errors.append(ValidationError(layer=1, code="not_ok", message="ok flag missing"))
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
     return result
 
 
@@ -121,9 +118,7 @@ def test_serve_health_info_predict_validate(
         assert info["packaging"]["expected_latency_ms"] == 100
         assert info["predictor"] == "fake_echo"
 
-        status, pred = _http_json(
-            "POST", f"{base}/predict", {"request": "hello serve"}
-        )
+        status, pred = _http_json("POST", f"{base}/predict", {"request": "hello serve"})
         assert status == 200
         assert pred["output"]["echo"] == "hello serve"
         assert pred["output"]["ok"] is True
@@ -445,13 +440,17 @@ def test_auth_token_required_when_set(serve_model_dir) -> None:
         assert status == 401
         # Wrong token: 401.
         status, _ = _http_with_headers(
-            "POST", f"{base}/predict", {"request": "hi"},
+            "POST",
+            f"{base}/predict",
+            {"request": "hi"},
             {"Authorization": "Bearer nope"},
         )
         assert status == 401
         # Right token: 200.
         status, pred = _http_with_headers(
-            "POST", f"{base}/predict", {"request": "hi"},
+            "POST",
+            f"{base}/predict",
+            {"request": "hi"},
             {"Authorization": "Bearer s3cret"},
         )
         assert status == 200
@@ -480,21 +479,19 @@ def test_info_advertises_auth_and_capture(serve_model_dir) -> None:
 def test_capture_requires_auth_token(serve_model_dir, tmp_path) -> None:
     md, ckpt = serve_model_dir
     with pytest.raises(ValueError, match="requires --auth-token"):
-        build_serve_context(
-            md, checkpoint=ckpt, device="cpu", capture_path=tmp_path / "cap.jsonl"
-        )
+        build_serve_context(md, checkpoint=ckpt, device="cpu", capture_path=tmp_path / "cap.jsonl")
 
 
 def test_capture_writes_unapproved_rows(serve_model_dir, tmp_path) -> None:
     md, ckpt = serve_model_dir
     cap = tmp_path / "capture.jsonl"
-    ctx = build_serve_context(
-        md, checkpoint=ckpt, device="cpu", auth_token="tok", capture_path=cap
-    )
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", auth_token="tok", capture_path=cap)
     server, base, _thread = _serve(md, ctx)
     try:
         status, pred = _http_with_headers(
-            "POST", f"{base}/predict?capture=1", {"request": "capture me"},
+            "POST",
+            f"{base}/predict?capture=1",
+            {"request": "capture me"},
             {"Authorization": "Bearer tok"},
         )
         assert status == 200
@@ -514,14 +511,15 @@ def test_capture_writes_unapproved_rows(serve_model_dir, tmp_path) -> None:
 def test_capture_without_token_is_401(serve_model_dir, tmp_path) -> None:
     md, ckpt = serve_model_dir
     ctx = build_serve_context(
-        md, checkpoint=ckpt, device="cpu", auth_token="tok",
+        md,
+        checkpoint=ckpt,
+        device="cpu",
+        auth_token="tok",
         capture_path=tmp_path / "c.jsonl",
     )
     server, base, _thread = _serve(md, ctx)
     try:
-        status, _ = _http_with_headers(
-            "POST", f"{base}/predict?capture=1", {"request": "x"}
-        )
+        status, _ = _http_with_headers("POST", f"{base}/predict?capture=1", {"request": "x"})
         assert status == 401
     finally:
         server.shutdown()
@@ -547,9 +545,7 @@ def test_enforce_retry_recovers_and_counts(serve_model_dir) -> None:
     md, ckpt = serve_model_dir
     PREDICTORS.register("flaky", _FlakyPredictor, source="test")
     md.evaluation["predictor"] = "flaky"
-    ctx = build_serve_context(
-        md, checkpoint=ckpt, device="cpu", enforce=True, max_retries=1
-    )
+    ctx = build_serve_context(md, checkpoint=ckpt, device="cpu", enforce=True, max_retries=1)
     server, base, _thread = _serve(md, ctx)
     try:
         status, pred = _http_with_headers("POST", f"{base}/predict", {"request": "hi"})
@@ -614,9 +610,7 @@ def test_capture_applies_declared_sanitizers(tmp_path: Path) -> None:
     def _redact(text: str) -> str:
         return text.replace("USER=ALICE", "USER=REDACT")
 
-    writer = CaptureWriter(
-        tmp_path / "cap.jsonl", request_field="request", sanitizers=[_redact]
-    )
+    writer = CaptureWriter(tmp_path / "cap.jsonl", request_field="request", sanitizers=[_redact])
     writer.record({"request": "job for USER=ALICE"}, {"ok": True}, '{"ok": true}')
     row = json.loads((tmp_path / "cap.jsonl").read_text().splitlines()[0])
     assert row["request"] == "job for USER=REDACT"

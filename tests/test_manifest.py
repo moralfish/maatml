@@ -1,4 +1,5 @@
 """Export manifest build / verify checksum roundtrip."""
+
 from __future__ import annotations
 
 import json

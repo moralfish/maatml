@@ -1,4 +1,5 @@
 """Family-aware group split: members of one family must not straddle splits."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -168,9 +169,9 @@ dataset:
         for i in range(4)
     ]
     _splits, assignment, _degenerate = _assign_group_splits(seed_rows, (0.8, 0.1, 0.1))
-    trained_family = next(
-        key for key, split in assignment.items() if split.value == "train"
-    ).split(":", 1)[1]
+    trained_family = next(key for key, split in assignment.items() if split.value == "train").split(
+        ":", 1
+    )[1]
 
     with pytest.raises(ValueError, match="share group keys with the training splits"):
         prepare_rows(
@@ -212,9 +213,7 @@ dataset:
         md,
         seed_rows,
         out_dir=tmp_path / "out",
-        benchmark_rows=[
-            {"sample_id": "b-1", "family": "bench_alpha", "request": "unseen request"}
-        ],
+        benchmark_rows=[{"sample_id": "b-1", "family": "bench_alpha", "request": "unseen request"}],
     )
     test_rows = list(iter_jsonl(tmp_path / "out" / "test.jsonl"))
     assert any(row["sample_id"] == "b-1" for row in test_rows)

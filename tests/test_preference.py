@@ -1,4 +1,5 @@
 """Preference JSONL normalize + mint_preference_pairs (no TRL / torch)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -34,9 +35,7 @@ def test_normalize_preference() -> None:
 
 
 def test_normalize_preference_aliases() -> None:
-    out = normalize_preference(
-        {"request": "hi", "chosen": "a", "rejected": "b", "id": "x"}
-    )
+    out = normalize_preference({"request": "hi", "chosen": "a", "rejected": "b", "id": "x"})
     assert out["prompt"] == "hi"
     assert out["sample_id"] == "x"
 
@@ -163,18 +162,24 @@ def test_run_mint_gates_candidates_with_the_validator(tmp_path) -> None:
     model_dir = tmp_path / "m"
     (model_dir / "datasets" / "samples").mkdir(parents=True)
     md = ModelDefinition(
-        name="m", model_id="m", architecture="dpo", version="0.1.0",
+        name="m",
+        model_id="m",
+        architecture="dpo",
+        version="0.1.0",
         dataset={"seed_samples": "datasets/samples/seed_samples.jsonl"},
         evaluation={"validator": "mint_test_validator"},
     )
     object.__setattr__(md, "model_dir", model_dir)
 
     inp = tmp_path / "candidates.jsonl"
-    write_jsonl(inp, [
-        {"prompt": "p1", "candidates": ["a good answer", "a bad answer"]},
-        {"prompt": "p2", "candidates": ["all bad", "still bad"]},   # no winner: skipped
-        {"prompt": "p3", "candidates": ["only one"]},               # malformed: <2
-    ])
+    write_jsonl(
+        inp,
+        [
+            {"prompt": "p1", "candidates": ["a good answer", "a bad answer"]},
+            {"prompt": "p2", "candidates": ["all bad", "still bad"]},  # no winner: skipped
+            {"prompt": "p3", "candidates": ["only one"]},  # malformed: <2
+        ],
+    )
 
     result = run_mint(md, inp, append=False)
     assert result["pairs"] == 1

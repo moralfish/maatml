@@ -5,6 +5,7 @@ Each scene yields independent supervision for:
   - object detection (0–3 colored shapes with boxes)
   - single-person pose (one stick figure, 12 keypoints)
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -57,7 +58,9 @@ def _draw_background(img: Any, draw: Any, scene: str, size: int, rng: Any) -> No
         c1 = (rng.randint(20, 100), rng.randint(20, 100), rng.randint(20, 100))
         c2 = (rng.randint(150, 240), rng.randint(150, 240), rng.randint(150, 240))
         for y in range(0, size, band):
-            draw.rectangle([0, y, size, min(size, y + band)], fill=c1 if (y // band) % 2 == 0 else c2)
+            draw.rectangle(
+                [0, y, size, min(size, y + band)], fill=c1 if (y // band) % 2 == 0 else c2
+            )
     elif scene == "noisy":
         # Coarse noise tiles (fast + deterministic).
         tile = max(4, size // 40)
@@ -171,7 +174,9 @@ def _make_pose(rng: Any, size: int) -> dict[str, Any]:
     return {"keypoints": keypoints}
 
 
-def _draw_pose(draw: Any, pose: dict[str, Any], color: tuple[int, int, int] = (255, 40, 40)) -> None:
+def _draw_pose(
+    draw: Any, pose: dict[str, Any], color: tuple[int, int, int] = (255, 40, 40)
+) -> None:
     kp = {k["name"]: (k["x"], k["y"]) for k in pose["keypoints"]}
     bones = [
         ("head", "neck"),

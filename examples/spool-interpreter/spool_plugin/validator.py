@@ -14,6 +14,7 @@ Seven layers, mirroring the JCL validator:
 Layers 6 and 7 are the cross-field contracts: each relates two fields to one
 another and neither can be expressed by the schema alone.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,9 +60,7 @@ def validate_spool_result(
     try:
         result.parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
         return result
     if not isinstance(result.parsed, dict):
         # Valid JSON that is not an object (a bare list, string or number) has
@@ -197,8 +196,7 @@ def validate_spool_result(
                     layer=7,
                     code="invalid_suggested_fix_type",
                     message=(
-                        f"suggestedFix must be string or null; "
-                        f"got {type(suggested_fix).__name__}"
+                        f"suggestedFix must be string or null; got {type(suggested_fix).__name__}"
                     ),
                     location="suggestedFix",
                 )

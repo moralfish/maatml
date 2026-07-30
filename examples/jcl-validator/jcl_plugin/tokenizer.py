@@ -13,6 +13,7 @@ CLI (via example script):
 
     python examples/jcl-validator/scripts/build_tokenizer.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -110,9 +111,7 @@ def train_jcl_tokenizer(
 
 
 def _cli(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="JCL pre-tokenizer + BPE trainer."
-    )
+    parser = argparse.ArgumentParser(description="JCL pre-tokenizer + BPE trainer.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_train = sub.add_parser("train", help="Train a JCL BPE tokenizer.")

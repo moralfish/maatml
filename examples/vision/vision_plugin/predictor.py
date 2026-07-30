@@ -1,4 +1,5 @@
 """Dual-backend predictor: torch checkpoint or ``model.onnx`` via onnxruntime."""
+
 from __future__ import annotations
 
 import json
@@ -56,9 +57,7 @@ class VisionMultitaskPredictor:
 
         cfg_path = onnx_path.parent / "config.json"
         if cfg_path.is_file():
-            self.cfg = MultitaskConfig.from_dict(
-                json.loads(cfg_path.read_text(encoding="utf-8"))
-            )
+            self.cfg = MultitaskConfig.from_dict(json.loads(cfg_path.read_text(encoding="utf-8")))
         else:
             self.cfg = MultitaskConfig()
 

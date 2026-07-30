@@ -1,4 +1,5 @@
 """Training-time guards: NaN abort, run provenance, tokenizer/model contract."""
+
 from __future__ import annotations
 
 import json
@@ -227,9 +228,7 @@ def _has_untied_output_head(model: Any) -> bool:
     return out_w.data_ptr() != in_w.data_ptr()
 
 
-def _refuse_resize_that_discards_output_head(
-    model: Any, tok_size: int, model_vocab: int
-) -> None:
+def _refuse_resize_that_discards_output_head(model: Any, tok_size: int, model_vocab: int) -> None:
     """Block a shrink that would throw away a separately trained output head.
 
     ``resize_token_embeddings`` re-ties the output projection to the input

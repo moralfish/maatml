@@ -1,4 +1,5 @@
 """Datagen gating and data-safety: fail-closed validator, no seed truncation."""
+
 from __future__ import annotations
 
 import pytest
@@ -84,7 +85,7 @@ def test_no_truncation_when_nothing_accepted(tmp_path, monkeypatch):
     _register_dummy_generator()
     seed = tmp_path / "seeds.jsonl"
     write_jsonl_atomic(seed, [{"keep": 1}, {"keep": 2}])
-    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: False))
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: lambda r: False)
 
     md = _md(tmp_path, evaluation={})
     result = run_datagen(md, target=1, append=False, max_attempts=3)
@@ -96,7 +97,7 @@ def test_no_truncation_when_nothing_accepted(tmp_path, monkeypatch):
 
 def test_accepted_rows_written_and_gated_card(tmp_path, monkeypatch):
     _register_dummy_generator()
-    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: True))
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: lambda r: True)
 
     md = _md(tmp_path, evaluation={"validator": "some_validator"})
     result = run_datagen(md, target=2, append=False, max_attempts=10)
@@ -150,7 +151,7 @@ def test_atomic_write_preserves_original_on_failure(tmp_path):
 
 def test_append_dedups_previously_generated_rows(tmp_path, monkeypatch):
     _register_dummy_generator()
-    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: True))
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: lambda r: True)
     md = _md(tmp_path, evaluation={"validator": "some_validator"})
 
     first = run_datagen(md, target=2, append=False, max_attempts=10)
@@ -170,12 +171,12 @@ def test_stale_reject_report_is_removed_when_nothing_is_rejected(tmp_path, monke
     _register_dummy_generator()
     md = _md(tmp_path, evaluation={"validator": "some_validator"})
 
-    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: False))
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: lambda r: False)
     run_datagen(md, target=1, append=False, max_attempts=3)
     reject_path = tmp_path / "seeds.datagen_rejected.jsonl"
     assert reject_path.is_file()
 
-    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: (lambda r: True))
+    monkeypatch.setattr(datagen_mod, "_default_validate_fn", lambda md, **k: lambda r: True)
     result = run_datagen(md, target=1, append=False, max_attempts=3)
     assert result["reject_path"] is None
     assert not reject_path.exists(), "a previous run's rejects must not linger"

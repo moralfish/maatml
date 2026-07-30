@@ -91,9 +91,7 @@ def test_validator_rejects_non_object_json_without_raising() -> None:
     schema = root / "datasets" / "jcl_validation_schema.json"
     contracts = root / "datasets" / "node_contracts.json"
 
-    for payload in ('[]', '"a string"', "42", "null", "true"):
-        result = validate_jcl_result(
-            payload, schema_path=schema, contracts_path=contracts
-        )
+    for payload in ("[]", '"a string"', "42", "null", "true"):
+        result = validate_jcl_result(payload, schema_path=schema, contracts_path=contracts)
         assert result.ok is False, payload
         assert any(e.code == "not_an_object" for e in result.errors), payload

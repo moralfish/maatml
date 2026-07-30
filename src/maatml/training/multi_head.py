@@ -11,6 +11,7 @@ Public surface:
   - ``train_multi_head(model_def, ...)``: CLI entry point
   - ``_resolve_path`` / ``parse_heads``: shared by trainer + predictor
 """
+
 from __future__ import annotations
 
 import re
@@ -203,9 +204,7 @@ def _label_index(value: Any, labels: list[str]) -> int:
     if value is None or value == "":
         if "none" in labels:
             return labels.index("none")
-        raise UnknownLabelError(
-            f"missing gold value and no 'none' label declared in {labels!r}"
-        )
+        raise UnknownLabelError(f"missing gold value and no 'none' label declared in {labels!r}")
     s = str(value)
     if s in labels:
         return labels.index(s)
@@ -253,13 +252,32 @@ def _line_start_offset(text: str, line_no: int) -> int:
 
 # Every `training:` key this architecture reads, here, in parse_heads, and in
 # the trainer body.
-_MULTI_HEAD_KEYS = frozenset({
-    "model_id", "max_input_tokens", "batch_size", "grad_accum", "learning_rate",
-    "epochs", "weight_decay", "warmup_ratio", "seed", "precision",
-    "grad_checkpointing", "eval_steps", "save_steps", "logging_steps",
-    "max_steps", "attn_implementation", "dataloader_workers", "model_revision",
-    "heads", "head_loss_weights", "embedding_strategy", "report_to",
-})
+_MULTI_HEAD_KEYS = frozenset(
+    {
+        "model_id",
+        "max_input_tokens",
+        "batch_size",
+        "grad_accum",
+        "learning_rate",
+        "epochs",
+        "weight_decay",
+        "warmup_ratio",
+        "seed",
+        "precision",
+        "grad_checkpointing",
+        "eval_steps",
+        "save_steps",
+        "logging_steps",
+        "max_steps",
+        "attn_implementation",
+        "dataloader_workers",
+        "model_revision",
+        "heads",
+        "head_loss_weights",
+        "embedding_strategy",
+        "report_to",
+    }
+)
 
 
 @dataclass
@@ -307,9 +325,7 @@ class MultiHeadConfig:
             heads=parse_heads(d),
             attn_implementation=d.get("attn_implementation"),
             dataloader_workers=(
-                int(d["dataloader_workers"])
-                if d.get("dataloader_workers") is not None
-                else None
+                int(d["dataloader_workers"]) if d.get("dataloader_workers") is not None else None
             ),
             model_revision=d.get("model_revision"),
         )
@@ -457,9 +473,7 @@ def _train_loop(
         revision=cfg.model_revision,
     )
     encoder = AutoModel.from_pretrained(cfg.model_id, **load_kwargs)
-    ensure_tokenizer_model_contract(
-        encoder, tokenizer, embedding_strategy=embedding_strategy
-    )
+    ensure_tokenizer_model_contract(encoder, tokenizer, embedding_strategy=embedding_strategy)
     hidden = encoder.config.hidden_size
     head_module = _build_head_module(hidden, heads)
 
@@ -519,9 +533,7 @@ def _train_loop(
     )
     warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
 
-    use_bf16, use_fp16 = precision_flags(
-        cfg.precision, device=device_name, distributed=distributed
-    )
+    use_bf16, use_fp16 = precision_flags(cfg.precision, device=device_name, distributed=distributed)
     use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
@@ -686,11 +698,7 @@ def train_multi_head(
         resolved_tokenizer = (
             Path(tokenizer_path)
             if tokenizer_path
-            else (
-                model_def.resolve(ds_cfg["tokenizer"])
-                if ds_cfg.get("tokenizer")
-                else None
-            )
+            else (model_def.resolve(ds_cfg["tokenizer"]) if ds_cfg.get("tokenizer") else None)
         )
         if resolved_tokenizer and resolved_tokenizer.exists():
             from transformers import PreTrainedTokenizerFast
@@ -702,9 +710,7 @@ def train_multi_head(
                 **specials,
             )
         else:
-            tokenizer = AutoTokenizer.from_pretrained(
-                cfg.model_id, revision=cfg.model_revision
-            )
+            tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, revision=cfg.model_revision)
 
         train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
         val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
@@ -714,13 +720,9 @@ def train_multi_head(
         if not train_rows:
             raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
 
-        unknown = scan_label_coverage(
-            train_rows + val_rows, heads, target_field=target_field
-        )
+        unknown = scan_label_coverage(train_rows + val_rows, heads, target_field=target_field)
         if unknown:
-            detail = "; ".join(
-                f"{head}: {counts}" for head, counts in sorted(unknown.items())
-            )
+            detail = "; ".join(f"{head}: {counts}" for head, counts in sorted(unknown.items()))
             raise ValueError(
                 "gold values do not map to the declared head labels "
                 f"({detail}). Fix training.heads[].labels or the corpus; these "

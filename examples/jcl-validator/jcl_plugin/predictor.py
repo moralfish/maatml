@@ -1,4 +1,5 @@
 """JCL-shaped predictor: multi-head outputs → JclValidationResult JSON."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +9,8 @@ from typing import Any, Optional
 from maatml.config import ModelDefinition
 from maatml.evaluation.harness import resolve_eval_asset
 from maatml.evaluation.predictors import MultiHeadClassifierPredictor
+
+
 class JclClassifierPredictor(MultiHeadClassifierPredictor):
     """Assemble a ``JclValidationResult`` from generic multi-head outputs."""
 
@@ -55,9 +58,7 @@ class JclClassifierPredictor(MultiHeadClassifierPredictor):
         line_h = heads.get("line") or {}
 
         label = validity.get("label", "valid")
-        is_valid = label == "valid" or (
-            validity.get("index") == 1 and label not in ("invalid",)
-        )
+        is_valid = label == "valid" or (validity.get("index") == 1 and label not in ("invalid",))
         # Prefer explicit invalid/valid labels.
         if label == "invalid":
             is_valid = False
