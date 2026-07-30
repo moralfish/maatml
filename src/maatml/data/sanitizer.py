@@ -84,15 +84,17 @@ def _apply_one(text: str, rule: SanitizationRule) -> str:
         repl = _expand(rule, m)
         original_len = m.end() - m.start()
         if len(repl) > original_len:
-            # Truncating to preserve column layout loses part of the
-            # replacement, so say so once per rule instead of silently
-            # emitting a half-written redaction.
+            # The marker is clipped to hold the column layout. The original
+            # value is still fully replaced, so nothing leaks: what suffers is
+            # legibility, e.g. USER=ABCD becomes USER=REDA. Said once per rule
+            # so a long corpus does not repeat it per row.
             if rule.name not in _warned_truncating_rules:
                 _warned_truncating_rules.add(rule.name)
                 warnings.warn(
-                    f"sanitization rule {rule.name!r}: replacement "
-                    f"{repl!r} truncated to {original_len} chars to preserve "
-                    "length; the redaction is incomplete",
+                    f"sanitization rule {rule.name!r}: replacement {repl!r} "
+                    f"clipped to {original_len} chars to preserve column "
+                    "layout; the original value is still fully replaced, but "
+                    "the marker is abbreviated",
                     RuntimeWarning,
                     stacklevel=2,
                 )
