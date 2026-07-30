@@ -219,6 +219,36 @@ def baseline_delta(
     return delta
 
 
+def default_eval_keys(
+    model_def: ModelDefinition,
+) -> tuple[Optional[str], Optional[str], Any]:
+    """Infer predictor / validator / metrics from ``evaluation:`` or architecture.
+
+    ``evaluation.metrics`` may be a single name or a list; every entry runs and
+    the results are merged (the harness rejects two plugins claiming the same
+    metric key), so a list is never truncated to its first entry. Validator and
+    metrics come from ``evaluation:`` or the model's plugins; core keeps no
+    hardcoded task-name fallbacks.
+    """
+    from ..scaffold import normalize_architecture
+
+    ev = model_def.evaluation or {}
+    predictor = ev.get("predictor")
+    validator = ev.get("validator")
+    metrics = ev.get("metrics")
+    if isinstance(metrics, list) and not metrics:
+        metrics = None
+
+    arch = normalize_architecture(model_def.architecture)
+    if predictor is None:
+        if arch in PREDICTORS.names() or PREDICTORS.get(model_def.architecture):
+            predictor = model_def.architecture if PREDICTORS.get(model_def.architecture) else arch
+        elif arch in ("multi_head_classifier", "seq2seq", "causal_sft"):
+            predictor = arch
+
+    return predictor, validator, metrics
+
+
 class DeclaredAssetMissing(FileNotFoundError):
     """An asset the caller named explicitly, or model.yml declares, is absent.
 

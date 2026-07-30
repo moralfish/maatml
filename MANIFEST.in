@@ -1,0 +1,24 @@
+# What the sdist ships, declared rather than left to setuptools' defaults, so
+# the file list is reproducible across setuptools versions.
+#
+# tests/ is excluded on purpose. pytest's testpaths cover tests + examples, and
+# the tracked examples are ~23 MB, so an sdist carrying tests without them fails
+# 16 tests for anyone who runs the suite from it. Shipping a suite that cannot
+# pass is worse than not shipping one; the repository is the place to run it.
+include LICENSE
+include README.md
+include CHANGELOG.md
+include SECURITY.md
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT.md
+include src/maatml/py.typed
+
+prune tests
+prune examples
+prune docs
+prune scripts
+prune .github
+
+global-exclude *.py[cod]
+global-exclude .DS_Store
+global-exclude __pycache__

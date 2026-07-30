@@ -38,7 +38,6 @@ from .overrides import (
 )
 from .registry import (
     FORMATS,
-    PREDICTORS,
     TRAINERS,
     discover_plugins,
     list_all_plugins,
@@ -99,36 +98,6 @@ def _boot_plugins(md) -> None:
     discover_plugins()
     if md.plugins:
         load_model_plugins(md.model_dir, md.plugins)
-
-
-def _default_eval_keys(md) -> tuple[Optional[str], Optional[str], Any]:
-    """Infer predictor/validator/metrics from evaluation: or architecture/task.
-
-    ``evaluation.metrics`` may be a single name or a list; every entry runs and
-    the results are merged (the harness rejects two plugins claiming the same
-    metric key). A list is no longer silently truncated to its first entry.
-    """
-    ev = md.evaluation or {}
-    predictor = ev.get("predictor")
-    validator = ev.get("validator")
-    metrics = ev.get("metrics")
-    if isinstance(metrics, list) and not metrics:
-        metrics = None
-
-    arch = normalize_architecture(md.architecture)
-    if predictor is None:
-        if arch in PREDICTORS.names() or PREDICTORS.get(md.architecture):
-            predictor = md.architecture if PREDICTORS.get(md.architecture) else arch
-        elif arch == "multi_head_classifier":
-            predictor = "multi_head_classifier"
-        elif arch == "seq2seq":
-            predictor = "seq2seq"
-        elif arch == "causal_sft":
-            predictor = "causal_sft"
-
-    # validator / metrics come from evaluation: (or model plugins); no
-    # hardcoded task-name fallbacks in core.
-    return predictor, validator, metrics
 
 
 def _clone_model_def(md):

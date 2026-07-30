@@ -160,3 +160,39 @@ dataset:
             filenames=("node_contracts.json",),
         )
     assert not isinstance(excinfo.value, DeclaredAssetMissing)
+
+
+def test_default_eval_keys_keeps_every_metrics_entry(tmp_path: Path) -> None:
+    """evaluation.metrics may be a list and every entry runs. A duplicated copy
+    in scripts/evaluate_all.py truncated it to metrics[0], so the sweep silently
+    reported only the first plugin's metrics."""
+    from maatml.evaluation.harness import default_eval_keys
+
+    mdir = tmp_path / "model"
+    mdir.mkdir(parents=True)
+    (mdir / "model.yml").write_text(
+        """name: multi
+model_id: multi
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  seed_samples: seeds.jsonl
+evaluation:
+  metrics: [alpha, beta]
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    _predictor, _validator, metrics = default_eval_keys(md)
+    assert metrics == ["alpha", "beta"], "metrics list was truncated"
+
+
+def test_only_one_default_eval_keys_implementation() -> None:
+    """Regression guard: the helper lived in both cli.py (dead) and
+    scripts/evaluate_all.py (live and stale), and the two had drifted."""
+    import pathlib
+
+    assert "_default_eval_keys" not in pathlib.Path("src/maatml/cli.py").read_text()
+    script = pathlib.Path("scripts/evaluate_all.py").read_text()
+    assert "def _default_eval_keys" not in script
+    assert "default_eval_keys(md)" in script
