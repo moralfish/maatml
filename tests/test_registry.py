@@ -248,3 +248,54 @@ def test_same_named_model_folders_get_distinct_plugin_modules(tmp_path) -> None:
 
     assert VALIDATORS.get("v_alpha") is not None
     assert VALIDATORS.get("v_beta") is not None
+
+
+def test_colliding_plugin_names_warn_but_reloads_stay_silent() -> None:
+    """Two different plugins claiming one name is a silent overwrite: the later
+    wins and the earlier becomes unreachable. Re-binding the same plugin (a
+    module reload, or the same folder loaded from another path) is not."""
+    import warnings
+
+    from maatml.registry import METRICS
+
+    def _a():  # pragma: no cover - identity only
+        return None
+
+    def _b():  # pragma: no cover - identity only
+        return None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        METRICS.register("collide_me", _a, source="decorator:pkg_one.metrics:collide_me")
+        METRICS.register("collide_me", _b, source="decorator:pkg_two.metrics:collide_me")
+    assert len(caught) == 1
+    assert "re-registered" in str(caught[0].message)
+    assert METRICS.get("collide_me") is _b, "the later registration wins"
+
+    # Same plugin module, different model-folder namespaces: a reload, not a
+    # collision, so it must not warn.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        METRICS.register(
+            "reload_me", _a, source="decorator:maatml._model_plugins.m_aaaa1111.p:reload_me"
+        )
+        METRICS.register(
+            "reload_me", _b, source="decorator:maatml._model_plugins.m_bbbb2222.p:reload_me"
+        )
+    assert caught == [], [str(w.message) for w in caught]
+
+
+def test_both_example_onnx_exporters_stay_reachable() -> None:
+    """`onnx` resolves to whichever example loaded last, so each also registers
+    a namespaced alias that survives loading both in one process."""
+    from pathlib import Path
+
+    from maatml.registry import EXPORTERS, discover_plugins, load_model_plugins
+
+    discover_plugins()
+    load_model_plugins(Path("examples/vision"), ["vision_plugin"])
+    load_model_plugins(Path("examples/jcl-validator"), ["jcl_plugin"])
+
+    names = EXPORTERS.names()
+    assert "vision_onnx" in names and "jcl_onnx" in names
+    assert EXPORTERS.get("vision_onnx") is not EXPORTERS.get("jcl_onnx")

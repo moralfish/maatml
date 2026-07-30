@@ -30,7 +30,7 @@ from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, wr
 from .load import from_pretrained_kwargs
 from .schedule import precision_flags, total_training_steps
 from .schedule import warmup_steps as resolve_warmup_steps
-from .sft_config import validate_precision
+from .sft_config import reject_unknown_training_keys, validate_precision
 
 _PATH_TOKEN = re.compile(r"([^[.\]]+)|\[(\d+)\]")
 
@@ -250,6 +250,17 @@ def _line_start_offset(text: str, line_no: int) -> int:
     return len(text)
 
 
+# Every `training:` key this architecture reads, here, in parse_heads, and in
+# the trainer body.
+_MULTI_HEAD_KEYS = frozenset({
+    "model_id", "max_input_tokens", "batch_size", "grad_accum", "learning_rate",
+    "epochs", "weight_decay", "warmup_ratio", "seed", "precision",
+    "grad_checkpointing", "eval_steps", "save_steps", "logging_steps",
+    "max_steps", "attn_implementation", "dataloader_workers", "model_revision",
+    "heads", "head_loss_weights", "embedding_strategy", "report_to",
+})
+
+
 @dataclass
 class MultiHeadConfig:
     model_id: str = "answerdotai/ModernBERT-base"
@@ -274,6 +285,7 @@ class MultiHeadConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "MultiHeadConfig":
+        reject_unknown_training_keys(d, _MULTI_HEAD_KEYS, architecture="multi_head")
         return cls(
             model_id=d.get("model_id", "answerdotai/ModernBERT-base"),
             max_input_tokens=int(d.get("max_input_tokens", 2048)),

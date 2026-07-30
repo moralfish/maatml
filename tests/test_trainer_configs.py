@@ -238,3 +238,37 @@ def test_dpo_and_orpo_share_one_config_body() -> None:
     # Both methods must still be reachable.
     assert "DPOConfig as PreferenceConfig" in src
     assert "ORPOConfig as PreferenceConfig" in src
+
+
+def test_seq2seq_and_multi_head_reject_unknown_training_keys() -> None:
+    """Parity with the pydantic configs' extra="forbid". These two build
+    themselves with d.get(...), so a typo silently trained at the built-in
+    default while the run still looked fresh."""
+    from maatml.training.multi_head import MultiHeadConfig
+    from maatml.training.seq2seq import Seq2SeqConfig
+
+    with pytest.raises(ValueError, match="learning_rat"):
+        Seq2SeqConfig.from_dict({"learning_rat": 3e-5})
+    with pytest.raises(ValueError, match="learning_rat"):
+        MultiHeadConfig.from_dict({"learning_rat": 3e-5, "heads": [{"name": "x"}]})
+
+    # Correct spelling still parses.
+    assert Seq2SeqConfig.from_dict({"learning_rate": 3e-5}).learning_rate == 3e-5
+
+
+def test_shipped_example_configs_survive_the_strict_key_check() -> None:
+    """The key sets are hand-maintained, so pin them against the real models:
+    a missing entry would reject a config that is actually valid."""
+    from maatml.config import load_model_def
+    from maatml.training.multi_head import MultiHeadConfig
+    from maatml.training.seq2seq import Seq2SeqConfig
+
+    for name, cls in (
+        ("spool-interpreter", Seq2SeqConfig),
+        ("vision-describer", Seq2SeqConfig),
+        ("jcl-validator", MultiHeadConfig),
+    ):
+        md = load_model_def(f"examples/{name}")
+        cls.from_dict(dict(md.training))
+        # smoke maps base_model -> model_id and drops smoke-only keys.
+        cls.from_dict(md.merged_smoke())

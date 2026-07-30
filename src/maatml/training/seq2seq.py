@@ -26,13 +26,24 @@ from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, wr
 from .load import from_pretrained_kwargs
 from .schedule import precision_flags, total_training_steps
 from .schedule import warmup_steps as resolve_warmup_steps
-from .sft_config import validate_precision
+from .sft_config import reject_unknown_training_keys, validate_precision
 
 
 @dataclass
 class GenerationCfg:
     num_beams: int = 1
     max_new_tokens: int = 512
+
+
+# Every `training:` key this architecture reads, here and in the trainer body.
+_SEQ2SEQ_KEYS = frozenset({
+    "model_id", "source_max_len", "target_max_len", "batch_size", "grad_accum",
+    "learning_rate", "epochs", "weight_decay", "warmup_ratio", "seed",
+    "precision", "grad_checkpointing", "eval_steps", "save_steps",
+    "logging_steps", "max_steps", "generation", "attn_implementation",
+    "dataloader_workers", "model_revision", "embedding_strategy", "report_to",
+    "group_by_length",
+})
 
 
 @dataclass
@@ -60,6 +71,7 @@ class Seq2SeqConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Seq2SeqConfig":
+        reject_unknown_training_keys(d, _SEQ2SEQ_KEYS, architecture="seq2seq")
         gen = d.get("generation") or {}
         return cls(
             model_id=d.get("model_id", "google/flan-t5-base"),

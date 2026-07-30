@@ -112,6 +112,11 @@ def _copy_sidecars(model_def: ModelDefinition, out_dir: Path) -> list[Path]:
     return copied
 
 
+# Registered twice on purpose. "onnx" is the name the docs and this example's
+# README use, and it is unambiguous whenever one model folder is loaded. The
+# namespaced alias stays reachable in a process that loads several examples at
+# once, where a bare "onnx" resolves to whichever plugin loaded last.
+@register_exporter("vision_onnx")
 @register_exporter("onnx")
 def export_onnx(
     model_def: ModelDefinition,

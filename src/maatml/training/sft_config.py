@@ -13,6 +13,25 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 VALID_PRECISIONS = ("bf16", "fp16", "fp32")
 
 
+def reject_unknown_training_keys(
+    training: dict, known: frozenset[str], *, architecture: str
+) -> None:
+    """Fail on a ``training:`` key this architecture does not read.
+
+    The pydantic configs get this from ``extra="forbid"``; the dataclass ones
+    build themselves with ``d.get(...)``, which silently ignores a typo. The
+    run then trains at the built-in default and reports success, and because
+    ``training_config`` is hashed into the lifecycle fingerprint the typo'd key
+    still makes the run look legitimately fresh.
+    """
+    unknown = sorted(set(training) - known)
+    if unknown:
+        raise ValueError(
+            f"Unknown training key(s) for {architecture}: {', '.join(unknown)}. "
+            f"Known: {', '.join(sorted(known))}."
+        )
+
+
 def validate_precision(value: Any) -> str:
     """Return ``value`` if it is a supported precision, else raise."""
     text = str(value)

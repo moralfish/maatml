@@ -13,6 +13,7 @@ import importlib.util
 import os
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, TypeVar
@@ -29,6 +30,22 @@ class PluginEntry:
     source: str  # e.g. "decorator:maatml.training.sft_base" or "entry_point:..."
 
 
+_MODEL_PLUGIN_NS_RX = re.compile(r"maatml\._model_plugins\.[^.]+\.")
+
+
+def _comparable_source(source: str) -> str:
+    """Source string with the per-folder plugin namespace removed.
+
+    The namespace encodes the model folder's resolved path, so the same plugin
+    loaded from two locations (a copy under tmp_path, or a folder loaded both
+    directly and by path) has two source strings for identical code. Comparing
+    raw sources reported those as collisions. What matters is the plugin module
+    itself: ``vision_plugin.export_onnx`` and ``jcl_plugin.export_onnx`` are two
+    implementations claiming one name, and stay distinguishable here.
+    """
+    return _MODEL_PLUGIN_NS_RX.sub("", source)
+
+
 class _Registry:
     def __init__(self, kind: str) -> None:
         self.kind = kind
@@ -38,7 +55,21 @@ class _Registry:
         self, name: str, obj: Any, *, source: str = "unknown"
     ) -> Any:
         # Allow overwrite so discover_plugins(force=True) / module reload can
-        # re-bind the same plugin name after a registry wipe.
+        # re-bind the same plugin name after a registry wipe. Re-binding from
+        # the same source is that case and stays silent; a *different* source
+        # claiming the name is two plugins colliding, where the later one wins
+        # and the earlier one becomes unreachable under that name.
+        existing = self._entries.get(name)
+        if existing is not None and _comparable_source(existing.source) != _comparable_source(
+            source
+        ):
+            warnings.warn(
+                f"{self.kind} plugin {name!r} re-registered by {source}, "
+                f"replacing {existing.source}. The later registration wins; "
+                "give them distinct names if both are meant to coexist.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
         self._entries[name] = PluginEntry(name=name, obj=obj, source=source)
         return obj
 

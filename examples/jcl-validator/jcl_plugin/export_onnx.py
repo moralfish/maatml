@@ -74,6 +74,10 @@ def build_serving_config(
     }
 
 
+# Registered twice on purpose: see the note in examples/vision. "onnx" serves
+# this folder on its own; "jcl_onnx" stays reachable when several examples are
+# loaded in one process.
+@register_exporter("jcl_onnx")
 @register_exporter("onnx")
 def export_onnx(
     model_def: ModelDefinition,
