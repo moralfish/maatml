@@ -7,9 +7,11 @@ Plugins can come from:
 """
 from __future__ import annotations
 
+import hashlib
 import importlib
 import importlib.util
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -291,6 +293,7 @@ def load_model_plugins(
     """
     model_dir = Path(model_dir).resolve()
     loaded: list[str] = []
+    namespace = _model_plugin_namespace(model_dir)
     for entry in plugin_list or []:
         entry = entry.strip()
         if not entry:
@@ -300,13 +303,13 @@ def load_model_plugins(
             if not path.is_absolute():
                 path = (model_dir / entry).resolve()
             if path.is_dir():
-                mod_name = f"maatml._model_plugins.{model_dir.name}.{path.name}"
+                mod_name = f"maatml._model_plugins.{namespace}.{path.name}"
                 if force or not _already_loaded(mod_name, path):
                     _load_package_from_dir(path, mod_name)
                     _loaded_model_plugins[mod_name] = str(path)
                 loaded.append(mod_name)
             elif path.is_file():
-                mod_name = f"maatml._model_plugins.{model_dir.name}.{path.stem}"
+                mod_name = f"maatml._model_plugins.{namespace}.{path.stem}"
                 if force or not _already_loaded(mod_name, path):
                     _load_module_from_path(path, mod_name)
                     _loaded_model_plugins[mod_name] = str(path)
@@ -320,6 +323,20 @@ def load_model_plugins(
                 importlib.import_module(entry)
             loaded.append(entry)
     return loaded
+
+
+def _model_plugin_namespace(model_dir: Path) -> str:
+    """Module namespace for a model folder, unique per resolved path.
+
+    Keyed on the basename alone, two folders of the same name (``~/models/triage``
+    and ``./examples/triage`` is a normal layout) shared one module name, so
+    loading the second replaced the first in ``sys.modules`` and the registry
+    kept whichever ran last. Folding the resolved path into the name keeps them
+    distinct while staying stable across runs.
+    """
+    digest = hashlib.sha256(str(model_dir.resolve()).encode("utf-8")).hexdigest()[:8]
+    safe = re.sub(r"\W+", "_", model_dir.name).strip("_") or "model"
+    return f"{safe}_{digest}"
 
 
 def _already_loaded(mod_name: str, path: Path) -> bool:

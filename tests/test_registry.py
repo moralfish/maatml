@@ -201,3 +201,50 @@ def test_bare_directory_name_next_to_the_model_is_a_path(tmp_path: Path) -> None
     (tmp_path / "sibling_plugin").mkdir()
     assert looks_like_plugin_path("sibling_plugin", tmp_path)
     assert not looks_like_plugin_path("sibling_plugin", tmp_path / "elsewhere")
+
+
+def test_same_named_model_folders_get_distinct_plugin_modules(tmp_path) -> None:
+    """Two model folders with the same basename must not share a module name.
+
+    Keyed on the basename alone they collided in sys.modules, so loading the
+    second replaced the first and the registry kept whichever ran last.
+    """
+    import sys
+
+    from maatml.registry import load_model_plugins
+
+    def _make(root: str, marker: str):
+        mdir = tmp_path / root / "triage"
+        pkg = mdir / "triage_plugin"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(
+            "from maatml.registry import register_validator\n"
+            "from maatml.validation.base import ValidationResult\n"
+            f"MARKER = {marker!r}\n"
+            f"@register_validator('v_{marker}')\n"
+            "def _v(raw, **kw):\n"
+            "    return ValidationResult(raw_output=raw, n_layers=1, required_layers=set())\n",
+            encoding="utf-8",
+        )
+        (mdir / "model.yml").write_text(
+            "name: triage\nmodel_id: triage\narchitecture: causal_sft\n"
+            "version: 0.1.0\nplugins: [triage_plugin]\n"
+            "dataset:\n  seed_samples: seeds.jsonl\n",
+            encoding="utf-8",
+        )
+        return mdir
+
+    a = _make("a", "alpha")
+    b = _make("b", "beta")
+
+    mods_a = load_model_plugins(a, ["triage_plugin"])
+    mods_b = load_model_plugins(b, ["triage_plugin"])
+
+    assert mods_a != mods_b, "same-named folders produced the same module name"
+    assert sys.modules[mods_a[0]].MARKER == "alpha"
+    assert sys.modules[mods_b[0]].MARKER == "beta"
+    # Both plugins' registrations survive, rather than the last one winning.
+    from maatml.registry import VALIDATORS
+
+    assert VALIDATORS.get("v_alpha") is not None
+    assert VALIDATORS.get("v_beta") is not None
