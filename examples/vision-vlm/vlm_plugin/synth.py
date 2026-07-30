@@ -199,9 +199,9 @@ def make_scene_spec(index: int, *, base_seed: int = 0, size: int = 320) -> Scene
     seed = _stable_seed(base_seed, index, "scene")
     rng = _rng(seed)
     scene = SCENE_LABELS[index % len(SCENE_LABELS)]
-    # Mix scene labels within each family so group-aware splits don't
-    # quarantine an entire class into train or test.
-    family = f"batch_{index // 10}"
+    # Split group key. Each scene is generated independently from its own
+    # seed, so there are no near-duplicates to keep together.
+    family = f"scene_{index:06d}"
     n_shapes = rng.randint(0, 3)
     shapes: list[dict[str, Any]] = []
     for i in range(n_shapes):

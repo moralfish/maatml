@@ -50,7 +50,8 @@ def resolve_export_format(
     """Pick export format; enforce architecture constraints.
 
     Known formats come from the ``EXPORTERS`` registry (built-ins + plugins).
-    ``gguf`` / ``mlx`` remain gated to causal / preference architectures.
+    ``gguf`` stays gated to causal / preference architectures; ``mlx`` also
+    accepts seq2seq (served as a direct-load bundle, no mlx_lm conversion).
     """
     arch = normalize_architecture(architecture)
     if requested is None or requested == "auto":
@@ -63,10 +64,15 @@ def resolve_export_format(
             f"Unknown export format {requested!r}; known: {', '.join(sorted(known))}"
         )
 
-    if fmt in ("gguf", "mlx") and arch not in ("causal_sft", "dpo", "orpo"):
+    if fmt == "gguf" and arch not in ("causal_sft", "dpo", "orpo"):
         raise ValueError(
             f"Format {fmt!r} is only supported for causal / preference architectures; "
             f"architecture={architecture!r} must use safetensors"
+        )
+    if fmt == "mlx" and arch not in ("causal_sft", "dpo", "orpo", "seq2seq"):
+        raise ValueError(
+            f"Format {fmt!r} is only supported for causal / preference / seq2seq "
+            f"architectures; architecture={architecture!r} must use safetensors"
         )
     return fmt
 

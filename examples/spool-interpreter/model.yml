@@ -1,7 +1,13 @@
 # Spool Interpreter — flan-t5-base seq2seq that turns sanitised z/OS
 # spool output into a structured SpoolInterpretation JSON:
-# { summary, status, returnCode, rootCause, suggestedFix, explanation,
-#   relatedDocs, failureCategory, confidence }.
+# { summary, status, returnCode, rootCause, suggestedFix,
+#   failureCategory, confidence }.
+#
+# Corpus: real JES2 job output captured from MVS 3.8j under Hercules
+# (public-domain OS, public container). Gold labels are extracted from the
+# system's own messages; every seed row passes the 7-layer validator.
+# scripts/build_seeds.py generates the LEGACY synthetic corpus and will
+# overwrite this one; do not run it casually.
 #
 # Task: spool_interpretation
 # Architecture: seq2seq (encoder-decoder, full fine-tune)
@@ -24,7 +30,9 @@ data:
   seed_samples: datasets/samples/seed_samples.jsonl
   benchmark_samples: datasets/samples/test_prompt_set.jsonl
   raw_field: request
-  split_ratios: [0.8, 0.1, 0.1]
+  # 17 capture families cannot fill three hash splits; the
+  # benchmark set (pinned to test) is the whole test split.
+  split_ratios: [0.85, 0.15, 0.0]
 
 dataset:
   format: jsonl_seed
@@ -40,8 +48,6 @@ dataset:
     - returnCode
     - rootCause
     - suggestedFix
-    - explanation
-    - relatedDocs
     - failureCategory
     - confidence
 
@@ -53,15 +59,27 @@ evaluation:
   # output loses its outer braces. Re-adding them is opt-in and counted in the
   # report's extras (brace_repairs), so the pass rate stays a measurement.
   repair_braces: true
-  # Enforced contract for `maatml evaluate --gate`
+  # Enforced contract for `maatml evaluate --gate`. Measured on flan-t5-base,
+  # 924 train rows, n=182. Wilson 95% lower bound of each measured rate, taken
+  # over the rows the metric applies to: the two conditional metrics use the 176
+  # non-completed rows and 177 rows carrying a gold category. Regression floors,
+  # not quality targets. Nothing is gated at 1.0 because this model generates
+  # free text, so every layer can fail. failure_category_accuracy is the weak one.
+  # Wilson 95% lower bounds from the captured-corpus benchmark eval
+  # (run 20260726-193444-5b02ea, n=592: TK5 capture with decorrelated
+  # jobnames and the message-dataset reader view; category subset n=401).
+  # Earlier corpora leaked the class through the jobname and buried the
+  # step verdict beyond the encoder budget; both fixed in this capture.
   gates:
-    json_parse_rate: 0.95
-    schema_conformance_rate: 0.90
-    status_accuracy: 0.90
-    failure_category_accuracy: 0.80
-    return_code_accuracy: 0.85
-    explanation_present_rate: 0.95
-    related_docs_coverage_rate: 0.90
+    json_parse_rate: 0.99            # measured 1.000 (592/592)
+    consistency_rate: 0.99           # measured 1.000 (592/592, layer 6)
+    status_accuracy: 0.99            # measured 1.000 (592/592)
+    remediation_validity_rate: 0.99  # measured 1.000 (592/592, layer 7)
+    suggested_fix_present_rate: 0.99  # measured 1.000 (401/401)
+    schema_conformance_rate: 0.99    # measured 1.000 (592/592)
+    all_layers_pass_rate: 0.99       # measured 1.000 (592/592)
+    return_code_accuracy: 0.99       # measured 1.000 (592/592)
+    failure_category_accuracy: 0.99  # measured 1.000 (401/401)
 
 training:
   model_id: google/flan-t5-base
@@ -76,8 +94,9 @@ training:
   seed: 7331
   precision: bf16
   grad_checkpointing: false
-  # flan-t5 tokenizer/model vocab can disagree across transformers versions.
-  embedding_strategy: resize
+  # flan-t5 ships an untied lm_head; shrinking the vocab discards it. The
+  # tokenizer (32100) already fits the embedding matrix (32128), so reuse.
+  embedding_strategy: reuse
   eval_steps: 9999
   save_steps: 250
   logging_steps: 25
@@ -97,7 +116,7 @@ smoke:
   warmup_ratio: 0.0
   precision: bf16
   grad_checkpointing: false
-  embedding_strategy: resize
+  embedding_strategy: reuse
   eval_steps: 9999
   save_steps: 9999
   logging_steps: 2

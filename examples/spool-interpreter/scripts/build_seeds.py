@@ -1,5 +1,9 @@
 """Build the Spool Interpreter seed corpus deterministically.
 
+LEGACY GENERATOR. The committed corpus is real captured system output;
+running this script overwrites it with synthetic templates. Keep it for
+reference and for bootstrapping a fresh corpus only.
+
 Produces a balanced corpus across the categories defined in
 `datasets/node_contracts.json` under this example folder.
 
@@ -19,6 +23,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -68,6 +73,15 @@ def _hash(*parts: object) -> str:
     return h[:8]
 
 
+_JOB_RX = re.compile(r"\$HASP373\s+(\S+)")
+
+
+def _job_name(request: str) -> str:
+    """Job name from the JES2 header, used as part of the split group key."""
+    m = _JOB_RX.search(request or "")
+    return m.group(1) if m else "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Per-category builders. Each returns (request, expected_interpretation).
 # ---------------------------------------------------------------------------
@@ -92,7 +106,7 @@ def build_completed(rng: random.Random) -> tuple[str, dict]:
         "status": "completed",
         "returnCode": rc,
         "rootCause": "Step finished within expected return-code envelope; no failure observed.",
-        "suggestedFix": "No action required.",
+        "suggestedFix": None,
         "failureCategory": None if rc in RC_OK else "other",
         "confidence": round(rng.uniform(0.92, 0.98), 2),
     }
@@ -407,53 +421,6 @@ CATEGORY_BUILDERS = {
 }
 
 
-def _enrich_interp_fields(
-    rng: random.Random,
-    category: str,
-    interp: dict,
-    related_docs_catalog: dict[str, list[str]],
-) -> None:
-    """Stamp `explanation` and `relatedDocs` onto an interp record in place.
-
-    Narrative is composed deterministically from fields already present
-    on the interp so it stays faithful to the synthetic spool: a 2-3
-    sentence walkthrough that opens with status/step, recaps the root
-    cause, and closes with the operator-facing fix. This avoids needing
-    a separate template per category (13 builders + maintenance burden).
-    """
-    summary = interp.get("summary", "")
-    root = interp.get("rootCause", "")
-    fix = interp.get("suggestedFix", "")
-    status = interp.get("status", "completed")
-
-    if status == "completed":
-        interp["explanation"] = (
-            f"Execution completed under the expected return-code envelope. "
-            f"{summary} No remediation is required; downstream steps may "
-            f"proceed."
-        )
-    else:
-        # 2-3 sentence narrative: situation → cause → fix.
-        opener = rng.choice([
-            "The job entered execution and progressed until the failure surfaced.",
-            "Execution started normally and ran up to the point of failure.",
-            "The step began processing and then halted on the condition described below.",
-        ])
-        interp["explanation"] = (
-            f"{opener} {root} {fix}"
-        )
-
-    pool = related_docs_catalog.get(category, [])
-    if not pool:
-        interp["relatedDocs"] = []
-    else:
-        # Pick 1-3 doc keys per sample for stable training signal.
-        k = min(len(pool), rng.randint(1, 3))
-        interp["relatedDocs"] = rng.sample(pool, k)
-
-
-# Quotas tuned so common production failures dominate and `completed`
-# baselines are heavy enough to teach the "no failureCategory needed" pattern.
 DEFAULT_QUOTAS: dict[str, int] = {
     "completed": 90,
     "dataset_resolution_failure": 50,
@@ -487,19 +454,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260510)
     parser.add_argument("--append", action="store_true")
     parser.add_argument("--out", default=str(SEEDS_PATH))
+    parser.add_argument("--benchmark-n", type=int, default=60)
+    parser.add_argument("--benchmark-out", default=str(DATASETS / "samples" / "test_prompt_set.jsonl"))
     args = parser.parse_args(argv)
 
     rng = random.Random(args.seed)
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    contracts = json.loads(CONTRACTS_PATH.read_text(encoding="utf-8"))
-    related_docs_catalog = contracts.get("related_docs_catalog", {})
-    if not related_docs_catalog:
-        print(
-            "warning: related_docs_catalog not found in node_contracts.json; "
-            "relatedDocs will be empty for every sample"
-        )
 
     existing_rows: list[dict] = []
     if args.append and out_path.exists():
@@ -539,11 +500,12 @@ def main(argv: list[str] | None = None) -> int:
             sid = f"syn-{category}-{_hash(category, idx, args.seed)}"
             if sid in seen_ids:
                 continue
-            _enrich_interp_fields(rng, category, interp, related_docs_catalog)
             sample = {
                 "sample_id": sid,
                 "source": "synthetic:template",
-                "family": f"spool:{category}",
+                # Split group key: category plus job archetype is the
+                # near-duplicate unit. Category alone gives only 9 groups.
+                "family": f"spool:{category}:{_job_name(request)}",
                 "category": category,
                 "request": request,
                 "expected_interpretation": interp,
@@ -569,7 +531,39 @@ def main(argv: list[str] | None = None) -> int:
         f"(new={len(accepted)} kept_existing={len(existing_rows) if args.append else 0} "
         f"rejected_during_gen={rejected})"
     )
+
+    if args.benchmark_n > 0:
+        bench = _build_benchmark(random.Random(args.seed + 1), args.benchmark_n)
+        bench_path = Path(args.benchmark_out)
+        bench_path.parent.mkdir(parents=True, exist_ok=True)
+        with bench_path.open("w", encoding="utf-8") as f:
+            for row in bench:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(f"wrote {len(bench)} benchmark rows to {bench_path}")
     return 0
+
+
+def _build_benchmark(rng: random.Random, n: int) -> list[dict]:
+    """Held-out rows pinned to test, in their own family namespace."""
+    categories = list(DEFAULT_QUOTAS)
+    rows: list[dict] = []
+    idx = 0
+    while len(rows) < n:
+        idx += 1
+        category = categories[idx % len(categories)]
+        request, interp = CATEGORY_BUILDERS[category](rng)
+        sample = {
+            "sample_id": f"bench-{category}-{_hash(category, idx, 'bench')}",
+            "source": "builder:benchmark",
+            "family": f"bench:{category}:{_job_name(request)}",
+            "category": category,
+            "request": request,
+            "expected_interpretation": interp,
+        }
+        ok, _ = _validate(sample)
+        if ok:
+            rows.append(sample)
+    return rows
 
 
 if __name__ == "__main__":

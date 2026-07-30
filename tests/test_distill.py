@@ -277,3 +277,54 @@ def test_triage_distill_replays_offline_from_the_shipped_cache(tmp_path, monkeyp
     assert "platform" not in teams
     for row in rows:
         assert row["provenance"]["teacher_model"] == "recorded-teacher"
+
+
+# --- request params and cache durability -----------------------------------
+
+
+def test_request_params_reach_the_teacher_call(tmp_path, teacher, monkeypatch) -> None:
+    """distill.request_params is merged into the chat payload; timeout goes to
+    the client constructor instead."""
+    seen: dict = {}
+
+    class _Recording(_FakeTeacher):
+        def __init__(self, *args, **kwargs):
+            seen["client_kwargs"] = kwargs
+            super().__init__(*args, **kwargs)
+
+        def chat_completions(self, messages, **kwargs):
+            seen["request_kwargs"] = kwargs
+            return super().chat_completions(messages, **kwargs)
+
+    monkeypatch.setattr(distill_mod, "TeacherClient", _Recording)
+    md = _model(tmp_path, distill_section={
+        "prompt_source": "datasets/prompts.jsonl",
+        "teacher_model": "fake",
+        "teacher_revision": "v1",
+        "cache": "datasets/cache.jsonl",
+        "request_params": {
+            "timeout": 300,
+            "max_tokens": 4096,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+    })
+    run_distill(md, append=False, out_path=str(tmp_path / "out.jsonl"))
+
+    assert seen["client_kwargs"] == {"model": "fake", "timeout": 300.0}
+    assert seen["request_kwargs"] == {
+        "max_tokens": 4096,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
+def test_cache_flushes_incrementally(tmp_path) -> None:
+    """A crash mid-run must not lose every teacher response: the cache hits
+    disk every FLUSH_EVERY puts, not only at the final flush."""
+    cache = TeacherCache(tmp_path / "cache.jsonl")
+    for index in range(TeacherCache.FLUSH_EVERY):
+        cache.put(f"k{index}", "v")
+    on_disk = list(iter_jsonl(tmp_path / "cache.jsonl"))
+    assert len(on_disk) == TeacherCache.FLUSH_EVERY
+    # A rewritten identical value stays clean: no dirty flag, no rewrite.
+    cache.put("k0", "v")
+    assert cache._dirty is False

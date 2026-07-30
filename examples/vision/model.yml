@@ -33,10 +33,14 @@ evaluation:
   validator: vision_scene
   metrics: vision_scene
   predictor: vision_multitask
+  # Measured on MobileNetV3-Large, 285 train rows, n=150. Proportions use the
+  # Wilson 95% lower bound; map_50 and pck_0_2 are means of per-image scores, so
+  # they take a 15% relative margin instead. Detection and pose are weak.
   gates:
-    scene_accuracy: 0.85
-    map_50: 0.15
-    pck_0_2: 0.15
+    scene_accuracy: 0.97        # measured 1.000
+    all_layers_pass_rate: 0.97  # measured 1.000
+    map_50: 0.18                # measured 0.213
+    pck_0_2: 0.33               # measured 0.389
 
 training:
   image_size: 320

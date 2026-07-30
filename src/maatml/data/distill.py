@@ -44,6 +44,10 @@ class DistillConfig(BaseModel):
     teacher_model: str = "gpt-4o-mini"
     teacher_revision: str = "unpinned"
     system_prompt: Optional[str] = None
+    # Merged into the chat-completions payload. Reasoning teachers need a
+    # max_tokens above the 1024 default (hidden reasoning spends it before any
+    # content) and template switches like chat_template_kwargs.
+    request_params: dict[str, Any] = Field(default_factory=dict)
     max_prompts: Optional[int] = Field(default=None, gt=0)
     family: str = "distill"
     cache: str = "output/distill/cache.jsonl"
@@ -90,10 +94,17 @@ class TeacherCache:
     def get(self, key: str) -> Optional[str]:
         return self._store.get(key)
 
+    # Flush cadence: a long local-teacher run is hours of paid-for responses,
+    # and an end-only flush loses all of them to one crash.
+    FLUSH_EVERY = 25
+
     def put(self, key: str, response: str) -> None:
         if self._store.get(key) != response:
             self._store[key] = response
             self._dirty = True
+            self._unflushed = getattr(self, "_unflushed", 0) + 1
+            if self._unflushed >= self.FLUSH_EVERY:
+                self.flush()
 
     def flush(self) -> None:
         if not self._dirty:
@@ -101,6 +112,7 @@ class TeacherCache:
         rows = [{"key": k, "response": v} for k, v in sorted(self._store.items())]
         write_jsonl_atomic(self.path, rows)
         self._dirty = False
+        self._unflushed = 0
 
 
 def _prompt_hash(prompt: str) -> str:
@@ -234,13 +246,23 @@ def run_distill(
             continue
         else:
             if teacher is None:
-                teacher = TeacherClient(model=cfg.teacher_model)
+                # `timeout` rides in request_params but belongs to the client:
+                # a local reasoning teacher on long documents routinely needs
+                # more than the 60 s default.
+                params = dict(cfg.request_params)
+                timeout = params.pop("timeout", None)
+                if timeout is not None:
+                    teacher = TeacherClient(model=cfg.teacher_model,
+                                            timeout=float(timeout))
+                else:
+                    teacher = TeacherClient(model=cfg.teacher_model)
             try:
                 response = teacher.chat_completions(
                     [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
-                    ]
+                    ],
+                    **params,
                 )
             except Exception as exc:  # noqa: BLE001  a teacher failure is a rejected row
                 stats["teacher_failures"] += 1

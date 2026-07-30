@@ -1,19 +1,18 @@
 """Out-of-model validator for Spool Interpreter output.
 
-Eight layers, mirroring the JCL validator:
+Seven layers, mirroring the JCL validator:
 
   1. JSON parse: text → dict
   2. JSON schema: matches `SpoolInterpretation` JSON Schema
   3. status enum: status ∈ {completed, failed, abended, skipped, running}
   4. failureCategory enum: failureCategory ∈ FailureCategory enum or null
-  5. Field shape: non-empty summary/rootCause/suggestedFix;
-                                       returnCode is string-or-null
+  5. Field shape: non-empty summary/rootCause; returnCode is string-or-null
   6. Consistency: `status: completed` ⟹ failureCategory ∈ {null, "other"};
                                        confidence ∈ [0, 1]
-  7. Explanation present: non-empty `explanation` when status != "completed"
-  8. relatedDocs shape: array of non-empty strings (possibly empty)
+  7. Remediation: non-empty `suggestedFix` when status != "completed"
 
-Layers 7-8 are new in v2 with the seq2seq rebuild.
+Layers 6 and 7 are the cross-field contracts: each relates two fields to one
+another and neither can be expressed by the schema alone.
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ from maatml.validation.base import (
 SpoolValidationError = ValidationError
 SpoolValidationResultGate = ValidationResult
 
-_SPOOL_LAYERS = frozenset({1, 2, 3, 4, 5, 6, 7, 8})
+_SPOOL_LAYERS = frozenset({1, 2, 3, 4, 5, 6, 7})
 
 
 def validate_spool_result(
@@ -51,7 +50,7 @@ def validate_spool_result(
     result = ValidationResult(
         raw_output=raw_output,
         required_layers=set(_SPOOL_LAYERS),
-        n_layers=8,
+        n_layers=7,
     )
 
     text = strip_model_fences(raw_output) if strip_fences else raw_output.strip()
@@ -175,56 +174,32 @@ def validate_spool_result(
     if layer6_ok:
         result.passed_layers.add(6)
 
-    # Layer 7: explanation present when status != "completed"
-    explanation = result.parsed.get("explanation")
+    # Layer 7: suggestedFix required when status != "completed"
     if status == "completed":
-        if explanation is None or (isinstance(explanation, str)):
+        if suggested_fix is None or isinstance(suggested_fix, str):
             result.passed_layers.add(7)
         else:
             result.errors.append(
                 ValidationError(
                     layer=7,
-                    code="invalid_explanation_type",
-                    message=f"explanation must be string or null; got {type(explanation).__name__}",
-                    location="explanation",
-                )
-            )
-    else:
-        if isinstance(explanation, str) and explanation.strip():
-            result.passed_layers.add(7)
-        else:
-            result.errors.append(
-                ValidationError(
-                    layer=7,
-                    code="missing_explanation",
+                    code="invalid_suggested_fix_type",
                     message=(
-                        f"explanation must be a non-empty string when status={status!r}"
+                        f"suggestedFix must be string or null; "
+                        f"got {type(suggested_fix).__name__}"
                     ),
-                    location="explanation",
+                    location="suggestedFix",
                 )
             )
-
-    # Layer 8: relatedDocs shape (array of non-empty strings; empty OK)
-    related_docs = result.parsed.get("relatedDocs", [])
-    if not isinstance(related_docs, list):
-        result.errors.append(
-            ValidationError(
-                layer=8,
-                code="invalid_related_docs_type",
-                message=f"relatedDocs must be a list; got {type(related_docs).__name__}",
-                location="relatedDocs",
-            )
-        )
-    elif any(not isinstance(d, str) or not d.strip() for d in related_docs):
-        result.errors.append(
-            ValidationError(
-                layer=8,
-                code="invalid_related_docs_item",
-                message="relatedDocs entries must be non-empty strings",
-                location="relatedDocs",
-            )
-        )
+    elif isinstance(suggested_fix, str) and suggested_fix.strip():
+        result.passed_layers.add(7)
     else:
-        result.passed_layers.add(8)
+        result.errors.append(
+            ValidationError(
+                layer=7,
+                code="missing_suggested_fix",
+                message=f"suggestedFix must be non-empty when status={status!r}",
+                location="suggestedFix",
+            )
+        )
 
     return result

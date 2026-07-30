@@ -79,8 +79,15 @@ class TeacherClient:
         user_prompt: str,
         *,
         model: Optional[str] = None,
+        request_params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Ask the teacher for a JSON object row; parse and return it."""
+        """Ask the teacher for a JSON object row; parse and return it.
+
+        ``request_params`` is merged into the request payload. Reasoning
+        teachers need it: the default 1024-token budget is spent on hidden
+        reasoning before any content arrives, and switches like
+        ``chat_template_kwargs`` have no other way in.
+        """
         content = self.chat_completions(
             [
                 {"role": "system", "content": system_prompt},
@@ -88,6 +95,7 @@ class TeacherClient:
             ],
             model=model,
             temperature=0.8,
+            **(request_params or {}),
         )
         text = content.strip()
         if text.startswith("```"):

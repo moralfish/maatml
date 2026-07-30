@@ -176,4 +176,111 @@ def ensure_tokenizer_model_contract(
 
     # resize / reinit
     if hasattr(model, "resize_token_embeddings"):
+        _refuse_resize_that_discards_output_head(model, tok_size, model_vocab)
         model.resize_token_embeddings(tok_size)
+        realign_special_token_ids(model, tokenizer, tok_size)
+
+
+def _has_untied_output_head(model: Any) -> bool:
+    """Does the model carry an output projection separate from its embeddings?"""
+    get_out = getattr(model, "get_output_embeddings", None)
+    get_in = getattr(model, "get_input_embeddings", None)
+    if not callable(get_out) or not callable(get_in):
+        return False
+    out, inp = get_out(), get_in()
+    if out is None or inp is None:
+        return False
+    out_w, in_w = getattr(out, "weight", None), getattr(inp, "weight", None)
+    if out_w is None or in_w is None:
+        return False
+    return out_w.data_ptr() != in_w.data_ptr()
+
+
+def _refuse_resize_that_discards_output_head(
+    model: Any, tok_size: int, model_vocab: int
+) -> None:
+    """Block a shrink that would throw away a separately trained output head.
+
+    ``resize_token_embeddings`` re-ties the output projection to the input
+    embeddings on models that ship them untied (flan-t5), discarding trained
+    weights and wrecking the logit scale. A shrink is never required anyway: an
+    embedding matrix larger than the tokenizer's vocabulary just has unused
+    rows, which ``reuse`` already permits.
+    """
+    if tok_size >= model_vocab:
+        return
+    if not _has_untied_output_head(model):
+        return
+    raise ValueError(
+        f"embedding_strategy=resize would shrink the vocabulary "
+        f"({model_vocab} -> {tok_size}) on a model whose output head is trained "
+        "separately from its input embeddings. Resizing re-ties the two and "
+        "discards the trained head, which silently destroys the pretrained "
+        "model while training still reports success. The embedding matrix is "
+        "already larger than the tokenizer needs, so set "
+        "training.embedding_strategy: reuse instead."
+    )
+
+
+# Config fields holding a token id that must index into the embedding matrix.
+_SPECIAL_ID_FIELDS = (
+    "pad_token_id",
+    "bos_token_id",
+    "eos_token_id",
+    "cls_token_id",
+    "sep_token_id",
+    "unk_token_id",
+    "mask_token_id",
+    "decoder_start_token_id",
+)
+
+
+def realign_special_token_ids(model: Any, tokenizer: Any, vocab_size: int) -> list[str]:
+    """Point the config's special-token ids at the tokenizer's, post-resize.
+
+    ``resize_token_embeddings`` leaves the config's token ids alone, so after a
+    shrink they can sit outside the embedding matrix. The live model still
+    trains; rebuilding it from that config does not.
+
+    Returns the names of the fields that were changed.
+    """
+    config = getattr(model, "config", None)
+    if config is None:
+        return []
+
+    changed: list[str] = []
+    for field in _SPECIAL_ID_FIELDS:
+        if not hasattr(config, field):
+            continue
+        current = getattr(config, field)
+        if current is None:
+            continue
+        # The tokenizer is the authority on what these ids are now.
+        replacement = getattr(tokenizer, field, None)
+        if not isinstance(replacement, int) or replacement >= vocab_size:
+            replacement = None
+        if isinstance(current, int) and current < vocab_size and replacement is None:
+            continue  # already in range and the tokenizer offers nothing better
+        if replacement == current:
+            continue
+        setattr(config, field, replacement)
+        changed.append(f"{field}: {current} -> {replacement}")
+
+    pad = getattr(config, "pad_token_id", None)
+    if isinstance(pad, int) and pad >= vocab_size:
+        raise ValueError(
+            f"pad_token_id={pad} is outside the resized vocab ({vocab_size}) and "
+            "the tokenizer does not define one. Give the tokenizer a pad token "
+            "before training, or the checkpoint cannot be reloaded."
+        )
+
+    # Generation config carries its own copies and is what generate() reads.
+    gen = getattr(model, "generation_config", None)
+    if gen is not None:
+        for field in ("pad_token_id", "bos_token_id", "eos_token_id", "decoder_start_token_id"):
+            if not hasattr(gen, field):
+                continue
+            value = getattr(gen, field)
+            if isinstance(value, int) and value >= vocab_size:
+                setattr(gen, field, getattr(config, field, None))
+    return changed

@@ -1,5 +1,9 @@
 """Build the JCL Validator seed corpus deterministically.
 
+LEGACY GENERATOR. The committed corpus is real captured system output;
+running this script overwrites it with synthetic templates. Keep it for
+reference and for bootstrapping a fresh corpus only.
+
 Reuses the template + defect-injection primitives in
 `jcl_plugin.generator` to produce a balanced corpus across all eight
 categories (valid + 7 error codes), then gates every sample through the
@@ -95,7 +99,9 @@ def _build_valid_sample(
     return {
         "sample_id": sample_id,
         "source": f"synthetic:{template_id}",
-        "family": template_id,
+        # Split group key: deck skeleton plus category is the near-duplicate
+        # unit. Skeleton alone gives 8 groups, too few to fill three splits.
+        "family": f"{template_id}:valid",
         "category": "valid",
         "request": rendered,
         "expected_validation_result": {
@@ -138,7 +144,8 @@ def _build_error_sample(
     return {
         "sample_id": sample_id,
         "source": f"synthetic:{template_id}",
-        "family": template_id,
+        # Split group key; see _build_valid_sample.
+        "family": f"{template_id}:{category.value}",
         "category": category.value,
         "request": request,
         "expected_validation_result": {

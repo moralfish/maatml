@@ -34,11 +34,15 @@ evaluation:
   validator: vision_vlm
   metrics: vision_vlm
   predictor: vision_vlm
+  # Measured on SmolVLM-256M, 227 train rows, n=121. Rates use the Wilson 95%
+  # lower bound; shape_mention_f1 is a mean score, so it takes a 15% relative
+  # margin. pose_phrase_rate is the weak one.
   gates:
-    scene_mention_rate: 0.5
-    shape_mention_f1: 0.3
-    brevity_rate: 0.8
-    all_layers_pass_rate: 0.7
+    scene_mention_rate: 0.96    # measured 1.000
+    all_layers_pass_rate: 0.96  # measured 1.000
+    brevity_rate: 0.96          # measured 1.000
+    shape_mention_f1: 0.65      # measured 0.768
+    pose_phrase_rate: 0.52      # measured 0.612
 
 training:
   model_id: HuggingFaceTB/SmolVLM-256M-Instruct

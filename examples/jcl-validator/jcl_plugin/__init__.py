@@ -14,6 +14,7 @@ from maatml.registry import (
 )
 
 from .datagen import jcl_generator
+from .export_onnx import export_onnx  # noqa: F401  registers @register_exporter("onnx")
 from .metrics import compute_jcl_metrics
 from .predictor import JclClassifierPredictor
 from .tokenizer import pre_tokenize_jcl
@@ -35,4 +36,5 @@ __all__ = [
     "validate_jcl_result",
     "pre_tokenize_jcl",
     "JclClassifierPredictor",
+    "export_onnx",
 ]

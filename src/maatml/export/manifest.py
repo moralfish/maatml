@@ -20,32 +20,41 @@ def _file_entries(root: Path, files: list[Path]) -> list[dict[str, str]]:
     return entries
 
 
-def read_safetensors_dtypes(path: str | Path) -> list[str]:
-    """Return the dtype of every tensor in a ``.safetensors`` file.
+def _read_safetensors_header(path: str | Path) -> Optional[dict[str, Any]]:
+    """Parse the JSON header of a ``.safetensors`` file, or None on failure.
 
-    Reads only the JSON header (a u64 length prefix + that many header bytes),
-    so it needs neither ``torch`` nor the ``safetensors`` package and works in
-    the CPU-free environment. Returns ``[]`` for anything it cannot parse.
+    Reads only the header (a u64 length prefix + that many header bytes), so
+    it needs neither ``torch`` nor the ``safetensors`` package and works in
+    the CPU-free environment.
     """
     try:
         file_size = Path(path).stat().st_size
         with open(path, "rb") as fh:
             size_bytes = fh.read(8)
             if len(size_bytes) < 8:
-                return []
+                return None
             (header_len,) = struct.unpack("<Q", size_bytes)
             # The header must fit within the file after its 8-byte length
             # prefix. Bounding here keeps a dummy/corrupt file from triggering a
             # multi-gigabyte read (MemoryError) before we can reject it.
             if header_len <= 0 or header_len > file_size - 8:
-                return []
+                return None
             header_bytes = fh.read(header_len)
         if len(header_bytes) < header_len:
-            return []
+            return None
         header = json.loads(header_bytes.decode("utf-8"))
     except (OSError, struct.error, UnicodeDecodeError, json.JSONDecodeError):
-        return []
-    if not isinstance(header, dict):
+        return None
+    return header if isinstance(header, dict) else None
+
+
+def read_safetensors_dtypes(path: str | Path) -> list[str]:
+    """Return the dtype of every tensor in a ``.safetensors`` file.
+
+    Header-only read; returns ``[]`` for anything it cannot parse.
+    """
+    header = _read_safetensors_header(path)
+    if header is None:
         return []
     dtypes: list[str] = []
     for key, spec in header.items():
@@ -54,6 +63,17 @@ def read_safetensors_dtypes(path: str | Path) -> list[str]:
         if isinstance(spec, dict) and isinstance(spec.get("dtype"), str):
             dtypes.append(spec["dtype"])
     return dtypes
+
+
+def read_safetensors_tensor_names(path: str | Path) -> list[str]:
+    """Return every tensor name in a ``.safetensors`` file.
+
+    Header-only read; returns ``[]`` for anything it cannot parse.
+    """
+    header = _read_safetensors_header(path)
+    if header is None:
+        return []
+    return [key for key in header if key != "__metadata__"]
 
 
 def _observed_weights_dtype(files: list[Path]) -> tuple[Optional[str], list[str]]:
