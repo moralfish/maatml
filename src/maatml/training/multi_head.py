@@ -568,7 +568,12 @@ def _train_loop(
             super().__init__(*a, **kw)
             self._last_head_losses: dict[str, float] = {}
 
-        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # num_items_in_batch is named rather than swept into **kwargs so the
+        # override stays signature-compatible with transformers' Trainer. It is
+        # unused here; the multi-head loss is already reduced by the model.
+        def compute_loss(
+            self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs
+        ):
             outputs = model(**inputs)
             loss = outputs["loss"]
             head_losses = outputs.get("head_losses") or {}
@@ -581,7 +586,7 @@ def _train_loop(
             self._last_head_losses = stashed
             return (loss, outputs) if return_outputs else loss
 
-        def log(self, logs: dict[str, float], *args, **kwargs):  # type: ignore[override]
+        def log(self, logs: dict[str, float], *args, **kwargs):
             merged = dict(logs)
             for name, val in self._last_head_losses.items():
                 merged[f"loss_{name}"] = val

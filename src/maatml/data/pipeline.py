@@ -108,7 +108,7 @@ def _resolve_ratios(cfg: dict) -> tuple[float, float, float]:
     ratios = tuple(cfg.get("split_ratios", [0.8, 0.1, 0.1]))
     if len(ratios) != 3 or abs(sum(ratios) - 1.0) > 1e-6:
         raise ValueError(f"split_ratios must sum to 1.0; got {ratios}")
-    return ratios  # type: ignore[return-value]
+    return ratios
 
 
 def _apply_sanitize(row: dict, sanitize_tags: list[str], request_field: str) -> dict:

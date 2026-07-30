@@ -178,7 +178,7 @@ def _caller_source(extra: str = "") -> str:
     frame = inspect.currentframe()
     try:
         # decorator helper -> register_* -> caller module
-        caller = frame.f_back.f_back if frame and frame.f_back else None  # type: ignore[union-attr]
+        caller = frame.f_back.f_back if frame and frame.f_back else None
         mod = caller.f_globals.get("__name__", "unknown") if caller else "unknown"
     finally:
         del frame
@@ -425,7 +425,7 @@ def discover_plugins(*, force: bool = False) -> None:
         if hasattr(eps, "select"):
             selected = eps.select(group="maatml.plugins")
         else:
-            selected = eps["maatml.plugins"]  # type: ignore[index]
+            selected = eps["maatml.plugins"]
     except Exception as exc:  # noqa: BLE001  discovery must not abort CLI startup
         _record_load_error("entry_points:maatml.plugins", exc)
         selected = []

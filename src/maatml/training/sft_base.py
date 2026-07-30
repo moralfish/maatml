@@ -625,7 +625,7 @@ def train_sft(
 
         if "group_by_length" in inspect.signature(TrainingArguments.__init__).parameters:
             args_kwargs["group_by_length"] = bool(cfg.group_by_length)
-        args = TrainingArguments(**args_kwargs)  # type: ignore[call-arg]
+        args = TrainingArguments(**args_kwargs)
 
         trainer = Trainer(
             model=model,

@@ -56,7 +56,9 @@ dev = [
   # Adopting it needs config decisions, tracked separately; without the bound
   # CI lints against whatever ruff released today.
   "ruff>=0.5,<0.16",
-  "mypy>=1.10",
+  # Bounded like ruff above: a major bump changes what the gate reports, and
+  # CI installs whatever resolves on the day. mypy 2.x passes today.
+  "mypy>=1.10,<3",
   "types-PyYAML>=6.0",
 ]
 ml = [
@@ -122,6 +124,26 @@ maatml = ["py.typed"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/*.py[cod]"]
+
+[tool.mypy]
+# There was no [tool.mypy] at all, so the gate ran on defaults: untyped
+# function bodies went unchecked and inert `type: ignore` comments accumulated.
+# Every setting below passes today, verified both with and without the ML stack
+# installed (mypy --python-executable against a torch/transformers venv).
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+
+# Deferred, with reasons:
+#   disallow_untyped_defs  43 errors; worth its own annotation pass
+#   warn_unreachable        2 errors, both false: they are isinstance guards
+#                           over YAML-sourced values that mypy believes are
+#                           already the declared type. Removing them would
+#                           delete real runtime protection.
 
 [tool.ruff]
 line-length = 100

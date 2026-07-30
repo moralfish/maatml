@@ -35,7 +35,7 @@ def _min_match_width(pattern: str) -> Optional[int]:
         try:
             from re import _parser as parser  # type: ignore[attr-defined]
         except ImportError:  # pragma: no cover - Python < 3.11
-            import sre_parse as parser  # type: ignore[no-redef]
+            import sre_parse as parser
         lo, _hi = parser.parse(pattern).getwidth()
         return int(lo)
     except Exception:  # noqa: BLE001  a check we cannot make is not a failure

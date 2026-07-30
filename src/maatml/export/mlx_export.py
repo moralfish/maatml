@@ -152,7 +152,7 @@ def export_mlx(
     export_safetensors_bundle(model_def, checkpoint_dir, out_dir, run_id=run_id)
 
     try:
-        from mlx_lm import convert as mlx_convert  # type: ignore[import-untyped]
+        from mlx_lm import convert as mlx_convert
     except ImportError as exc:
         raise ImportError(_INSTALL_HINT) from exc
 

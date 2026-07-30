@@ -89,7 +89,7 @@ def mint_preference_pairs(
         if callable(candidates) and not isinstance(candidates, (list, tuple)):
             cands = list(candidates(prompt))
         else:
-            cands = list(candidates[i])  # type: ignore[index]
+            cands = list(candidates[i])
         passed: list[str] = []
         failed: list[str] = []
         for completion in cands:

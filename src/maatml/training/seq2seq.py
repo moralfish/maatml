@@ -318,7 +318,7 @@ def _train_loop(
 
     if "group_by_length" in inspect.signature(Seq2SeqTrainingArguments.__init__).parameters:
         args_kwargs["group_by_length"] = bool(group_by_length)
-    args = Seq2SeqTrainingArguments(**args_kwargs)  # type: ignore[call-arg]
+    args = Seq2SeqTrainingArguments(**args_kwargs)
 
     collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
