@@ -29,7 +29,13 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import ModelDefinition, get_dataset_cfg
 from .device import resolve_device
-from .registry import PREDICTORS, VALIDATORS, discover_plugins, load_model_plugins
+from .registry import (
+    PREDICTORS,
+    SANITIZERS,
+    VALIDATORS,
+    discover_plugins,
+    load_model_plugins,
+)
 from .runs import resolve_checkpoint
 from .scaffold import normalize_architecture
 from .utils.io import sha256_bytes
@@ -57,8 +63,9 @@ class CaptureWriter:
     Captured rows are explicitly **not** gold: each carries ``approved: false``
     and ``needs_review: true``, and ``maatml ingest`` refuses to accept a
     captured row until a human (or teacher) has corrected and approved it. The
-    file is size-capped so an unattended server cannot fill the disk, and it
-    only ever holds the sanitized request and the model's own output.
+    file is size-capped so an unattended server cannot fill the disk, and the
+    request is passed through the model's declared ``dataset.sanitize`` tags
+    before it is written.
     """
 
     def __init__(
@@ -68,9 +75,11 @@ class CaptureWriter:
         request_field: str,
         max_rows: int = 10_000,
         max_bytes: int = 32 * 1024 * 1024,
+        sanitizers: Optional[list[Any]] = None,
     ) -> None:
         self.path = Path(path)
         self.request_field = request_field
+        self.sanitizers = list(sanitizers or ())
         self.max_rows = max_rows
         self.max_bytes = max_bytes
         self._rows = 0
@@ -90,8 +99,16 @@ class CaptureWriter:
             if self.capped():
                 return False
             request = row.get(self.request_field)
+            for sanitize in self.sanitizers:
+                if isinstance(request, str):
+                    request = sanitize(request)
+            # Identity is the (request, output) pair. Hashing the output alone
+            # collided across distinct requests, and ingest then dropped the
+            # later ones as "duplicate": exactly the reviewed rows the flywheel
+            # exists to keep.
+            identity = f"{request}\x00{raw}".encode("utf-8")
             entry = {
-                "sample_id": f"capture-{sha256_bytes(raw.encode('utf-8'))[:16]}",
+                "sample_id": f"capture-{sha256_bytes(identity)[:16]}",
                 "source": "serve_capture",
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 self.request_field: request,
@@ -323,7 +340,18 @@ def build_serve_context(
             )
         cfg = get_dataset_cfg(model_def)
         request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
-        capture = CaptureWriter(Path(capture_path), request_field=request_field)
+        # Honour the model's declared sanitizers on the way in. Capture writes
+        # live client traffic to disk, and the shipped JCL and spool models
+        # target z/OS output carrying user IDs and dataset names.
+        sanitize_tags = [
+            str(tag).strip()
+            for tag in (cfg.get("sanitize") or [])
+            if str(tag).strip()
+        ]
+        sanitizers = [SANITIZERS.require(tag) for tag in sanitize_tags]
+        capture = CaptureWriter(
+            Path(capture_path), request_field=request_field, sanitizers=sanitizers
+        )
 
     return ServeContext(
         model_def=model_def,

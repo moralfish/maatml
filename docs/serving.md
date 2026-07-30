@@ -63,9 +63,13 @@ maatml serve examples/support-ticket-triage/ --host 0.0.0.0 --auth-token "$TOKEN
 
 `--capture PATH` appends served predictions to a JSONL for later review. A
 captured row is **not** gold: it carries `approved: false` / `needs_review:
-true`, holds only the sanitized request and the model's own output, and the file
-is row/byte capped so an unattended server cannot fill the disk. Capture
-requires `--auth-token`.
+true`, and the file is row/byte capped so an unattended server cannot fill the
+disk. Capture requires `--auth-token`.
+
+The request is written through the model's declared `dataset.sanitize` tags, so
+a model that sanitizes its corpus sanitizes its captures by the same rules. A
+model that declares no tags captures the request verbatim, which is worth
+knowing before pointing `--capture` at live traffic.
 
 The retrain loop is deliberate at every step:
 

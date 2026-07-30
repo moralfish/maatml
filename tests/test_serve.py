@@ -584,3 +584,40 @@ def test_max_retries_needs_a_validator(serve_model_dir) -> None:
     md.evaluation.pop("validator")
     with pytest.raises(ValueError, match="max-retries needs evaluation.validator"):
         build_serve_context(md, checkpoint=ckpt, device="cpu", max_retries=2)
+
+
+def test_capture_sample_id_distinguishes_requests_with_equal_output(
+    tmp_path: Path,
+) -> None:
+    """sample_id was a hash of the model output alone, so two different
+    requests that produced the same output collided and ingest dropped the
+    later one as a duplicate."""
+    from maatml.serve import CaptureWriter
+
+    writer = CaptureWriter(tmp_path / "cap.jsonl", request_field="request")
+    assert writer.record({"request": "first ticket"}, {"ok": True}, '{"ok": true}')
+    assert writer.record({"request": "second ticket"}, {"ok": True}, '{"ok": true}')
+
+    rows = [json.loads(line) for line in (tmp_path / "cap.jsonl").read_text().splitlines()]
+    assert len({r["sample_id"] for r in rows}) == 2, "distinct requests collided"
+    # A genuine repeat of the same (request, output) still dedupes.
+    writer.record({"request": "first ticket"}, {"ok": True}, '{"ok": true}')
+    rows = [json.loads(line) for line in (tmp_path / "cap.jsonl").read_text().splitlines()]
+    assert rows[0]["sample_id"] == rows[2]["sample_id"]
+
+
+def test_capture_applies_declared_sanitizers(tmp_path: Path) -> None:
+    """The docstring and docs promised the captured request is sanitized. It
+    was written verbatim; now the model's dataset.sanitize tags are applied."""
+    from maatml.serve import CaptureWriter
+
+    def _redact(text: str) -> str:
+        return text.replace("USER=ALICE", "USER=REDACT")
+
+    writer = CaptureWriter(
+        tmp_path / "cap.jsonl", request_field="request", sanitizers=[_redact]
+    )
+    writer.record({"request": "job for USER=ALICE"}, {"ok": True}, '{"ok": true}')
+    row = json.loads((tmp_path / "cap.jsonl").read_text().splitlines()[0])
+    assert row["request"] == "job for USER=REDACT"
+    assert "ALICE" not in json.dumps(row)
