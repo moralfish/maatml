@@ -181,6 +181,12 @@ def _resolve_eval_asset(
         path = model_def.resolve(rel)
         if path.is_file():
             return path
+        # Declared and missing is a config error. Falling through to None would
+        # start the server with the validator silently short of an asset it was
+        # told to use, which under --enforce means gating on less than declared.
+        raise ValueError(
+            f"model.yml declares {key}={rel!r} but the file is missing: {path}"
+        )
     for name in filenames:
         cand = checkpoint_dir / name
         if cand.is_file():

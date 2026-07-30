@@ -1,8 +1,11 @@
 """Eval gate pass/fail logic."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from maatml.config import load_model_def
 from maatml.evaluation.harness import Report, check_gates
 
 
@@ -99,3 +102,61 @@ def test_coverage_metric_is_always_reported() -> None:
     assert coverage_metrics([_row("{}"), _row("")])[COVERAGE_METRIC] == 0.5
     assert coverage_metrics([_row("  ")])[COVERAGE_METRIC] == 0.0
     assert coverage_metrics([])[COVERAGE_METRIC] == 0.0
+
+
+def test_declared_but_missing_contracts_is_an_error_not_a_silent_none(
+    tmp_path: Path,
+) -> None:
+    """A typo in dataset.contracts must fail with the path it could not find,
+    not resolve to None and surface later as a TypeError from the validator."""
+    from maatml.evaluation.harness import DeclaredAssetMissing, resolve_eval_asset
+
+    mdir = tmp_path / "model"
+    mdir.mkdir(parents=True)
+    (mdir / "model.yml").write_text(
+        """name: assets
+model_id: assets
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  seed_samples: seeds.jsonl
+  contracts: datasets/nod_contracts.json
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    with pytest.raises(DeclaredAssetMissing, match="nod_contracts.json"):
+        resolve_eval_asset(
+            "contracts",
+            model_def=md,
+            checkpoint_dir=tmp_path / "ckpt",
+            filenames=("node_contracts.json",),
+        )
+
+
+def test_undeclared_missing_asset_stays_optional(tmp_path: Path) -> None:
+    """The optional path is unchanged: an asset that is simply absent raises
+    plain FileNotFoundError, which callers treat as 'no asset'."""
+    from maatml.evaluation.harness import DeclaredAssetMissing, resolve_eval_asset
+
+    mdir = tmp_path / "model"
+    mdir.mkdir(parents=True)
+    (mdir / "model.yml").write_text(
+        """name: assets2
+model_id: assets2
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  seed_samples: seeds.jsonl
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    with pytest.raises(FileNotFoundError) as excinfo:
+        resolve_eval_asset(
+            "contracts",
+            model_def=md,
+            checkpoint_dir=tmp_path / "ckpt",
+            filenames=("node_contracts.json",),
+        )
+    assert not isinstance(excinfo.value, DeclaredAssetMissing)

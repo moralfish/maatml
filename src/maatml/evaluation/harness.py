@@ -219,6 +219,17 @@ def baseline_delta(
     return delta
 
 
+class DeclaredAssetMissing(FileNotFoundError):
+    """An asset the caller named explicitly, or model.yml declares, is absent.
+
+    Distinct from a plain FileNotFoundError, which only means an *optional*
+    asset could not be discovered. Callers treat the optional case as "no
+    asset" and must not do the same here: a typo in ``dataset.contracts``
+    would otherwise resolve to None and surface much later as an opaque
+    TypeError from the validator, on the first evaluated row.
+    """
+
+
 def resolve_eval_asset(
     key: str,
     *,
@@ -234,7 +245,7 @@ def resolve_eval_asset(
     if explicit is not None:
         path = Path(explicit)
         if not path.is_file():
-            raise FileNotFoundError(f"{key} not found at explicit path: {path}")
+            raise DeclaredAssetMissing(f"{key} not found at explicit path: {path}")
         return path.resolve()
 
     if model_def is not None:
@@ -242,7 +253,7 @@ def resolve_eval_asset(
         if key in cfg and isinstance(cfg[key], str):
             path = model_def.resolve(cfg[key])
             if not path.is_file():
-                raise FileNotFoundError(
+                raise DeclaredAssetMissing(
                     f"model.yml declares {key}={cfg[key]!r} but file missing: {path}"
                 )
             return path
@@ -451,9 +462,10 @@ def run_evaluation(
             ),
             explicit=schema_path,
         )
+    except DeclaredAssetMissing:
+        # Declared and missing is a config error, not an absent optional asset.
+        raise
     except FileNotFoundError:
-        if schema_path is not None:
-            raise
         # Causal-SFT / no-validator paths may omit schema.
         resolved_schema = None
 
@@ -465,9 +477,9 @@ def run_evaluation(
             filenames=("node_contracts.json",),
             explicit=contracts_path,
         )
+    except DeclaredAssetMissing:
+        raise
     except FileNotFoundError:
-        if contracts_path is not None:
-            raise
         resolved_contracts = None
 
     try:
@@ -478,9 +490,9 @@ def run_evaluation(
             filenames=("prompt_spec.json",),
             explicit=prompt_spec_path,
         )
+    except DeclaredAssetMissing:
+        raise
     except FileNotFoundError:
-        if prompt_spec_path is not None:
-            raise
         resolved_prompt = None
 
     setup = getattr(pred_obj, "setup", None)
