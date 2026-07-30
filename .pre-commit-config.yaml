@@ -1,8 +1,9 @@
 # Local hooks. Install with: pip install pre-commit && pre-commit install
-#
-# Optional (not enabled by default): add gitleaks for secret scanning —
-#   https://github.com/gitleaks/gitleaks
 repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.10
     hooks:
