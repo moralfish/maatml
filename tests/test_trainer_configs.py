@@ -153,3 +153,88 @@ def test_lora_typo_is_rejected_not_silently_dropped() -> None:
         SFTTrainConfig(lora={"enabled": True, "alpah": 32})
     # The correctly spelled key still parses.
     assert SFTTrainConfig(lora={"enabled": True, "alpha": 32}).lora.alpha == 32
+
+
+# --- shared schedule / precision helpers ------------------------------------
+
+
+def test_total_steps_divides_by_world_size() -> None:
+    """Each rank sees len(dataset)/world_size rows. Sizing the schedule as
+    though the run were single-process made a 0.06 warmup ratio cover ~48% of
+    an 8-GPU schedule."""
+    from maatml.training.schedule import total_training_steps, warmup_steps
+
+    kwargs = dict(batch_size=2, grad_accum=8, epochs=3.0)
+    single = total_training_steps(1600, processes=1, **kwargs)
+    eight = total_training_steps(1600, processes=8, **kwargs)
+    assert single == 300
+    assert eight == 37, "8 ranks each see an eighth of the corpus"
+    # The warmup ratio now lands on the real schedule instead of 8x it.
+    assert warmup_steps(eight, 0.06) == 2
+    assert warmup_steps(single, 0.06) == 18
+
+
+def test_total_steps_honours_explicit_max_steps() -> None:
+    from maatml.training.schedule import total_training_steps
+
+    assert (
+        total_training_steps(
+            10_000, batch_size=2, grad_accum=8, epochs=3.0, max_steps=50
+        )
+        == 50
+    )
+
+
+@pytest.mark.parametrize("device", ["cpu", "cpu:0", None])
+def test_precision_flags_off_without_accelerator(device) -> None:
+    """transformers rejects bf16=True on an unsupported CPU. seq2seq and
+    multi_head passed it unguarded, so the same config trained for causal_sft
+    and hard-failed for them on the same host."""
+    from maatml.training.schedule import precision_flags
+
+    assert precision_flags("bf16", device=device) == (False, False)
+    assert precision_flags("fp16", device=device) == (False, False)
+
+
+@pytest.mark.parametrize("device", ["cuda", "cuda:0", "mps"])
+def test_precision_flags_on_for_accelerators(device) -> None:
+    from maatml.training.schedule import precision_flags
+
+    assert precision_flags("bf16", device=device) == (True, False)
+    assert precision_flags("fp16", device=device) == (False, True)
+
+
+def test_precision_flags_allowed_when_distributed() -> None:
+    """Under torchrun the Trainer owns placement, so the device string is not
+    the deciding factor."""
+    from maatml.training.schedule import precision_flags
+
+    assert precision_flags("bf16", device="cpu", distributed=True) == (True, False)
+
+
+def test_all_trainers_share_one_precision_derivation() -> None:
+    """Regression guard for the drift itself: no trainer may re-derive the
+    mixed-precision flags locally."""
+    import pathlib
+
+    for name in ("sft_base", "seq2seq", "multi_head", "preference"):
+        src = pathlib.Path(f"src/maatml/training/{name}.py").read_text()
+        assert "precision_flags(" in src, f"{name} does not use the shared helper"
+        assert 'cfg.precision == "bf16"' not in src, f"{name} re-derives use_bf16"
+
+
+def test_dpo_and_orpo_share_one_config_body() -> None:
+    """DPO and ORPO previously duplicated a 42-line config block that differed
+    only in two class names, so a one-sided edit changed one method silently.
+
+    Structural guard: the trl config is constructed once. This path needs the
+    [pref] extra to execute, so nothing runs it in the offline suite.
+    """
+    import pathlib
+
+    src = pathlib.Path("src/maatml/training/preference.py").read_text()
+    assert src.count("PreferenceConfig(") == 1, "config built in more than one place"
+    assert "DPOConfig(" not in src and "ORPOConfig(" not in src
+    # Both methods must still be reachable.
+    assert "DPOConfig as PreferenceConfig" in src
+    assert "ORPOConfig as PreferenceConfig" in src

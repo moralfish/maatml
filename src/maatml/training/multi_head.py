@@ -28,6 +28,8 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs
+from .schedule import precision_flags, total_training_steps
+from .schedule import warmup_steps as resolve_warmup_steps
 from .sft_config import validate_precision
 
 _PATH_TOKEN = re.compile(r"([^[.\]]+)|\[(\d+)\]")
@@ -532,15 +534,18 @@ def _train_loop(
 
     model = MultiHeadModel()
 
-    total_steps = (
-        int(len(train_ds) / cfg.batch_size / cfg.grad_accum * cfg.epochs)
-        if cfg.max_steps < 0
-        else cfg.max_steps
+    total_steps = total_training_steps(
+        len(train_ds),
+        batch_size=cfg.batch_size,
+        grad_accum=cfg.grad_accum,
+        epochs=cfg.epochs,
+        max_steps=cfg.max_steps,
     )
-    warmup_steps = max(0, int(round(total_steps * cfg.warmup_ratio)))
+    warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
 
-    use_bf16 = cfg.precision == "bf16"
-    use_fp16 = cfg.precision == "fp16"
+    use_bf16, use_fp16 = precision_flags(
+        cfg.precision, device=device_name, distributed=distributed
+    )
     use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
