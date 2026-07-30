@@ -40,10 +40,14 @@ maatml evaluate examples/support-ticket-triage/ --gate
 
 | Metric | Gate | Meaning |
 |---|---|---|
-| `json_parse_rate` | ≥ 0.95 | output is valid JSON |
-| `schema_conformance_rate` | ≥ 0.90 | matches `datasets/schema.json` |
-| `routing_consistency_rate` | ≥ 0.85 | `category → team` contract holds |
-| `category_accuracy` | ≥ 0.70 | predicted category matches gold |
+| `all_layers_pass_rate` | >= 0.95 | every validator layer passed |
+| `category_accuracy` | >= 0.86 | predicted category matches gold |
+| `json_parse_rate` | >= 0.97 | output is valid JSON |
+| `priority_accuracy` | >= 0.64 | predicted priority matches gold |
+| `routing_consistency_rate` | >= 0.95 | `category -> team` contract holds |
+| `schema_conformance_rate` | >= 0.97 | matches `datasets/schema.json` |
+| `summary_quality_rate` | >= 0.97 | summary is one line within the word cap |
+| `team_accuracy` | >= 0.88 | predicted team matches gold |
 
 Add more tickets under `datasets/samples/seed_samples.jsonl`, then re-prepare.
 The committed corpus is intentionally small; it demonstrates the `causal_sft`

@@ -95,14 +95,16 @@ and re-running `maatml prepare` before training, or regenerate via
 
 ## Quality gates
 
-| Metric | Target |
-|---|---|
-| `json_parse_rate` | ≥ 0.95 |
-| `schema_conformance_rate` | ≥ 0.90 |
-| `severity_accuracy` | ≥ 0.85 |
-| `code_accuracy` | ≥ 0.85 |
-| `valid_flag_accuracy` | ≥ 0.95 |
-| `line_within_3_accuracy` | ≥ 0.70 |
+| Metric | Gate | Meaning |
+|---|---|---|
+| `all_layers_pass_rate` | >= 0.99 | every validator layer passed |
+| `code_accuracy` | >= 0.98 | predicted error code matches gold |
+| `consistency_rate` | >= 0.99 | cross-field consistency layer passed |
+| `json_parse_rate` | >= 1 | output is valid JSON |
+| `line_within_3_accuracy` | >= 0.96 | error line within +/-3 of gold |
+| `schema_conformance_rate` | >= 1 | matches `datasets/schema.json` |
+| `severity_accuracy` | >= 0.98 | predicted severity matches gold |
+| `valid_flag_accuracy` | >= 0.99 | predicted `valid` flag matches gold |
 
 `line_within_3` allows ±3 lines of slack on the predicted error line, a practical
 UI tolerance.

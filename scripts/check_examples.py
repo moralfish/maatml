@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -113,7 +114,45 @@ def check(model_dir: Path) -> list[str]:
         errors.append(
             f"{name}: {failed_gold}/{len(row_evals)} gold rows fail the validator"
         )
+
+    errors.extend(_check_readme_gates(model_dir, name, gates))
     return errors
+
+
+def _readme_gate_table(readme: str) -> dict[str, float]:
+    """Parse the `| \\`metric\\` | >= X |` rows of a README quality-gates table."""
+    found: dict[str, float] = {}
+    for match in re.finditer(r"\|\s*`([a-z0-9_]+)`\s*\|[^0-9|]*([0-9.]+)\s*\|", readme):
+        found[match.group(1)] = float(match.group(2))
+    return found
+
+
+def _check_readme_gates(model_dir: Path, name: str, gates: dict) -> list[str]:
+    """The README gate table must match model.yml.
+
+    Hand-maintained tables drifted on every example: thresholds disagreed with
+    the model, some gates were undocumented, and one README advertised a
+    stricter gate than the model enforces. A reader takes the README as the
+    contract, so a mismatch is a wrong contract.
+    """
+    readme = model_dir / "README.md"
+    if not readme.is_file():
+        return []
+    documented = _readme_gate_table(readme.read_text(encoding="utf-8"))
+    if not documented:
+        return [f"{name}: README has no quality-gates table"]
+    problems = []
+    for metric in sorted(set(gates) - set(documented)):
+        problems.append(f"{name}: gate {metric} is not in the README table")
+    for metric in sorted(set(documented) - set(gates)):
+        problems.append(f"{name}: README documents {metric}, which is not a gate")
+    for metric in sorted(set(gates) & set(documented)):
+        if float(gates[metric]) != documented[metric]:
+            problems.append(
+                f"{name}: README says {metric} >= {documented[metric]}, "
+                f"model.yml gates at {float(gates[metric])}"
+            )
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -91,11 +91,13 @@ result with the same function used for training seeds, POSTs
 
 | Metric | Gate | Meaning |
 |---|---|---|
-| `json_parse_rate` | ≥ 0.98 | valid JSON object |
-| `schema_conformance_rate` | ≥ 0.95 | matches `datasets/schema.json` |
-| `conciseness_rate` | ≥ 0.90 | ≤ 30 words |
-| `scene_grounding_rate` | ≥ 0.80 | mentions the scene label |
-| `object_grounding_rate` | ≥ 0.70 | reflects detection labels / “no shapes” |
+| `all_layers_pass_rate` | >= 0.89 | every validator layer passed |
+| `conciseness_rate` | >= 0.95 | caption stays within the length budget |
+| `json_parse_rate` | >= 0.95 | output is valid JSON |
+| `object_grounding_rate` | >= 0.89 | caption names the detected objects |
+| `pose_grounding_rate` | >= 0.13 | caption reflects the pose when present |
+| `scene_grounding_rate` | >= 0.95 | caption names the scene from the vision JSON |
+| `schema_conformance_rate` | >= 0.95 | matches `datasets/schema.json` |
 
 Eval gates cover the describer alone (pre-baked linearized JSON). End-to-end
 vision→text quality is exercised via `compose_client.py` after both models

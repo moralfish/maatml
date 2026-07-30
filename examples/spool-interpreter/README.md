@@ -79,12 +79,14 @@ and re-running `maatml prepare` before training, or regenerate via
 
 ## Quality gates
 
-| Metric | Target |
-|---|---|
-| `json_parse_rate` | ≥ 0.95 |
-| `schema_conformance_rate` | ≥ 0.90 |
-| `status_accuracy` | ≥ 0.90 |
-| `failure_category_accuracy` | ≥ 0.80 |
-| `return_code_accuracy` | ≥ 0.85 (when present) |
-| `explanation_present_rate` | ≥ 0.95 (when status ≠ completed) |
-| `related_docs_coverage_rate` | ≥ 0.90 |
+| Metric | Gate | Meaning |
+|---|---|---|
+| `all_layers_pass_rate` | >= 0.99 | every validator layer passed |
+| `consistency_rate` | >= 0.99 | cross-field consistency layer passed |
+| `failure_category_accuracy` | >= 0.99 | predicted failureCategory matches gold |
+| `json_parse_rate` | >= 0.99 | output is valid JSON |
+| `remediation_validity_rate` | >= 0.99 | remediation layer passed |
+| `return_code_accuracy` | >= 0.99 | predicted returnCode matches gold |
+| `schema_conformance_rate` | >= 0.99 | matches `datasets/schema.json` |
+| `status_accuracy` | >= 0.99 | predicted status matches gold |
+| `suggested_fix_present_rate` | >= 0.99 | a suggestedFix is present when required |
