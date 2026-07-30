@@ -60,15 +60,23 @@ dev = [
   "types-PyYAML>=6.0",
 ]
 ml = [
-  "torch>=2.3",
-  "transformers>=5.0",
+  # Security floor, not a feature floor: torch < 2.6 carries GHSA-53q9-r3pm-6pq6,
+  # a critical RCE in `torch.load` *despite* weights_only=True, which is exactly
+  # the call the SFT tokenized cache relies on (training/sft_base.py). Advisories
+  # above 2.6 are LOW/MODERATE (memory corruption, local DoS) and not reachable
+  # from maatml's own inputs, so the floor stops here rather than at the latest
+  # fix: JetPack pins torch to NVIDIA's builds and a higher floor would put
+  # maatml out of reach on Jetson.
+  "torch>=2.6",
+  # transformers < 5.5 carries advisories on the from_pretrained path every
+  # trainer and predictor calls.
+  "transformers>=5.5",
   "datasets>=2.19",
-  "evaluate>=0.4",
   "tokenizers>=0.19",
   "safetensors>=0.4",
   "accelerate>=0.30",
   "peft>=0.10",
-  "sentencepiece>=0.2"
+  "sentencepiece>=0.2.1"
 ]
 cuda = [
   # QLoRA / bitsandbytes: CUDA Linux only (not macOS / MPS). Also install [ml].
@@ -91,8 +99,10 @@ vision = [
   # Multitask vision (classification / detection / pose) + ONNX export.
   # Also install [ml].
   "torchvision>=0.18",
-  "pillow>=10.0",
-  "onnx>=1.16",
+  # pillow and onnx floors are security floors: the previous ones admitted
+  # 35 and 18 known advisories respectively.
+  "pillow>=12.3",
+  "onnx>=1.22",
   "onnxscript>=0.1.0",
   "onnxruntime>=1.18",
 ]
