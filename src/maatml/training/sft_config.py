@@ -25,6 +25,11 @@ def validate_precision(value: Any) -> str:
 
 
 class LoraSettings(BaseModel):
+    # Strict like every sibling config: a typo under `training.lora:` would
+    # otherwise be dropped in silence, and because training_config is hashed
+    # into the lifecycle fingerprint the run still looks legitimately fresh.
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     r: int = 16
     alpha: int = 32

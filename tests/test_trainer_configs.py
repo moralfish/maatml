@@ -7,6 +7,7 @@ and label-masking tests live in test_trainers_torch.py.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from maatml.data.preference import as_completion_text, normalize_preference
 from maatml.training.multi_head import (
@@ -142,3 +143,13 @@ def test_structured_completions_serialise_as_json_not_repr() -> None:
 def test_identical_chosen_and_rejected_warns() -> None:
     with pytest.warns(UserWarning, match="identical chosen and rejected"):
         normalize_preference({"prompt": "p", "chosen": "same", "rejected": "same"})
+
+
+def test_lora_typo_is_rejected_not_silently_dropped() -> None:
+    """LoraSettings is strict like its siblings: a typo under training.lora
+    would otherwise train at the default while the run looks legitimately fresh
+    (training_config is hashed into the lifecycle fingerprint)."""
+    with pytest.raises(ValidationError):
+        SFTTrainConfig(lora={"enabled": True, "alpah": 32})
+    # The correctly spelled key still parses.
+    assert SFTTrainConfig(lora={"enabled": True, "alpha": 32}).lora.alpha == 32
