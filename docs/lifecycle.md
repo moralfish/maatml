@@ -38,14 +38,38 @@ The payoff: a MaatML model ships with a contract, not just weights.
 A validator is a plugin registration in your model folder (see the
 [plugin author guide](plugins.md)):
 
+`ok` is not something you set. It is derived: a result is `ok` once every
+required layer has passed, which is what makes a partial pass reportable rather
+than a bare true/false.
+
 ```python
+import json
+
 from maatml.registry import register_validator
-from maatml.validation.base import ValidationResult
+from maatml.validation.base import ValidationError, ValidationResult
 
 @register_validator("my_task")
 def validate_my_task(raw_output, *, schema_path=None, **kwargs):
-    ...  # parse raw_output, check the contract
-    return ValidationResult(ok=True, errors=[])
+    result = ValidationResult(raw_output=raw_output, required_layers={1, 2})
+
+    # Layer 1: it parses.
+    try:
+        result.parsed = json.loads(raw_output)
+    except json.JSONDecodeError as exc:
+        result.errors.append(
+            ValidationError(layer=1, code="invalid_json", message=str(exc))
+        )
+        return result
+    result.passed_layers.add(1)
+
+    # Layer 2: it satisfies the contract.
+    if isinstance(result.parsed, dict) and result.parsed.get("answer"):
+        result.passed_layers.add(2)
+    else:
+        result.errors.append(
+            ValidationError(layer=2, code="missing_answer", message="answer required")
+        )
+    return result
 ```
 
 Point `model.yml` at it:

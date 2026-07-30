@@ -50,10 +50,10 @@ Checkpoints land under `output/checkpoints/<run_id>/`. List every run with
 `maatml runs examples/support-ticket-triage/`, and compare their metrics with
 `maatml runs examples/support-ticket-triage/ --compare`.
 
-This is still a rehearsal, not a trained model: the example ships 8 seed rows
-and `training.max_steps: 4`, enough to prove the pipeline offline and in CI. A
-real run needs a real corpus (`maatml datagen` or `maatml ingest`), then
-`max_steps: -1` and a few epochs in `model.yml`.
+Unlike step 3, this is a real run: the example ships 600 seed rows and trains a
+LoRA adapter for `epochs: 3` with `max_steps: -1`, so expect minutes rather than
+seconds, and a GPU or Apple silicon rather than a laptop CPU. Step 3's `--smoke`
+tier stays available whenever you only want to prove the wiring.
 
 ## 5. Evaluate against the gates
 
@@ -62,11 +62,14 @@ maatml evaluate examples/support-ticket-triage/ --gate
 ```
 
 `--gate` exits non-zero if `evaluation.gates` in `model.yml` aren't met, the
-same check you'd wire into CI. **Expect it to fail here**: four steps on eight
-samples does not earn `json_parse_rate: 0.95`, and a gate that passed on that
-evidence would not be worth wiring into CI. That failure is the contract
-working. Drop `--gate` to see the scores on their own, and re-run it once the
-corpus and training budget are real.
+same check you'd wire into CI. Drop `--gate` to see the scores on their own.
+
+A red gate is the contract working, not a broken quickstart: it says this
+checkpoint has not earned the threshold yet. Train longer, grow the corpus
+(`maatml datagen` or `maatml ingest`), or decide the threshold was wrong and
+change it deliberately. The thresholds shipped with this example are marked
+pending re-measurement in `model.yml`, so treat them as a starting point rather
+than a target to tune against.
 
 ## 6. Serve it
 

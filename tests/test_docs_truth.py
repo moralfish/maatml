@@ -70,3 +70,50 @@ def test_verify_described_as_corruption_not_tamper() -> None:
 def test_touched_docs_have_no_em_dash() -> None:
     for doc in _TOUCHED:
         assert "—" not in _read(doc), f"em dash in {doc}"
+
+
+def test_documented_validator_example_runs() -> None:
+    """The validator snippet in docs/lifecycle.md is the first thing a plugin
+    author copies. It previously called ValidationResult(ok=True, errors=[]),
+    which raises TypeError: `ok` is a derived property and raw_output is
+    required. Execute the documented code so it cannot rot again."""
+    import re as _re
+
+    from maatml.registry import VALIDATORS, snapshot_registries, restore_registries
+
+    doc = _read("docs/lifecycle.md")
+    section = doc.split("## Registering a validator", 1)[1]
+    match = _re.search(r"```python\n(.*?)```", section, _re.S)
+    assert match, "no python snippet under 'Registering a validator'"
+    snippet = match.group(1)
+
+    snapshot = snapshot_registries()
+    try:
+        namespace: dict = {}
+        exec(compile(snippet, "docs/lifecycle.md", "exec"), namespace)  # noqa: S102
+        validate = VALIDATORS.require("my_task")
+        good = validate('{"answer": "42"}')
+        assert good.ok is True, good.errors
+        bad_json = validate("not json")
+        assert bad_json.ok is False
+        assert [e.code for e in bad_json.errors] == ["invalid_json"]
+        missing = validate('{"other": 1}')
+        assert missing.ok is False
+        assert [e.code for e in missing.errors] == ["missing_answer"]
+    finally:
+        restore_registries(snapshot)
+
+
+def test_quickstart_corpus_size_matches_the_example() -> None:
+    """docs/getting-started.md quotes the triage corpus size. It described an
+    8-row corpus long after the example grew, which made the whole 'expect it
+    to fail' narrative wrong. Pin the number to the shipped file."""
+    import re as _re
+
+    doc = _read("docs/getting-started.md")
+    match = _re.search(r"ships ([\d,]+) seed rows", doc)
+    assert match, "getting-started no longer states the seed corpus size"
+    claimed = int(match.group(1).replace(",", ""))
+    seeds = REPO / "examples/support-ticket-triage/datasets/samples/seed_samples.jsonl"
+    actual = sum(1 for line in seeds.read_text(encoding="utf-8").splitlines() if line.strip())
+    assert claimed == actual, f"doc says {claimed} seed rows, file has {actual}"
