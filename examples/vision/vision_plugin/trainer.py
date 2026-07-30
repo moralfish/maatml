@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,10 +43,9 @@ def train_vision_multitask(
     cfg_train = model_def.merged_smoke() if smoke else dict(model_def.training or {})
     # Allow trial / --set overrides already applied on model_def.training.
     mt_cfg = MultitaskConfig.from_model_def(model_def)
-    if smoke:
-        # Prefer tiny random backbone for fast smoke when declared.
-        if cfg_train.get("pretrained") is False or cfg_train.get("max_steps"):
-            mt_cfg.pretrained = bool(cfg_train.get("pretrained", False))
+    # Prefer tiny random backbone for fast smoke when declared.
+    if smoke and (cfg_train.get("pretrained") is False or cfg_train.get("max_steps")):
+        mt_cfg.pretrained = bool(cfg_train.get("pretrained", False))
 
     torch_device = resolve_device(device)
     profile = get_profile(torch_device)
@@ -171,10 +171,10 @@ def train_vision_multitask(
     except Exception as exc:  # noqa: BLE001
         status = "aborted"
         error = str(exc)
-        try:
+        # Best effort: the run already failed, and a checkpoint that will
+        # not save must not mask the original error.
+        with contextlib.suppress(Exception):
             save_checkpoint(model, mt_cfg, out)
-        except Exception:  # noqa: BLE001
-            pass
         finish_run(model_def, run.run_id, status, metrics=metrics, error=error)
         raise
     finally:

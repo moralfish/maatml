@@ -20,9 +20,12 @@ Public surface:
   - `_resolve_device`, `_maybe_attach_lora`
   - `render_assistant_target(sample, target_field) -> str`
   - `render_inference_prompt(request, prompt_spec, tokenizer, *, user_placeholder) -> list[int]`
-  - `build_chat_example(sample, prompt_spec, tokenizer, *, max_length, target_field, request_field, user_placeholder)`
-  - `SFTDataCollator(tokenizer, prompt_spec, *, max_length, target_field, request_field, user_placeholder)`
-  - `train_sft(model_def, *, config_cls, target_field, request_field, user_placeholder, default_prompt_spec, ...)`
+  - `build_chat_example(sample, prompt_spec, tokenizer, *, max_length,
+    target_field, request_field, user_placeholder)`
+  - `SFTDataCollator(tokenizer, prompt_spec, *, max_length, target_field,
+    request_field, user_placeholder)`
+  - `train_sft(model_def, *, config_cls, target_field, request_field,
+    user_placeholder, default_prompt_spec, ...)`
 """
 
 from __future__ import annotations
@@ -356,11 +359,11 @@ def _save_sft_artifacts(
 
     if mode in ("merged", "both"):
         if is_peft:
-            # For "both", clone path: merge_and_unload mutates; save adapter first.
-            if mode == "both":
-                merged = model.merge_and_unload()
-            else:
-                merged = model.merge_and_unload()
+            # merge_and_unload mutates the model, which is why "both" saves the
+            # adapter above before reaching here. The branch this replaced had
+            # identical arms, so it never cloned anything: the ordering is what
+            # makes "both" correct.
+            merged = model.merge_and_unload()
             merged.save_pretrained(out_dir)
         else:
             model.save_pretrained(out_dir)

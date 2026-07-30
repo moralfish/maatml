@@ -209,7 +209,7 @@ def make_scene_spec(index: int, *, base_seed: int = 0, size: int = 320) -> Scene
     family = f"scene_{index:06d}"
     n_shapes = rng.randint(0, 3)
     shapes: list[dict[str, Any]] = []
-    for i in range(n_shapes):
+    for _ in range(n_shapes):
         label = SHAPE_LABELS[rng.randrange(len(SHAPE_LABELS))]
         radius = rng.uniform(size * 0.06, size * 0.14)
         # Keep shapes away from the stick figure center band.

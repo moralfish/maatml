@@ -12,8 +12,7 @@ def _gaussian2d(h: int, w: int, cx: float, cy: float, sigma: float):
     import numpy as np
 
     ys, xs = np.ogrid[0:h, 0:w]
-    g = np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma**2))
-    return g
+    return np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma**2))
 
 
 def encode_targets(
@@ -74,8 +73,8 @@ def encode_targets(
 
 
 def _load_image(path: Path, size: int):
-    from PIL import Image
     import numpy as np
+    from PIL import Image
 
     img = Image.open(path).convert("RGB")
     if img.size != (size, size):
@@ -133,9 +132,10 @@ def resolve_image_bytes_or_path(
 
 def image_bytes_to_tensor(data: bytes, size: int):
     import io
-    from PIL import Image
+
     import numpy as np
     import torch
+    from PIL import Image
 
     img = Image.open(io.BytesIO(data)).convert("RGB")
     if img.size != (size, size):

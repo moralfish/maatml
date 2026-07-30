@@ -77,6 +77,7 @@ def test_validator_rejects_bad_json(plugin) -> None:
 
 def test_metrics_perfect_match(plugin) -> None:
     from vision_plugin.metrics import compute_vision_metrics
+
     from maatml.validation.base import ValidationResult
 
     seed = ROOT / "datasets" / "samples" / "seed_samples.jsonl"
@@ -99,8 +100,8 @@ def test_metrics_perfect_match(plugin) -> None:
 
 
 def test_decode_scene_argmax(plugin) -> None:
-    from vision_plugin.decode import decode_scene
     from vision_plugin.constants import SCENE_LABELS
+    from vision_plugin.decode import decode_scene
 
     out = decode_scene([0.1, 5.0, 0.2, 0.0, -1.0], SCENE_LABELS)
     assert out["label"] == SCENE_LABELS[1]
@@ -121,7 +122,7 @@ def test_synth_deterministic(plugin) -> None:
 
 
 def test_plugin_registers_trainer_and_onnx(plugin) -> None:
-    from maatml.registry import TRAINERS, EXPORTERS, PREDICTORS, GENERATORS
+    from maatml.registry import EXPORTERS, GENERATORS, PREDICTORS, TRAINERS
 
     assert "vision_multitask" in TRAINERS.names()
     assert "vision_multitask" in PREDICTORS.names()
@@ -141,14 +142,15 @@ def test_tiny_train_predict_onnx_roundtrip(tmp_path: Path, plugin) -> None:
     pytest.importorskip("onnxruntime")
     pytest.importorskip("safetensors")
 
-    from vision_plugin.model import MultitaskConfig, MultitaskNet, save_checkpoint
-    from vision_plugin.synth import build_sample_row
-    from vision_plugin.dataset import VisionSceneDataset, collate_vision
-    from vision_plugin.predictor import VisionMultitaskPredictor
-    from vision_plugin.export_onnx import export_onnx
-    from maatml.config import ModelDefinition
     import torch
     from torch.utils.data import DataLoader
+    from vision_plugin.dataset import VisionSceneDataset, collate_vision
+    from vision_plugin.export_onnx import export_onnx
+    from vision_plugin.model import MultitaskConfig, MultitaskNet, save_checkpoint
+    from vision_plugin.predictor import VisionMultitaskPredictor
+    from vision_plugin.synth import build_sample_row
+
+    from maatml.config import ModelDefinition
 
     # Tiny synthetic corpus
     images = tmp_path / "images"

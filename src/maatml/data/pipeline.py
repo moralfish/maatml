@@ -19,8 +19,8 @@ from rich.console import Console
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import SANITIZERS, register_format
-from .schemas import Split
 from ..utils.io import iter_jsonl, stable_hash, write_jsonl
+from .schemas import Split
 
 console = Console()
 

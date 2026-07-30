@@ -123,7 +123,7 @@ class VisionMultitaskPredictor:
         input_name = self.session.get_inputs()[0].name
         outs = self.session.run(None, {input_name: x})
         names = [o.name for o in self.session.get_outputs()]
-        by_name = {n: v[0] for n, v in zip(names, outs)}
+        by_name = {n: v[0] for n, v in zip(names, outs, strict=False)}
         # Fallback positional if names differ.
         if "scene_logits" not in by_name and len(outs) >= 5:
             by_name = {

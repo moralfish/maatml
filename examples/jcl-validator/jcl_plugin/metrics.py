@@ -14,7 +14,7 @@ def compute_jcl_metrics(row_results: list["RowEval"]) -> dict[str, float]:
     if n == 0:
         return {}
 
-    layer_pass: dict[int, int] = {i: 0 for i in range(1, 7)}
+    layer_pass: dict[int, int] = dict.fromkeys(range(1, 7), 0)
     all_layers_pass = 0
     severity_correct = 0
     severity_total = 0
@@ -36,9 +36,12 @@ def compute_jcl_metrics(row_results: list["RowEval"]) -> dict[str, float]:
         gold = row.get("expected_validation_result", {}) or {}
         pred = result.parsed if isinstance(result.parsed, dict) else None
 
-        if pred is not None and isinstance(pred.get("valid"), bool):
-            if pred["valid"] == bool(gold.get("valid")):
-                valid_flag_correct += 1
+        if (
+            pred is not None
+            and isinstance(pred.get("valid"), bool)
+            and pred["valid"] == bool(gold.get("valid"))
+        ):
+            valid_flag_correct += 1
 
         gold_errors = gold.get("errors") or []
         pred_errors = (pred or {}).get("errors") or []

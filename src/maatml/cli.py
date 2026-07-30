@@ -314,7 +314,7 @@ def cmd_sweep(
     else:
         console.print("[yellow]sweep finished with no numeric metrics to rank[/]")
 
-    for trial_map, key in skipped:
+    for trial_map, _key in skipped:
         console.print(f"[yellow]unranked[/] params={trial_map} (no numeric metric)")
     for _val, trial_map, _result, key in incomparable:
         console.print(

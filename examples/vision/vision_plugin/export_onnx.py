@@ -181,8 +181,8 @@ def export_onnx(
 
     # Smoke-check with onnxruntime when available.
     try:
-        import onnxruntime as ort
         import numpy as np
+        import onnxruntime as ort
 
         sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         sess.run(None, {"image": dummy.numpy().astype(np.float32)})

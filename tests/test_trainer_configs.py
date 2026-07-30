@@ -27,7 +27,6 @@ from maatml.training.seq2seq import (
 )
 from maatml.training.sft_config import SFTTrainConfig, validate_precision
 
-
 # --- precision -------------------------------------------------------------
 
 
@@ -164,7 +163,7 @@ def test_total_steps_divides_by_world_size() -> None:
     an 8-GPU schedule."""
     from maatml.training.schedule import total_training_steps, warmup_steps
 
-    kwargs = dict(batch_size=2, grad_accum=8, epochs=3.0)
+    kwargs = {"batch_size": 2, "grad_accum": 8, "epochs": 3.0}
     single = total_training_steps(1600, processes=1, **kwargs)
     eight = total_training_steps(1600, processes=8, **kwargs)
     assert single == 300

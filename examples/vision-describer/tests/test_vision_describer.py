@@ -181,8 +181,9 @@ def test_schemas_round_trip(plugin) -> None:
 
 
 def test_metrics_perfect_match(plugin) -> None:
-    from maatml.validation.base import ValidationResult
     from vision_describer_plugin.metrics import compute_vision_describer_metrics
+
+    from maatml.validation.base import ValidationResult
 
     row = json.loads(
         (ROOT / "datasets/samples/seed_samples.jsonl").read_text(encoding="utf-8").splitlines()[0]
@@ -206,8 +207,13 @@ def test_metrics_perfect_match(plugin) -> None:
 
 
 def test_plugin_registration(plugin) -> None:
-    from maatml.registry import GENERATORS, METRICS, VALIDATORS, discover_plugins
-    from maatml.registry import load_model_plugins
+    from maatml.registry import (
+        GENERATORS,
+        METRICS,
+        VALIDATORS,
+        discover_plugins,
+        load_model_plugins,
+    )
 
     discover_plugins(force=True)
     load_model_plugins(ROOT, ["./vision_describer_plugin"])

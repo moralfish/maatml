@@ -126,5 +126,60 @@ maatml = ["py.typed"]
 [tool.ruff]
 line-length = 100
 
+[tool.ruff.lint]
+# An explicit selection: without one, only ruff's ~4-rule default set runs, so
+# the lint gate went green while catching almost nothing and 118 of the repo's
+# 132 `noqa` directives suppressed rules that were never enabled.
+#
+# BLE is here specifically to make the 48 `# noqa: BLE001` directives mean
+# something: broad excepts in this codebase are deliberate and annotated, and
+# now that is enforced rather than asserted. E402 likewise covers the scripts'
+# sys.path preamble.
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # import sorting
+  "B",    # bugbear
+  "BLE",  # blind except
+  "C4",   # comprehensions
+  "SIM",  # simplify
+  "RET",  # return consistency
+  "PIE",  # misc lints
+  "ISC",  # implicit string concat
+  "RSE",  # raise
+  "ERA",  # commented-out code
+  "T20",  # print / pprint
+]
+ignore = [
+  # typer declares CLI options as `x: T = typer.Option(...)` defaults, which is
+  # the documented API. This is the rule that forced the ruff<0.16 ceiling.
+  "B008",
+]
+
+# Families deliberately left out for now, each because adopting it today would
+# mean churn or bad changes rather than better code:
+#   UP   (466) large mechanical rewrite, worth its own pass
+#   S   (1017) bandit; mostly false positives for a local developer CLI
+#   PL   (640) opinionated complexity thresholds this codebase has not agreed
+#   COM  (441) the formatter already owns comma placement
+#   ARG  (134) plugin contracts require unused parameters by design
+#   TID  (138) relative imports are the house style
+#   N    naming: N815/N818 would rename identifiers that mirror JSON schema
+#        fields and public exception names
+#   PTH  `open()` is idiomatic here and the codebase already uses Path widely
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts and example builders are console programs: printing is their output.
+"scripts/*" = ["T201"]
+"examples/*/scripts/*" = ["T201"]
+# The JCL and spool seed builders embed literal mainframe output as templates.
+# Those lines are column-sensitive (a wrapped IEF374I record is no longer the
+# record the model must learn), so they are exempt from the line cap rather
+# than reflowed. SIM113 likewise: the index feeds the emitted record, not just
+# the loop.
+"examples/spool-interpreter/scripts/build_seeds.py" = ["E501", "SIM113"]
+"examples/jcl-validator/scripts/build_seeds.py" = ["E501", "SIM113"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "examples"]

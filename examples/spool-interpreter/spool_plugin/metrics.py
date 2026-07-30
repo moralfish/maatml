@@ -14,7 +14,7 @@ def compute_spool_metrics(row_results: list["RowEval"]) -> dict[str, float]:
     if n == 0:
         return {}
 
-    layer_pass: dict[int, int] = {i: 0 for i in range(1, 9)}
+    layer_pass: dict[int, int] = dict.fromkeys(range(1, 9), 0)
     all_layers_pass = 0
     status_correct = 0
     cat_correct = 0

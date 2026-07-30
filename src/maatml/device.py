@@ -10,6 +10,7 @@ the ``[ml]`` extra) can still import this module for CLI plugins / validate.
 
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from typing import Any, Optional, Union
@@ -28,10 +29,9 @@ class DeviceProfile:
         """Release allocator caches when the backend supports it."""
         torch = _torch()
         if self.name == "mps" and hasattr(torch, "mps"):
-            try:
+            # A backend that refuses to drop its cache is not a failure.
+            with contextlib.suppress(Exception):
                 torch.mps.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
         elif self.name == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 

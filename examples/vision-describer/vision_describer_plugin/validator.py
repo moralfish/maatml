@@ -119,9 +119,7 @@ def validate_vision_describer(
 
     # Layer 5: scene grounding (skip-pass when request unparsable)
     scene = _scene_from_request(user_prompt)
-    if scene is None:
-        result.passed_layers.add(5)
-    elif isinstance(description, str) and scene.lower() in description.lower():
+    if scene is None or isinstance(description, str) and scene.lower() in description.lower():
         result.passed_layers.add(5)
     else:
         result.errors.append(

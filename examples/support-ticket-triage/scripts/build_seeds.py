@@ -24,9 +24,10 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(EXAMPLE_ROOT))
 
-from maatml.utils.io import stable_hash  # noqa: E402
 from triage_plugin.constants import MAX_SUMMARY_WORDS, ROUTING  # noqa: E402
 from triage_plugin.validator import validate_triage  # noqa: E402
+
+from maatml.utils.io import stable_hash  # noqa: E402
 
 DATASETS = EXAMPLE_ROOT / "datasets"
 SCHEMA_PATH = DATASETS / "schema.json"

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from spool_plugin.schemas import FailureCategory, SpoolInterpretation, SpoolSample
 
 from maatml.data.schemas import Split
-from spool_plugin.schemas import FailureCategory, SpoolInterpretation, SpoolSample
 
 
 def test_spool_sample_round_trip() -> None:

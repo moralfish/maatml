@@ -80,7 +80,7 @@ def test_documented_validator_example_runs() -> None:
     required. Execute the documented code so it cannot rot again."""
     import re as _re
 
-    from maatml.registry import VALIDATORS, snapshot_registries, restore_registries
+    from maatml.registry import VALIDATORS, restore_registries, snapshot_registries
 
     doc = _read("docs/lifecycle.md")
     section = doc.split("## Registering a validator", 1)[1]

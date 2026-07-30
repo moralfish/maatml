@@ -20,7 +20,6 @@ from maatml.registry import (
     reset_registries,
 )
 
-
 # Registry isolation is the autouse fixture in tests/conftest.py.
 
 

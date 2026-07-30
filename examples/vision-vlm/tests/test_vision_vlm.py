@@ -116,8 +116,9 @@ def test_validator_rejects_too_long(plugin) -> None:
 
 
 def test_metrics_perfect_match(plugin) -> None:
-    from maatml.validation.base import ValidationResult
     from vlm_plugin.metrics import compute_vision_vlm_metrics
+
+    from maatml.validation.base import ValidationResult
 
     desc = (
         "A striped background with two circles and a star; the figure stands "

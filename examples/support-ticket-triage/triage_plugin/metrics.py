@@ -30,10 +30,10 @@ def compute_triage_metrics(row_results: list["RowEval"]) -> dict[str, float]:
     if n == 0:
         return {}
 
-    layer_pass = {i: 0 for i in range(1, 5)}
+    layer_pass = dict.fromkeys(range(1, 5), 0)
     all_ok = 0
-    field_ok = {f: 0 for f in _STRUCT_FIELDS}
-    field_total = {f: 0 for f in _STRUCT_FIELDS}
+    field_ok = dict.fromkeys(_STRUCT_FIELDS, 0)
+    field_total = dict.fromkeys(_STRUCT_FIELDS, 0)
     exact = 0
     exact_total = 0
 

@@ -33,7 +33,7 @@ def compute_vision_describer_metrics(row_results: list["RowEval"]) -> dict[str, 
     if n == 0:
         return {}
 
-    layer_pass = {i: 0 for i in range(1, 7)}
+    layer_pass = dict.fromkeys(range(1, 7), 0)
     all_ok = 0
     exact = 0
     concise = 0

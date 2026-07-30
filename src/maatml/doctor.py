@@ -198,7 +198,7 @@ def _model_folder(diag: Diagnostics, model_dir: Path) -> None:
     for split in ("train", "val", "test"):
         path = md.prepared_dir / f"{split}.jsonl"
         splits.append(f"{split}={_count_rows(path) if path.is_file() else 'missing'}")
-    empty = [s for s in splits if s.endswith("=0") or s.endswith("=missing")]
+    empty = [s for s in splits if s.endswith(("=0", "=missing"))]
     diag.add(
         section,
         "prepared splits",

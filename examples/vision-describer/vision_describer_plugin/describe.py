@@ -86,10 +86,7 @@ def describe_vision_result(payload: dict[str, Any] | str) -> str:
     else:
         base = f"A {scene} scene contains {objects}"
 
-    if pose:
-        sentence = f"{base}, with the centered figure {pose}."
-    else:
-        sentence = f"{base}."
+    sentence = f"{base}, with the centered figure {pose}." if pose else f"{base}."
 
     words = sentence.split()
     if len(words) > MAX_DESCRIPTION_WORDS:

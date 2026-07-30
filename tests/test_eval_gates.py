@@ -93,8 +93,7 @@ def test_smoke_gates_do_not_reach_the_trainer_config(tmp_path) -> None:
 
 
 def test_coverage_metric_is_always_reported() -> None:
-    from maatml.evaluation.harness import COVERAGE_METRIC, coverage_metrics
-    from maatml.evaluation.harness import RowEval
+    from maatml.evaluation.harness import COVERAGE_METRIC, RowEval, coverage_metrics
     from maatml.validation.base import ValidationResult
 
     def _row(text: str) -> RowEval:

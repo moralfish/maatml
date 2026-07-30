@@ -200,9 +200,9 @@ def per_class_prf(
 ) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     for label in labels:
-        tp = sum(1 for t, p in zip(true, pred) if t == label and p == label)
-        fp = sum(1 for t, p in zip(true, pred) if t != label and p == label)
-        fn = sum(1 for t, p in zip(true, pred) if t == label and p != label)
+        tp = sum(1 for t, p in zip(true, pred, strict=False) if t == label and p == label)
+        fp = sum(1 for t, p in zip(true, pred, strict=False) if t != label and p == label)
+        fn = sum(1 for t, p in zip(true, pred, strict=False) if t == label and p != label)
         out[label] = binary_prf(tp, fp, fn)
     return out
 
@@ -416,7 +416,7 @@ def _merge_metrics(
 ) -> dict[str, float]:
     merged: dict[str, float] = {}
     owner: dict[str, str] = {}
-    for name, fn in zip(names, callables):
+    for name, fn in zip(names, callables, strict=False):
         produced = fn(row_results) or {}
         for key, value in produced.items():
             if key in merged:

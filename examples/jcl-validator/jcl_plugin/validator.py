@@ -26,6 +26,8 @@ from maatml.validation.base import (
     ValidationError,
     ValidationResult,
     _load_json,
+)
+from maatml.validation.base import (
     strip_fences as strip_model_fences,
 )
 

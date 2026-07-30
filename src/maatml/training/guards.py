@@ -46,7 +46,8 @@ class NanGuardCallback:
                         continue
                     if fval != fval or fval in (float("inf"), float("-inf")):  # noqa: PLR0124
                         raise RuntimeError(
-                            f"Non-finite {key}={val!r} at step {state.global_step}; aborting training"
+                            f"Non-finite {key}={val!r} at step "
+                            f"{state.global_step}; aborting training"
                         )
 
         return _NanGuardCallback()

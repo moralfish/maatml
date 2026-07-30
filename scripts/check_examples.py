@@ -32,8 +32,8 @@ sys.path.insert(0, str(ROOT / "src"))
 from maatml.config import get_dataset_cfg, load_model_def  # noqa: E402
 from maatml.evaluation.harness import (  # noqa: E402
     RowEval,
-    effective_gates,
     _resolve_metrics,
+    effective_gates,
     resolve_validator,
 )
 from maatml.registry import FORMATS, discover_plugins  # noqa: E402

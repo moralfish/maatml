@@ -242,7 +242,7 @@ def run_distill(
     consecutive_failures = 0
     aborted_reason: Optional[str] = None
 
-    for index, prompt in enumerate(prompts):
+    for prompt in prompts:
         phash = _prompt_hash(prompt)
         key = TeacherCache.key(phash, cfg.teacher_model, cfg.teacher_revision)
         response = cache.get(key)

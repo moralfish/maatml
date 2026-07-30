@@ -206,7 +206,7 @@ def expand_param_grid(
     combos = list(itertools.product(*value_lists))
     if max_trials is not None and max_trials >= 0:
         combos = combos[:max_trials]
-    return [dict(zip(keys, combo)) for combo in combos]
+    return [dict(zip(keys, combo, strict=False)) for combo in combos]
 
 
 def overrides_from_mapping(mapping: dict[str, Any]) -> list[str]:

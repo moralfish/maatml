@@ -174,10 +174,7 @@ def write_manifest(export_dir: Path, manifest: dict[str, Any]) -> Path:
 def load_manifest(path: str | Path) -> tuple[Path, dict[str, Any]]:
     """Load a manifest from a file path or an export directory."""
     path = Path(path).resolve()
-    if path.is_dir():
-        manifest_path = path / "manifest.json"
-    else:
-        manifest_path = path
+    manifest_path = path / "manifest.json" if path.is_dir() else path
     if not manifest_path.is_file():
         raise FileNotFoundError(f"manifest.json not found at {manifest_path}")
     data = read_json(manifest_path)

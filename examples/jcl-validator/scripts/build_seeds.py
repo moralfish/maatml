@@ -33,15 +33,15 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(EXAMPLE_ROOT))
 
 from jcl_plugin.generator import (  # noqa: E402
+    DEFAULT_TEMPLATE_DIR,
     INJECTORS,
     _load_templates,
     _render_template,
-    DEFAULT_TEMPLATE_DIR,
 )
 from jcl_plugin.schemas import ErrorCategory  # noqa: E402
 from jcl_plugin.validator import validate_jcl_result  # noqa: E402
-from maatml.utils.io import stable_hash  # noqa: E402
 
+from maatml.utils.io import stable_hash  # noqa: E402
 
 MODEL_DIR = EXAMPLE_ROOT
 DATASETS = MODEL_DIR / "datasets"
@@ -263,10 +263,7 @@ def main(argv: list[str] | None = None) -> int:
             produced += 1
         print(f"  {category}: produced={produced}/{n} attempts={attempts}")
 
-    if args.append:
-        rows_to_write = existing_rows + accepted
-    else:
-        rows_to_write = accepted
+    rows_to_write = existing_rows + accepted if args.append else accepted
 
     with out_path.open("w", encoding="utf-8") as f:
         for row in rows_to_write:

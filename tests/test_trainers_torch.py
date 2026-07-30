@@ -13,7 +13,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from maatml.training.multi_head import HeadSpec, _build_dataset as build_head_dataset  # noqa: E402
+from maatml.training.multi_head import HeadSpec  # noqa: E402
+from maatml.training.multi_head import _build_dataset as build_head_dataset  # noqa: E402
 from maatml.training.seq2seq import _build_dataset as build_seq2seq_dataset  # noqa: E402
 
 
@@ -108,7 +109,9 @@ def test_build_chat_example_unmasks_every_assistant_turn() -> None:
         target_field="unused",
     )
     unmasked = "".join(
-        chr(tok) for tok, lab in zip(example["input_ids"], example["labels"]) if lab != -100
+        chr(tok)
+        for tok, lab in zip(example["input_ids"], example["labels"], strict=False)
+        if lab != -100
     )
     # Both assistant turns contribute to the loss; the user turns do not.
     assert unmasked == "bd"

@@ -146,8 +146,8 @@ def test_run_mint_gates_candidates_with_the_validator(tmp_path) -> None:
     from maatml.config import ModelDefinition
     from maatml.data.preference import run_mint
     from maatml.registry import register_validator
-    from maatml.validation.base import ValidationError, ValidationResult
     from maatml.utils.io import iter_jsonl
+    from maatml.validation.base import ValidationError, ValidationResult
 
     @register_validator("mint_test_validator")
     def _v(raw_output, *, schema_path=None, contracts_path=None, user_prompt=None, **_kw):

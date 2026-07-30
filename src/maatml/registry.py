@@ -8,6 +8,7 @@ Plugins can come from:
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib
 import importlib.util
@@ -297,9 +298,7 @@ def looks_like_plugin_path(entry: str, base_dir: Optional[Path] = None) -> bool:
         return True
     if os.path.splitdrive(entry)[0]:
         return True
-    if base_dir is not None and (Path(base_dir) / entry).exists():
-        return True
-    return False
+    return bool(base_dir is not None and (Path(base_dir) / entry).exists())
 
 
 def load_model_plugins(
@@ -435,10 +434,8 @@ def discover_plugins(*, force: bool = False) -> None:
         try:
             loaded = ep.load()
             if callable(loaded) and not isinstance(loaded, type):
-                try:
+                with contextlib.suppress(TypeError):
                     loaded()
-                except TypeError:
-                    pass
         except Exception as exc:  # noqa: BLE001
             _record_load_error(f"entry_point:{getattr(ep, 'name', ep)}", exc)
 

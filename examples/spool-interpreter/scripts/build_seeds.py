@@ -35,7 +35,6 @@ sys.path.insert(0, str(EXAMPLE_ROOT))
 
 from spool_plugin.validator import validate_spool_result  # noqa: E402
 
-
 MODEL_DIR = EXAMPLE_ROOT
 DATASETS = MODEL_DIR / "datasets"
 SCHEMA_PATH = DATASETS / "spool_interpretation_schema.json"

@@ -256,8 +256,8 @@ def test_parity_skipped_without_benchmark(tmp_path: Path) -> None:
 
 
 def test_parity_gates_with_mocked_eval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from maatml.evaluation.harness import Report
     import maatml.evaluation.harness as harness_mod
+    from maatml.evaluation.harness import Report
 
     model_dir = tmp_path / "model"
     model_dir.mkdir()

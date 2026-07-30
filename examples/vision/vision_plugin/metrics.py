@@ -69,7 +69,7 @@ def _ap_for_class(
     precs = []
     recs = []
     n_gt = len(gts)
-    for t, f in zip(tp, fp):
+    for t, f in zip(tp, fp, strict=False):
         cum_tp += t
         cum_fp += f
         precs.append(cum_tp / max(1, cum_tp + cum_fp))
@@ -77,7 +77,7 @@ def _ap_for_class(
     # 11-point interpolation
     ap = 0.0
     for t in [i / 10 for i in range(11)]:
-        prec_at = [p for p, r in zip(precs, recs) if r >= t]
+        prec_at = [p for p, r in zip(precs, recs, strict=False) if r >= t]
         ap += max(prec_at) if prec_at else 0.0
     return ap / 11.0
 

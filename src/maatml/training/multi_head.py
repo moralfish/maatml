@@ -27,11 +27,11 @@ from ..device import (
 from ..registry import TRANSFORMS
 from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
+from ..utils.tokenizers import resolve_special_tokens as _default_special_tokens
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs
 from .schedule import precision_flags, total_training_steps
 from .schedule import warmup_steps as resolve_warmup_steps
-from ..utils.tokenizers import resolve_special_tokens as _default_special_tokens
 from .sft_config import reject_unknown_training_keys, validate_precision
 
 _PATH_TOKEN = re.compile(r"([^[.\]]+)|\[(\d+)\]")
@@ -51,10 +51,7 @@ def _resolve_path(obj: Any, path: str) -> Any:
         if cur is None:
             return None
         if key is not None:
-            if isinstance(cur, dict):
-                cur = cur.get(key)
-            else:
-                cur = getattr(cur, key, None)
+            cur = cur.get(key) if isinstance(cur, dict) else getattr(cur, key, None)
         else:
             i = int(idx)
             if isinstance(cur, (list, tuple)) and 0 <= i < len(cur):
@@ -375,8 +372,8 @@ def _build_dataset(
     text_transform,
 ):
     """Flatten prepared JSONL rows into per-head classifier targets."""
-    from torch.utils.data import Dataset
     import torch
+    from torch.utils.data import Dataset
 
     class _MultiHeadDataset(Dataset):
         def __init__(self, samples: list[dict]) -> None:
@@ -462,7 +459,7 @@ def _train_loop(
     distributed: bool = False,
 ) -> MultiHeadResult:
     from torch import nn
-    from transformers import AutoModel, TrainingArguments, Trainer, set_seed
+    from transformers import AutoModel, Trainer, TrainingArguments, set_seed
 
     set_seed(cfg.seed)
 
@@ -729,7 +726,7 @@ def train_multi_head(
                 "rows would otherwise train as class 0 / 'none'."
             )
 
-        print(
+        print(  # noqa: T201  training progress goes to stdout
             f"multi_head: run={run.run_id} model={cfg.model_id} heads={[h.name for h in heads]} "
             f"train={len(train_rows)} val={len(val_rows)} "
             f"max_len={cfg.max_input_tokens} epochs={cfg.epochs}"

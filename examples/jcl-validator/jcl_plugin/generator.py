@@ -11,7 +11,6 @@ from maatml.utils.io import stable_hash
 
 from .schemas import ErrorCategory, JclSample
 
-
 EXAMPLE_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_TEMPLATE_DIR = EXAMPLE_ROOT / "datasets" / "templates"
 

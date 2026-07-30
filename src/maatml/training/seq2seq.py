@@ -250,9 +250,9 @@ def _train_loop(
 ) -> Seq2SeqResult:
     from transformers import (
         AutoModelForSeq2SeqLM,
+        DataCollatorForSeq2Seq,
         Seq2SeqTrainer,
         Seq2SeqTrainingArguments,
-        DataCollatorForSeq2Seq,
         set_seed,
     )
 
@@ -431,7 +431,7 @@ def train_seq2seq_model(
         train_rows, dropped_train = _drop_targetless(train_rows, target_field)
         val_rows, dropped_val = _drop_targetless(val_rows, target_field)
         if dropped_train or dropped_val:
-            print(
+            print(  # noqa: T201  training progress goes to stdout
                 f"seq2seq: dropped {dropped_train} train / {dropped_val} val rows "
                 f"with no {target_field!r} (they would have trained on an empty target)"
             )
@@ -441,7 +441,7 @@ def train_seq2seq_model(
                 f"{target_field!r}; check dataset.target_field"
             )
 
-        print(
+        print(  # noqa: T201  training progress goes to stdout
             f"seq2seq: run={run.run_id} model={cfg.model_id} train={len(train_rows)} "
             f"val={len(val_rows)} src_len={cfg.source_max_len} tgt_len={cfg.target_max_len} "
             f"epochs={cfg.epochs}"

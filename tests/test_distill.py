@@ -238,7 +238,9 @@ def test_cache_key_binds_prompt_and_teacher() -> None:
 
 
 def test_config_rejects_unknown_keys() -> None:
-    with pytest.raises(Exception):
+    # pydantic's ValidationError subclasses ValueError; matching the key
+    # keeps this specific instead of a blind `Exception`.
+    with pytest.raises(ValueError, match="teecher_model"):
         DistillConfig(prompt_source="p.jsonl", teecher_model="typo")
 
 

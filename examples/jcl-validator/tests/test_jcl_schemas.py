@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from jcl_plugin.schemas import (
     ErrorCategory,
     JclError,
@@ -10,6 +8,8 @@ from jcl_plugin.schemas import (
     JclValidationResult,
     Severity,
 )
+from pydantic import ValidationError
+
 from maatml.data.schemas import Split
 
 
