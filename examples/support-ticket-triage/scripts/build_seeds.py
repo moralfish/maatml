@@ -128,15 +128,22 @@ TEMPLATES: dict[str, list[tuple[str, str, str, str]]] = {
     ],
 }
 
+# Pool sizes are load bearing, not decorative: rows are deduped on the rendered
+# request, so the corpus can only be as large as the space these slots span. The
+# `bug` templates vary on `product` and `team_name` alone, which made them the
+# binding constraint (120 unique renderings against a ~144 round-robin share).
 POOLS: dict[str, list[str]] = {
     "month": ["January", "February", "March", "April", "May", "June", "July",
               "August", "September", "October", "November", "December"],
     "amount": ["$49", "$99", "$149", "$240", "$480", "$1,200"],
     "plan": ["Starter", "Pro", "Team", "Business", "Enterprise"],
     "invoice": ["INV-1042", "INV-2318", "INV-3907", "INV-4455", "INV-5120"],
-    "product": ["the console", "the mobile app", "the web app", "the admin portal"],
-    "team_name": ["support", "finance", "engineering", "sales", "operations"],
-    "count": ["three", "five", "eight", "twelve", "twenty"],
+    "product": ["the console", "the mobile app", "the web app", "the admin portal",
+                "the desktop client", "the reporting suite", "the API gateway",
+                "the billing portal", "the analytics workspace", "the partner portal"],
+    "team_name": ["support", "finance", "engineering", "sales", "operations",
+                  "marketing", "legal", "procurement", "security", "research"],
+    "count": ["three", "five", "eight", "twelve", "twenty", "two", "seven", "fifteen"],
 }
 
 
@@ -174,22 +181,48 @@ def _validate(sample: dict) -> tuple[bool, str]:
     return False, "; ".join(f"L{e.layer}.{e.code}" for e in result.errors[:3])
 
 
-def _generate(n: int, seed: int, namespace: str) -> list[dict]:
+def _generate(
+    n: int,
+    seed: int,
+    namespace: str,
+    *,
+    exclude_requests: set[str] | None = None,
+) -> list[dict]:
+    """Draw ``n`` validator-passing rows with distinct request texts.
+
+    Dedupes on the rendered request rather than on ``sample_id``. The template
+    space is small, so different indices routinely render the identical ticket;
+    keying on ``sample_id`` (a hash of category plus index) treated those as
+    distinct and let byte-identical rows into the corpus. ``exclude_requests``
+    keeps the benchmark disjoint from the seed corpus for the same reason: a
+    family namespace only relabels a duplicate, it does not prevent one.
+    """
     rng = random.Random(seed)
     categories = sorted(TEMPLATES)
     rows: list[dict] = []
-    seen: set[str] = set()
+    seen: set[str] = set(exclude_requests or ())
     index = 0
+    attempts = 0
+    # The reachable space is finite, so a target larger than it would otherwise
+    # spin forever. Fail with the number actually reached.
+    max_attempts = max(n * 400, 40_000)
     while len(rows) < n:
+        if attempts >= max_attempts:
+            raise RuntimeError(
+                f"template space exhausted after {attempts} attempts: produced "
+                f"{len(rows)}/{n} unique rows for namespace {namespace!r}. "
+                "Widen POOLS or add templates, or lower --target/--benchmark-n."
+            )
+        attempts += 1
         index += 1
         sample = _build_sample(rng, categories[index % len(categories)], index, namespace)
-        if sample["sample_id"] in seen:
+        if sample["request"] in seen:
             continue
         ok, err = _validate(sample)
         if not ok:
             print(f"  [reject] {sample['category']}: {err}")
             continue
-        seen.add(sample["sample_id"])
+        seen.add(sample["request"])
         rows.append(sample)
     return rows
 
@@ -215,13 +248,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"wrote {len(seeds)} seed rows -> {args.out}")
 
     if args.benchmark_n > 0:
-        # Benchmark rows are pinned to test, so they take their own family
-        # namespace to stay disjoint from the training splits.
-        bench = _generate(args.benchmark_n, args.seed + 1, "bench")
+        # Drawn disjoint from the seed corpus by request text, then pinned to
+        # test under its own family namespace. The namespace alone is not a
+        # leakage guard: it renames a duplicate rather than preventing one.
+        bench = _generate(
+            args.benchmark_n,
+            args.seed + 1,
+            "bench",
+            exclude_requests={row["request"] for row in seeds},
+        )
         for row in bench:
             row["family"] = f"bench:{row['family']}"
         _write(Path(args.benchmark_out), bench)
         print(f"wrote {len(bench)} benchmark rows -> {args.benchmark_out}")
+
+        overlap = {r["request"] for r in seeds} & {r["request"] for r in bench}
+        if overlap:  # pragma: no cover - guarded by exclude_requests above
+            raise RuntimeError(f"{len(overlap)} benchmark rows duplicate seed rows")
+        print("benchmark/seed request overlap: 0")
     return 0
 
 

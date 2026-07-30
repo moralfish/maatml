@@ -12,7 +12,7 @@ import json
 import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from rich.console import Console
 
@@ -230,18 +230,67 @@ def _warn_on_empty_splits(by_split: dict[Split, list[dict]], *, n_groups: int) -
     console.print(f"[yellow]warning[/] {message}")
 
 
+_IDENTITY_FIELDS = frozenset({"sample_id", "family", "source"})
+
+
+def _content_key(row: dict, request_field: Optional[str]) -> Optional[str]:
+    """Stable key for exact-duplicate detection across corpora.
+
+    Prefers the configured request field, else the row with its identity fields
+    stripped, so a row that was merely re-tagged still collides with its twin.
+    """
+    if request_field:
+        value = row.get(request_field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    payload = {k: v for k, v in row.items() if k not in _IDENTITY_FIELDS}
+    if not payload:
+        return None
+    try:
+        return json.dumps(payload, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return None
+
+
 def _check_benchmark_leakage(
     benchmark_rows: list[dict],
     group_assignment: dict[str, Split],
     *,
     group_by: Optional[str] = None,
+    seed_rows: Optional[list[dict]] = None,
+    request_field: Optional[str] = None,
 ) -> None:
-    """Refuse to pin a benchmark row whose group already trains.
+    """Refuse to pin a benchmark row that the seed corpus already contains.
 
-    Benchmark rows are pinned to test unconditionally. If one shares a group
-    key with rows the hash sent to train or val, the same family is on both
-    sides of the split and the benchmark number is inflated.
+    Two checks, because they catch different mistakes. The content check
+    compares the rendered request (or the row minus its identity fields), so a
+    benchmark drawn from the same generator as the seeds is caught even when it
+    carries its own family namespace: re-tagging renames a duplicate, it does
+    not prevent one. The group check then refuses a benchmark row whose group
+    key already trains, since benchmark rows are pinned to test unconditionally
+    and the same family would sit on both sides of the split.
     """
+    if seed_rows:
+        seed_content: dict[str, Any] = {}
+        for row in seed_rows:
+            key = _content_key(row, request_field)
+            if key is not None:
+                seed_content.setdefault(key, row.get("sample_id"))
+        duplicates: list[tuple[Any, Any]] = []
+        for row in benchmark_rows:
+            key = _content_key(row, request_field)
+            if key is not None and key in seed_content:
+                duplicates.append((row.get("sample_id"), seed_content[key]))
+        if duplicates:
+            preview = ", ".join(f"{b} == {s}" for b, s in duplicates[:5])
+            more = " ..." if len(duplicates) > 5 else ""
+            raise ValueError(
+                f"{len(duplicates)} benchmark row(s) duplicate seed rows by "
+                f"content: {preview}{more}. The benchmark would score "
+                "memorisation on those rows. Regenerate it disjoint from the "
+                "seed corpus (a separate family namespace is not enough)."
+            )
+
     leaked: dict[str, str] = {}
     for row in benchmark_rows:
         key = _group_key(row, group_by=group_by)
@@ -298,7 +347,14 @@ def prepare_rows(
                 family_counts[str(row["family"])] += 1
 
     if benchmark_rows:
-        _check_benchmark_leakage(benchmark_rows, group_assignment, group_by=group_by)
+        _check_benchmark_leakage(
+            benchmark_rows,
+            group_assignment,
+            group_by=group_by,
+            seed_rows=seed_rows,
+            request_field=str(cfg.get("request_field") or cfg.get("raw_field") or "")
+            or None,
+        )
         for row in benchmark_rows:
             tagged = dict(row)
             tagged["split"] = Split.test.value

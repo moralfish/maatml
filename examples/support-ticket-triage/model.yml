@@ -33,18 +33,25 @@ evaluation:
   validator: triage
   metrics: triage
   # routing_consistency_rate is the out-of-model contract (category -> team).
-  # Measured on Qwen3-0.6B LoRA, 551 train rows, n=143. Wilson 95% lower bound
-  # of each measured rate. Gold accuracies are gated next to the contract rate
-  # because consistency alone does not say the answer is right.
+  # Gold accuracies are gated next to the contract rate because consistency
+  # alone does not say the answer is right.
+  #
+  # PENDING RE-MEASUREMENT. The `measured` values below came from a benchmark
+  # that shared 66 of its 120 rows verbatim with the seed corpus, so they are
+  # inflated by an unknown amount on roughly 46% of the test split. The corpus
+  # has since been regenerated with the benchmark drawn disjoint by request
+  # text, but the thresholds have not been re-derived: that needs a training
+  # run. Treat the numbers as provisional until one lands, and re-derive each
+  # gate as the Wilson 95% lower bound of the newly measured rate.
   gates:
-    json_parse_rate: 0.97           # measured 1.000
-    schema_conformance_rate: 0.97   # measured 1.000
-    summary_quality_rate: 0.97      # measured 1.000
-    routing_consistency_rate: 0.95  # measured 0.986
-    all_layers_pass_rate: 0.95      # measured 0.986
-    team_accuracy: 0.88             # measured 0.937
-    category_accuracy: 0.86         # measured 0.923
-    priority_accuracy: 0.64         # measured 0.720
+    json_parse_rate: 0.97           # measured 1.000 (stale, contaminated split)
+    schema_conformance_rate: 0.97   # measured 1.000 (stale, contaminated split)
+    summary_quality_rate: 0.97      # measured 1.000 (stale, contaminated split)
+    routing_consistency_rate: 0.95  # measured 0.986 (stale, contaminated split)
+    all_layers_pass_rate: 0.95      # measured 0.986 (stale, contaminated split)
+    team_accuracy: 0.88             # measured 0.937 (stale, contaminated split)
+    category_accuracy: 0.86         # measured 0.923 (stale, contaminated split)
+    priority_accuracy: 0.64         # measured 0.720 (stale, contaminated split)
 
 training:
   model_id: Qwen/Qwen3-0.6B
