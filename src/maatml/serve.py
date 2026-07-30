@@ -41,7 +41,10 @@ DEFAULT_MAX_BODY_BYTES = 1_048_576
 
 logger = logging.getLogger("maatml.serve")
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
+# "" is deliberately absent: an empty host binds every interface, so treating it
+# as loopback would suppress the unauthenticated-bind check on the widest bind
+# there is.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class RequestTooLarge(Exception):
@@ -103,6 +106,20 @@ class CaptureWriter:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
             self._rows += 1
             return True
+
+
+def _reject_empty_token(auth_token: Optional[str]) -> None:
+    """Refuse an empty auth token rather than serving formality-only auth.
+
+    An empty token would advertise ``auth_required`` on /info while
+    ``_token_matches`` accepted a bare ``Bearer ``. The usual cause is an unset
+    variable expanding to "" in a unit file or compose env.
+    """
+    if auth_token is not None and not auth_token.strip():
+        raise ValueError(
+            "serve auth token is empty; unset MAATML_SERVE_TOKEN to serve "
+            "without auth, or provide a non-empty token."
+        )
 
 
 def _token_matches(provided: Optional[str], expected: str) -> bool:
@@ -273,6 +290,8 @@ def build_serve_context(
     val_name = ev.get("validator")
     if isinstance(val_name, str) and val_name:
         validator = VALIDATORS.require(val_name)
+
+    _reject_empty_token(auth_token)
 
     if enforce and validator is None:
         raise ValueError(
@@ -637,11 +656,22 @@ def run_server(
     auth_token: Optional[str] = None,
     max_retries: int = 0,
     capture_path: Optional[str | Path] = None,
+    allow_unauthenticated: bool = False,
 ) -> None:
     """Block serving until KeyboardInterrupt."""
     from rich.console import Console
 
     console = Console()
+    # Both checked before the socket is bound: refusing after `serve_model`
+    # would leave the port open on the interface we are refusing to serve on.
+    _reject_empty_token(auth_token)
+    if host not in _LOOPBACK_HOSTS and not auth_token and not allow_unauthenticated:
+        raise ValueError(
+            f"serve on non-loopback host {host!r} requires --auth-token (or "
+            "MAATML_SERVE_TOKEN): anyone who can reach the port could query the "
+            "model. Pass --allow-unauthenticated to bind anyway on a trusted "
+            "network."
+        )
     ctx = build_serve_context(
         model_def,
         checkpoint=checkpoint,
@@ -662,11 +692,11 @@ def run_server(
         device=device,
         context=ctx,
     )
-    if host not in _LOOPBACK_HOSTS and auth_token is None:
+    if host not in _LOOPBACK_HOSTS and not auth_token:
         console.print(
             f"[yellow]warning[/] binding non-loopback host {host!r} with no "
-            "auth token; anyone who can reach the port can query the model. "
-            "Pass --auth-token or expose only on a trusted network."
+            "auth token because --allow-unauthenticated was passed; anyone who "
+            "can reach the port can query the model."
         )
     console.print(
         f"[green]serving[/] {model_def.identity} ({model_def.architecture}) "

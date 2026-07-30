@@ -47,7 +47,7 @@ maatml verify examples/vision-vlm/output/export/<run_id>
 ## Serve locally (transformers)
 
 ```bash
-maatml serve examples/vision-vlm --checkpoint output/export/<run_id> --host 0.0.0.0 --port 8080
+maatml serve examples/vision-vlm --checkpoint output/export/<run_id> --port 8080
 python examples/vision-vlm/scripts/client_openai.py path/to.png --maatml http://127.0.0.1:8080/predict
 ```
 

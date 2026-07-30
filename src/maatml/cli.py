@@ -537,7 +537,14 @@ def cmd_serve(
         None,
         "--auth-token",
         help="Require this bearer token on /predict (also reads "
-        "MAATML_SERVE_TOKEN). Required for --capture and non-loopback binds.",
+        "MAATML_SERVE_TOKEN). Required for --capture, and for a non-loopback "
+        "bind unless --allow-unauthenticated is passed.",
+    ),
+    allow_unauthenticated: bool = typer.Option(
+        False,
+        "--allow-unauthenticated",
+        help="Permit a non-loopback bind with no auth token. Only for a "
+        "trusted network: anyone who can reach the port can query the model.",
     ),
     capture: Optional[Path] = typer.Option(
         None,
@@ -577,6 +584,7 @@ def cmd_serve(
             auth_token=token,
             max_retries=max_retries,
             capture_path=capture,
+            allow_unauthenticated=allow_unauthenticated,
         )
     except (FileNotFoundError, KeyError, ImportError, RuntimeError, ValueError) as exc:
         console.print(f"[red]serve failed[/] {exc}")

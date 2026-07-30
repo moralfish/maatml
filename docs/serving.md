@@ -17,7 +17,7 @@ predictor once and exposes:
 | `POST /predict?validate=1` | prediction **plus** the inline validator result |
 
 ```bash
-maatml serve examples/support-ticket-triage/ --host 0.0.0.0 --port 8080
+maatml serve examples/support-ticket-triage/ --port 8080
 ```
 
 It is intentionally simple, a single model, one request at a time, which keeps
@@ -46,10 +46,14 @@ extra and only applies to generative architectures.)
 ### Auth
 
 `--auth-token TOKEN` (or `MAATML_SERVE_TOKEN`) requires `Authorization: Bearer
-TOKEN` on `/predict`. It is compared in constant time, mandatory for `--capture`
-(below), and strongly recommended for any non-loopback bind, serving on
-`0.0.0.0` without it now prints a warning, because anyone who can reach the port
-can query the model.
+TOKEN` on `/predict`. It is compared in constant time, and it is mandatory both
+for `--capture` (below) and for any non-loopback bind: serving on `0.0.0.0`
+without a token is refused before the socket is opened, because anyone who can
+reach the port could query the model. An empty token is refused too, so an
+unset variable cannot silently produce a server whose auth is a formality.
+
+Pass `--allow-unauthenticated` to bind a non-loopback address anyway on a
+trusted network; it downgrades the refusal to a warning.
 
 ```bash
 maatml serve examples/support-ticket-triage/ --host 0.0.0.0 --auth-token "$TOKEN"

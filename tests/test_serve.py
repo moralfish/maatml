@@ -312,6 +312,28 @@ def test_serve_enforce_requires_validator(tmp_path: Path) -> None:
         build_serve_context(md, checkpoint=ckpt, device="cpu", enforce=True)
 
 
+@pytest.mark.parametrize("token", ["", "   "])
+def test_serve_refuses_empty_auth_token(tmp_path: Path, token: str) -> None:
+    """An empty token must not yield a server that advertises auth_required
+    while accepting a bare 'Bearer '. Fail closed instead."""
+    md, ckpt = _md_with_predictor(tmp_path, _FakePredictor, pred_name="empty_tok")
+    with pytest.raises(ValueError, match="auth token is empty"):
+        build_serve_context(md, checkpoint=ckpt, device="cpu", auth_token=token)
+
+
+def test_serve_non_loopback_requires_auth_token(tmp_path: Path) -> None:
+    """The --auth-token help promises it is required for a non-loopback bind,
+    so a bare 0.0.0.0 bind is refused before the socket is opened."""
+    from maatml.serve import run_server
+
+    md, ckpt = _md_with_predictor(tmp_path, _FakePredictor, pred_name="nonloop")
+    with pytest.raises(ValueError, match="requires --auth-token"):
+        run_server(md, checkpoint=ckpt, host="0.0.0.0", port=0, device="cpu")
+    # An empty host binds every interface, so it is not loopback either.
+    with pytest.raises(ValueError, match="requires --auth-token"):
+        run_server(md, checkpoint=ckpt, host="", port=0, device="cpu")
+
+
 def test_serve_500_hides_traceback_by_default(tmp_path: Path) -> None:
     md, ckpt = _md_with_predictor(tmp_path, _BoomPredictor, pred_name="boom")
     ctx = build_serve_context(md, checkpoint=ckpt, device="cpu")
