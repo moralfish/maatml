@@ -30,6 +30,7 @@ from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, wr
 from .load import from_pretrained_kwargs
 from .schedule import precision_flags, total_training_steps
 from .schedule import warmup_steps as resolve_warmup_steps
+from ..utils.tokenizers import resolve_special_tokens as _default_special_tokens
 from .sft_config import reject_unknown_training_keys, validate_precision
 
 _PATH_TOKEN = re.compile(r"([^[.\]]+)|\[(\d+)\]")
@@ -423,43 +424,6 @@ def _build_dataset(
             return item
 
     return _MultiHeadDataset(rows)
-
-
-def _default_special_tokens(tokenizer_path: Optional[Path]) -> dict[str, Any]:
-    """Read special tokens from tokenizer.json when possible."""
-    defaults = {
-        "pad_token": "<PAD>",
-        "unk_token": "<UNK>",
-        "cls_token": "<CLS>",
-        "sep_token": "<SEP>",
-        "mask_token": "<MASK>",
-        "additional_special_tokens": ["<COL1>", "<CONT>"],
-    }
-    if tokenizer_path is None or not tokenizer_path.exists():
-        return defaults
-    try:
-        import json
-
-        data = json.loads(tokenizer_path.read_text(encoding="utf-8"))
-        added = data.get("added_tokens") or []
-        specials = [t["content"] for t in added if isinstance(t, dict) and t.get("special")]
-        if not specials:
-            return defaults
-        # Prefer known names from the file; keep defaults for missing slots.
-        known = set(specials)
-        for key, val in list(defaults.items()):
-            if key == "additional_special_tokens":
-                defaults[key] = [t for t in val if t in known] or val
-            elif val in known:
-                pass
-            else:
-                for s in specials:
-                    if key.replace("_token", "").upper() in s.upper().strip("<>"):
-                        defaults[key] = s
-                        break
-        return defaults
-    except Exception:  # noqa: BLE001
-        return defaults
 
 
 def _train_loop(

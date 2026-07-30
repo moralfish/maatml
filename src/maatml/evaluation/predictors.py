@@ -13,6 +13,7 @@ from typing import Any, Optional
 from ..config import ModelDefinition, get_dataset_cfg
 from ..device import resolve_device
 from ..registry import TRANSFORMS, register_predictor
+from ..utils.tokenizers import resolve_special_tokens as _tokenizer_specials
 from .harness import resolve_eval_asset
 
 
@@ -46,29 +47,6 @@ def _load_head_specs(checkpoint_dir: Path, model_def: Optional[ModelDefinition])
 
         return [h.to_dict() for h in parse_heads(dict(model_def.training or {}))]
     return []
-
-
-def _tokenizer_specials(tokenizer_path: Path) -> dict[str, Any]:
-    defaults = {
-        "pad_token": "<PAD>",
-        "unk_token": "<UNK>",
-        "cls_token": "<CLS>",
-        "sep_token": "<SEP>",
-        "mask_token": "<MASK>",
-        "additional_special_tokens": ["<COL1>", "<CONT>"],
-    }
-    try:
-        data = json.loads(tokenizer_path.read_text(encoding="utf-8"))
-        added = data.get("added_tokens") or []
-        specials = [t["content"] for t in added if isinstance(t, dict) and t.get("special")]
-        if specials:
-            known = set(specials)
-            extras = [t for t in defaults["additional_special_tokens"] if t in known]
-            if extras:
-                defaults["additional_special_tokens"] = extras
-    except Exception:  # noqa: BLE001
-        pass
-    return defaults
 
 
 class MultiHeadClassifierPredictor:

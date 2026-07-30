@@ -272,3 +272,44 @@ def test_shipped_example_configs_survive_the_strict_key_check() -> None:
         cls.from_dict(dict(md.training))
         # smoke maps base_model -> model_id and drops smoke-only keys.
         cls.from_dict(md.merged_smoke())
+
+
+def test_trainer_and_predictor_resolve_identical_special_tokens(tmp_path) -> None:
+    """Train/eval tokenization skew: the trainer rebound pad_token to the
+    tokenizer file's name while the predictor kept the built-in <PAD>, so a
+    tokenizer declaring [PAD] trained and evaluated with different pad tokens."""
+    import json
+
+    from maatml.evaluation.predictors import _tokenizer_specials
+    from maatml.training.multi_head import _default_special_tokens
+    from maatml.utils.tokenizers import resolve_special_tokens
+
+    def _tok(names):
+        path = tmp_path / f"tok_{abs(hash(tuple(names)))}.json"
+        path.write_text(
+            json.dumps(
+                {"added_tokens": [{"content": n, "special": True} for n in names]}
+            ),
+            encoding="utf-8",
+        )
+        return path
+
+    for names in (
+        ["<PAD>", "<UNK>", "<CLS>", "<SEP>", "<MASK>", "<COL1>", "<CONT>"],
+        ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
+        [],
+    ):
+        path = _tok(names)
+        assert _default_special_tokens(path) == _tokenizer_specials(path)
+
+    # The square-bracket tokenizer is the case that used to diverge.
+    square = resolve_special_tokens(_tok(["[PAD]", "[UNK]"]))
+    assert square["pad_token"] == "[PAD]"
+    assert square["unk_token"] == "[UNK]"
+
+    # A missing or unreadable tokenizer falls back rather than raising.
+    assert resolve_special_tokens(None)["pad_token"] == "<PAD>"
+    assert resolve_special_tokens(tmp_path / "nope.json")["pad_token"] == "<PAD>"
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert resolve_special_tokens(bad)["pad_token"] == "<PAD>"
