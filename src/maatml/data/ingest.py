@@ -7,7 +7,13 @@ from typing import Any, Optional
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import SANITIZERS, VALIDATORS
-from ..utils.io import iter_jsonl, sha256_file, stable_hash, write_json, write_jsonl
+from ..utils.io import (
+    iter_jsonl,
+    sha256_file,
+    stable_hash,
+    write_json,
+    write_jsonl_atomic,
+)
 
 
 def _read_input(path: Path) -> list[dict[str, Any]]:
@@ -69,6 +75,10 @@ def ingest_samples(
 
     Writes a rejection report JSON next to the seed file
     (``<stem>.ingest_rejected.json``).
+
+    The seed corpus is written atomically, and only when at least one row was
+    accepted: a run that accepts nothing leaves an existing corpus untouched and
+    reports ``protected_existing``, including under ``append=False``.
     """
     input_path = Path(input_path).resolve()
     cfg = get_dataset_cfg(model_def)
@@ -175,8 +185,22 @@ def ingest_samples(
         seen.add(sid)
         accepted.append(sample)
 
-    out_rows = existing + accepted if append else accepted
-    write_jsonl(seeds_path, out_rows)
+    # Never truncate or rewrite a non-empty seed file when nothing was accepted.
+    # A validator that rejected everything (or an empty input) must not destroy a
+    # hand-curated corpus, and --no-append must not turn a zero-accept run into
+    # an empty file.
+    seed_existing_nonempty = seeds_path.is_file() and seeds_path.stat().st_size > 0
+    if accepted:
+        out_rows = existing + accepted if append else accepted
+        write_jsonl_atomic(seeds_path, out_rows)
+        seed_written = True
+        protected_existing = False
+    else:
+        seed_written = False
+        protected_existing = seed_existing_nonempty
+        out_rows = existing if append else (
+            list(iter_jsonl(seeds_path)) if seeds_path.is_file() else []
+        )
 
     reject_path = seeds_path.with_name(
         seeds_path.stem + ".ingest_rejected.json"
@@ -189,6 +213,8 @@ def ingest_samples(
         "skipped_unvalidated": len(skipped_unvalidated),
         "unapproved_capture": unapproved_capture,
         "total_seeds": len(out_rows),
+        "seed_written": seed_written,
+        "protected_existing": protected_existing,
         "rejected_rows": rejected,
         "skipped_unvalidated_rows": skipped_unvalidated,
     }
@@ -201,4 +227,6 @@ def ingest_samples(
         "skipped_unvalidated": len(skipped_unvalidated),
         "unapproved_capture": unapproved_capture,
         "total_seeds": len(out_rows),
+        "seed_written": seed_written,
+        "protected_existing": protected_existing,
     }

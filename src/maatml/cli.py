@@ -749,6 +749,11 @@ def cmd_ingest(
             f"[yellow]note[/] refused {result['unapproved_capture']} unapproved "
             "serve-capture row(s); set approved: true after review to ingest them"
         )
+    if result.get("protected_existing"):
+        console.print(
+            "[yellow]note[/] nothing accepted; left the existing seed corpus "
+            "untouched rather than rewriting it"
+        )
 
 
 @app.command("mint")
