@@ -34,6 +34,21 @@ def test_serve_gating_wording_updated() -> None:
     assert "--enforce" in life
 
 
+def test_serve_validation_is_not_claimed_on_by_default() -> None:
+    """serve validates only under --enforce or ?validate=1 (serve.py
+    do_validate). The front page must not promise reporting by default, and it
+    must name the opt-in query parameter that actually turns annotation on.
+
+    The behaviour itself is pinned by test_serve.py: a plain /predict has no
+    ``valid`` key, ?validate=1 sets it, and --enforce returns 422 on a failing
+    output. This test only keeps the docs honest about it."""
+    for doc in ("README.md", "docs/index.md"):
+        norm = _norm(doc)
+        assert "reporting the result by default" not in norm
+        assert "validate=1" in norm
+        assert "--enforce" in norm
+
+
 def test_trust_boundary_documented() -> None:
     readme = _read("README.md")
     assert "Trust boundary" in readme
