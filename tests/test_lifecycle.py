@@ -329,3 +329,44 @@ def test_run_pipeline_validates_config_before_running_anything(
         run_pipeline(md, RunOptions(device="cpu"))
     assert fake_steps == [], "nothing should run when the config cannot be used"
     assert not state_path(md).exists()
+
+
+def test_limit_and_seed_change_the_train_fingerprint(tmp_path: Path) -> None:
+    """A run truncated with --limit trained on a fraction of the corpus. Leaving
+    limit/seed out of the fingerprint let the next plain run report 'all fresh'
+    over that checkpoint, and evaluate/export/verify inherited the skip."""
+    md = _model(tmp_path)
+    base = compute_components(md, smoke=False, device="cpu")["train"]
+    limited = compute_components(md, smoke=False, device="cpu", limit=50)["train"]
+    seeded = compute_components(md, smoke=False, device="cpu", seed=7)["train"]
+
+    assert base["limit"] == "none" and base["seed"] == "none"
+    assert limited["limit"] == "50"
+    assert seeded["seed"] == "7"
+    assert limited != base, "--limit must not look fresh against a full run"
+    assert seeded != base, "--seed must not look fresh against another seed"
+    # Downstream steps inherit train's fingerprint, so they go stale too.
+    assert (
+        compute_components(md, smoke=False, device="cpu", limit=50)["evaluate"]["upstream"]
+        != compute_components(md, smoke=False, device="cpu")["evaluate"]["upstream"]
+    )
+
+
+def test_environment_sha_ignores_an_unrelated_repository(monkeypatch) -> None:
+    """The environment component may only track maatml's own checkout. Asking
+    git from the package directory otherwise returns the SHA of whatever repo
+    contains site-packages, forcing spurious full retrains."""
+    from maatml.training import guards
+
+    calls: list[list[str]] = []
+
+    def _fake_check_output(cmd, **kwargs):
+        calls.append(list(cmd))
+        if "--show-toplevel" in cmd:
+            # An unrelated repository that does not hold src/maatml.
+            return "/some/other/repo\n"
+        return "deadbeef\n"
+
+    monkeypatch.setattr(guards.subprocess, "check_output", _fake_check_output)
+    assert guards.maatml_checkout_sha() is None
+    assert any("--show-toplevel" in c for c in calls)

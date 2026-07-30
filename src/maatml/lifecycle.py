@@ -206,12 +206,14 @@ def _prepared_hash(model_def: ModelDefinition, splits: tuple[str, ...]) -> str:
 
 
 def _environment_component() -> str:
-    from .training.guards import _git_sha, _pkg_version
+    from .training.guards import _pkg_version, maatml_checkout_sha
 
     return stable_hash(
         _pkg_version("maatml"),
         # A checkout's SHA distinguishes "same version string, different code".
-        _git_sha(Path(__file__).resolve().parent),
+        # None for an installed package, so an unrelated repository's commits
+        # cannot invalidate every step.
+        maatml_checkout_sha(),
     )
 
 
@@ -227,11 +229,18 @@ def compute_components(
     checkpoint: Optional[Path] = None,
     export_dir: Optional[Path] = None,
     export_format: Optional[str] = None,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> dict[str, dict[str, str]]:
     """Fingerprint components per step, keyed by component name.
 
     Named components (rather than one opaque hash) are what lets ``--dry-run``
     say *why* a step is stale.
+
+    ``limit`` and ``seed`` belong to the train fingerprint because both change
+    the checkpoint: a run truncated with ``--limit`` trained on a fraction of
+    the corpus, and leaving them out let the next plain ``maatml run`` report
+    "all fresh" over it, with evaluate/export/verify inheriting the skip.
     """
     from .evaluation.harness import effective_gates
     from .scaffold import normalize_architecture
@@ -260,6 +269,8 @@ def compute_components(
         ),
         "smoke": str(bool(smoke)),
         "device": str(device),
+        "limit": "none" if limit is None else str(int(limit)),
+        "seed": "none" if seed is None else str(int(seed)),
         "prepared_data": _prepared_hash(model_def, ("train", "val")),
     }
     train_fp = stable_hash(sorted(train.items()))
@@ -407,6 +418,8 @@ def plan_pipeline(
     export_dir: Optional[Path] = None,
     export_format: Optional[str] = None,
     eval_report: Optional[Path] = None,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> list[StepPlan]:
     """Per-step fresh/stale decision, with the reason a step is stale."""
     selected = _selected_steps(from_step, until_step)
@@ -418,6 +431,8 @@ def plan_pipeline(
         checkpoint=checkpoint,
         export_dir=export_dir,
         export_format=export_format,
+        limit=limit,
+        seed=seed,
     )
 
     plans: list[StepPlan] = []
@@ -667,6 +682,8 @@ def run_pipeline(
                 export_dir=export_dir,
                 export_format=options.export_format,
                 eval_report=report,
+                limit=options.limit,
+                seed=options.seed,
             )
         }
         plan = plans[step]
@@ -708,6 +725,8 @@ def run_pipeline(
             checkpoint=checkpoint,
             export_dir=export_dir,
             export_format=options.export_format,
+            limit=options.limit,
+            seed=options.seed,
         )[step]
         record_step(
             model_def,

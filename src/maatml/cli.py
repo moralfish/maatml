@@ -1052,6 +1052,8 @@ def cmd_run(
         export_dir=export_dir,
         export_format=export_format,
         eval_report=report,
+        limit=limit,
+        seed=seed,
     )
 
     if dry_run:

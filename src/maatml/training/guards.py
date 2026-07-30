@@ -63,10 +63,41 @@ def _git_sha(cwd: Optional[Path] = None) -> Optional[str]:
             cwd=str(cwd) if cwd else None,
             stderr=subprocess.DEVNULL,
             text=True,
+            # Bounded: git on a pathological or network filesystem must not
+            # hang a training run behind provenance capture.
+            timeout=5,
         )
         return out.strip() or None
     except Exception:  # noqa: BLE001
         return None
+
+
+def maatml_checkout_sha() -> Optional[str]:
+    """SHA of maatml's own source checkout, or None when pip-installed.
+
+    Asking git for HEAD from the package directory returns the SHA of whatever
+    repository happens to contain it. For a pip install under a path that sits
+    inside an unrelated repo, every commit there changed maatml's environment
+    fingerprint and forced a full retrain, which is the opposite of the
+    documented idempotence. Only a checkout whose root holds this very file at
+    ``src/maatml/__init__.py`` counts.
+    """
+    pkg_dir = Path(__file__).resolve().parent.parent  # .../src/maatml
+    try:
+        toplevel = subprocess.check_output(
+            ["git", "-C", str(pkg_dir), "rev-parse", "--show-toplevel"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        ).strip()
+    except Exception:  # noqa: BLE001
+        return None
+    if not toplevel:
+        return None
+    expected = Path(toplevel).resolve() / "src" / "maatml" / "__init__.py"
+    if not expected.is_file() or expected != pkg_dir / "__init__.py":
+        return None
+    return _git_sha(pkg_dir)
 
 
 def _pkg_version(name: str) -> Optional[str]:
