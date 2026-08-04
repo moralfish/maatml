@@ -57,9 +57,24 @@ def test_teacher_chat_completions(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     text = client.chat_completions([{"role": "user", "content": "ping"}])
     assert "request" in text
+    assert _FakeClient.last_payload["temperature"] == 0.7
     row = client.propose_json_row("sys", "user")
     assert row["request"] == "hi"
     assert row["target"]["ok"] is True
+
+
+def test_teacher_temperature_none_is_omitted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Some endpoints reject the `temperature` field itself; None must drop it
+    from the payload rather than send null."""
+    import maatml.data.teacher as teacher_mod
+
+    class _Httpx:
+        Client = _FakeClient
+
+    monkeypatch.setattr(teacher_mod, "_require_httpx", lambda: _Httpx)
+    client = TeacherClient(base_url="https://example.test/v1", api_key="sk-test", model="toy")
+    client.chat_completions([{"role": "user", "content": "ping"}], temperature=None)
+    assert "temperature" not in _FakeClient.last_payload
 
 
 def test_teacher_requires_explicit_base_url(monkeypatch: pytest.MonkeyPatch) -> None:

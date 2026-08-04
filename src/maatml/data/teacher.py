@@ -60,11 +60,15 @@ class TeacherClient:
         messages: list[dict[str, str]],
         *,
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = 0.7,
         max_tokens: int = 1024,
         **kwargs: Any,
     ) -> str:
-        """POST ``/chat/completions`` and return the assistant message content."""
+        """POST ``/chat/completions`` and return the assistant message content.
+
+        ``temperature=None`` omits the field entirely: some endpoints reject
+        the parameter itself, not just particular values.
+        """
         httpx = _require_httpx()
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
@@ -73,9 +77,10 @@ class TeacherClient:
         payload: dict[str, Any] = {
             "model": model or self.model,
             "messages": messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
         payload.update(kwargs)
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)
