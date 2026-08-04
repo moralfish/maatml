@@ -1,9 +1,10 @@
 """Registered evaluation predictors (model load + per-row generation).
 
 Each predictor is a small class with ``setup(...)`` then ``predict(row) -> str``.
-Asset resolution uses ``maatml.evaluation.harness.resolve_eval_asset``: 
+Asset resolution uses ``maatml.evaluation.harness.resolve_eval_asset``:
 never a hardcoded repo-root fallback.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,7 @@ from typing import Any, Optional
 from ..config import ModelDefinition, get_dataset_cfg
 from ..device import resolve_device
 from ..registry import TRANSFORMS, register_predictor
+from ..utils.tokenizers import resolve_special_tokens as _tokenizer_specials
 from .harness import resolve_eval_asset
 
 
@@ -46,29 +48,6 @@ def _load_head_specs(checkpoint_dir: Path, model_def: Optional[ModelDefinition])
 
         return [h.to_dict() for h in parse_heads(dict(model_def.training or {}))]
     return []
-
-
-def _tokenizer_specials(tokenizer_path: Path) -> dict[str, Any]:
-    defaults = {
-        "pad_token": "<PAD>",
-        "unk_token": "<UNK>",
-        "cls_token": "<CLS>",
-        "sep_token": "<SEP>",
-        "mask_token": "<MASK>",
-        "additional_special_tokens": ["<COL1>", "<CONT>"],
-    }
-    try:
-        data = json.loads(tokenizer_path.read_text(encoding="utf-8"))
-        added = data.get("added_tokens") or []
-        specials = [t["content"] for t in added if isinstance(t, dict) and t.get("special")]
-        if specials:
-            known = set(specials)
-            extras = [t for t in defaults["additional_special_tokens"] if t in known]
-            if extras:
-                defaults["additional_special_tokens"] = extras
-    except Exception:  # noqa: BLE001
-        pass
-    return defaults
 
 
 class MultiHeadClassifierPredictor:
@@ -114,16 +93,12 @@ class MultiHeadClassifierPredictor:
 
         self._torch = torch
         self._max_input_tokens = max_input_tokens
-        self._device = (
-            device if hasattr(device, "type") else resolve_device(str(device))
-        )
+        self._device = device if hasattr(device, "type") else resolve_device(str(device))
         self._head_specs = _load_head_specs(checkpoint_dir, model_def)
 
         if model_def is not None:
             cfg = get_dataset_cfg(model_def)
-            self._request_field = (
-                cfg.get("request_field") or cfg.get("raw_field") or "request"
-            )
+            self._request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
             transform_name = cfg.get("text_transform")
             if transform_name:
                 self._text_transform = TRANSFORMS.get(str(transform_name))
@@ -196,9 +171,7 @@ class MultiHeadClassifierPredictor:
             self._tokenizer, pre, self._max_input_tokens, len(encoding["input_ids"])
         ):
             self._truncated += 1
-        input_ids = torch.tensor(
-            [encoding["input_ids"]], dtype=torch.long, device=self._device
-        )
+        input_ids = torch.tensor([encoding["input_ids"]], dtype=torch.long, device=self._device)
         attention_mask = torch.tensor(
             [encoding["attention_mask"]], dtype=torch.long, device=self._device
         )
@@ -288,30 +261,22 @@ class Seq2SeqPredictor:
         self._torch = torch
         self._task_prefix = ""
         self._max_input_tokens = max_input_tokens
-        self._device = (
-            device if hasattr(device, "type") else resolve_device(str(device))
-        )
+        self._device = device if hasattr(device, "type") else resolve_device(str(device))
         if model_def is not None:
             cfg = get_dataset_cfg(model_def)
             self._task_prefix = cfg.get("source_prefix") or ""
-            self._request_field = (
-                cfg.get("request_field") or cfg.get("raw_field") or "request"
-            )
+            self._request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
             gen = (model_def.training or {}).get("generation") or {}
             if "max_new_tokens" in gen:
                 self._max_new_tokens = int(gen["max_new_tokens"])
-            self._repair_braces = bool(
-                (model_def.evaluation or {}).get("repair_braces", False)
-            )
+            self._repair_braces = bool((model_def.evaluation or {}).get("repair_braces", False))
 
         checkpoint_dir = Path(checkpoint_dir)
         self._tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir, use_fast=True)
-        inference_dtype = (
-            torch.float16 if self._device.type in ("mps", "cuda") else torch.float32
+        inference_dtype = torch.float16 if self._device.type in ("mps", "cuda") else torch.float32
+        model = AutoModelForSeq2SeqLM.from_pretrained(checkpoint_dir, dtype=inference_dtype).to(
+            self._device
         )
-        model = AutoModelForSeq2SeqLM.from_pretrained(
-            checkpoint_dir, dtype=inference_dtype
-        ).to(self._device)
         model.eval()
         self._model = model
 
@@ -342,9 +307,7 @@ class Seq2SeqPredictor:
                 do_sample=False,
             )
 
-        gen_text = self._tokenizer.decode(
-            generated[0], skip_special_tokens=True
-        ).strip()
+        gen_text = self._tokenizer.decode(generated[0], skip_special_tokens=True).strip()
         if not self._repair_braces or not gen_text:
             return gen_text
         # T5 SentencePiece maps `{`/`}` to <unk>; skip_special_tokens strips them.
@@ -397,9 +360,7 @@ class CausalSFTPredictor:
         self._torch = torch
         self._render = render_inference_prompt
         self._max_input_tokens = max_input_tokens
-        self._device = (
-            device if hasattr(device, "type") else resolve_device(str(device))
-        )
+        self._device = device if hasattr(device, "type") else resolve_device(str(device))
 
         checkpoint_dir = Path(checkpoint_dir)
         if prompt_spec_path is None:
@@ -413,18 +374,14 @@ class CausalSFTPredictor:
 
         if model_def is not None:
             cfg = get_dataset_cfg(model_def)
-            self._request_field = (
-                cfg.get("request_field") or cfg.get("raw_field") or "request"
-            )
+            self._request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
             self._user_placeholder = cfg.get("user_placeholder") or "<<USER_REQUEST>>"
             gen = (model_def.training or {}).get("generation") or {}
             if "max_new_tokens" in gen:
                 self._max_new_tokens = int(gen["max_new_tokens"])
 
         self._tokenizer = AutoTokenizer.from_pretrained(checkpoint_dir, use_fast=True)
-        inference_dtype = (
-            torch.float16 if self._device.type in ("mps", "cuda") else torch.float32
-        )
+        inference_dtype = torch.float16 if self._device.type in ("mps", "cuda") else torch.float32
         adapter_cfg = checkpoint_dir / "adapter_config.json"
         adapter_subdir = checkpoint_dir / "adapter" / "adapter_config.json"
         if adapter_cfg.is_file() or adapter_subdir.is_file():
@@ -436,30 +393,24 @@ class CausalSFTPredictor:
             if meta_path.is_file():
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
                 extra = meta.get("extra") or {}
-                base_id = extra.get("base_model_id") or (meta.get("spec") or {}).get(
-                    "base_model"
-                )
+                base_id = extra.get("base_model_id") or (meta.get("spec") or {}).get("base_model")
             if base_id is None and model_def is not None:
                 base_id = (model_def.training or {}).get("model_id") or model_def.base_model
             if not base_id:
                 # PEFT adapter_config.json stores base_model_name_or_path.
-                acfg = json.loads(
-                    (adapter_dir / "adapter_config.json").read_text(encoding="utf-8")
-                )
+                acfg = json.loads((adapter_dir / "adapter_config.json").read_text(encoding="utf-8"))
                 base_id = acfg.get("base_model_name_or_path")
             if not base_id:
                 raise FileNotFoundError(
                     f"Adapter checkpoint at {adapter_dir} but no base model id found "
                     "(set run_metadata.extra.base_model_id or training.model_id)"
                 )
-            base = AutoModelForCausalLM.from_pretrained(
-                base_id, dtype=inference_dtype
-            )
+            base = AutoModelForCausalLM.from_pretrained(base_id, dtype=inference_dtype)
             model = PeftModel.from_pretrained(base, adapter_dir).to(self._device)
         else:
-            model = AutoModelForCausalLM.from_pretrained(
-                checkpoint_dir, dtype=inference_dtype
-            ).to(self._device)
+            model = AutoModelForCausalLM.from_pretrained(checkpoint_dir, dtype=inference_dtype).to(
+                self._device
+            )
         model.eval()
         self._model = model
 
@@ -482,8 +433,7 @@ class CausalSFTPredictor:
                 input_ids=tensor,
                 max_new_tokens=self._max_new_tokens,
                 do_sample=False,
-                pad_token_id=self._tokenizer.pad_token_id
-                or self._tokenizer.eos_token_id,
+                pad_token_id=self._tokenizer.pad_token_id or self._tokenizer.eos_token_id,
             )
         new_tokens = generated[0, tensor.shape[-1] :]
         return self._tokenizer.decode(new_tokens, skip_special_tokens=True).strip()

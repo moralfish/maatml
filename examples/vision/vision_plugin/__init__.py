@@ -1,4 +1,5 @@
 """Vision multitask example plugin, trainer, eval, datagen, ONNX export."""
+
 from __future__ import annotations
 
 from maatml.registry import (

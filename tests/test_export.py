@@ -1,6 +1,9 @@
 """Safetensors export bundle (fake checkpoint, no real weights required)."""
+
 from __future__ import annotations
 
+import json
+import struct
 from pathlib import Path
 
 import pytest
@@ -20,6 +23,7 @@ def _boot_exporters():
 def test_resolve_export_format_constraints() -> None:
     assert resolve_export_format("causal_sft") == "safetensors"
     assert resolve_export_format("causal_sft", "gguf") == "gguf"
+    assert resolve_export_format("seq2seq", "mlx") == "mlx"
     with pytest.raises(ValueError, match="only supported"):
         resolve_export_format("seq2seq", "gguf")
     with pytest.raises(ValueError, match="only supported"):
@@ -82,6 +86,137 @@ def test_export_safetensors_bundle(tmp_path: Path) -> None:
     assert verify_manifest(out) == []
 
 
+def _write_safetensors(path: Path, names: list[str]) -> None:
+    """Write a minimal valid .safetensors file with the given tensor names."""
+    header: dict[str, object] = {}
+    offset = 0
+    for name in names:
+        header[name] = {"dtype": "F32", "shape": [1], "data_offsets": [offset, offset + 4]}
+        offset += 4
+    hb = json.dumps(header).encode("utf-8")
+    path.write_bytes(struct.pack("<Q", len(hb)) + hb + b"\x00" * offset)
+
+
+def _seq2seq_checkpoint(tmp_path: Path, *, with_spiece: bool = True) -> Path:
+    ckpt = tmp_path / "ckpt"
+    ckpt.mkdir()
+    _write_safetensors(ckpt / "model.safetensors", ["shared.weight", "lm_head.weight"])
+    (ckpt / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["T5ForConditionalGeneration"],
+                "tie_word_embeddings": True,
+                "decoder_start_token_id": 0,
+                "eos_token_id": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (ckpt / "generation_config.json").write_text(
+        '{"decoder_start_token_id": 0, "max_new_tokens": 256}', encoding="utf-8"
+    )
+    (ckpt / "tokenizer.json").write_text('{"model":{}}', encoding="utf-8")
+    (ckpt / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+    if with_spiece:
+        (ckpt / "spiece.model").write_bytes(b"spm")
+    return ckpt
+
+
+def _seq2seq_model_def(tmp_path: Path) -> ModelDefinition:
+    model_dir = tmp_path / "model"
+    model_dir.mkdir(exist_ok=True)
+    md = ModelDefinition(
+        name="toy-seq2seq",
+        model_id="toy-seq2seq",
+        version="0.1.0",
+        architecture="seq2seq",
+        base_model="toy/t5",
+        dataset={"source_prefix": "interpret spool: "},
+        training={"source_max_len": 1024, "generation": {"max_new_tokens": 512}},
+        evaluation={"repair_braces": True},
+    )
+    object.__setattr__(md, "model_dir", model_dir)
+    return md
+
+
+def test_export_mlx_seq2seq_bundle(tmp_path: Path) -> None:
+    from maatml.export.mlx_export import export_mlx
+
+    ckpt = _seq2seq_checkpoint(tmp_path)
+    md = _seq2seq_model_def(tmp_path)
+    out = tmp_path / "export"
+
+    # No mlx_lm required: the seq2seq path assembles the bundle directly.
+    export_mlx(md, ckpt, out, run_id="run-1")
+
+    bundle = out / "toy-seq2seq.mlx"
+    for name in (
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "generation_config.json",
+        "spiece.model",
+        "serving.json",
+    ):
+        assert (bundle / name).is_file(), name
+
+    serving = read_json(bundle / "serving.json")
+    assert serving == {
+        "contract": "maatml.serving/1",
+        "kind": "seq2seq_lm",
+        "max_input_tokens": 1024,
+        "max_new_tokens": 512,
+        "decoder_start_token_id": 0,
+        "eos_token_id": 1,
+        "input_prefix": "interpret spool: ",
+        "output_note": (
+            "emits the JSON object body without outer braces; T5 vocab maps "
+            "{ } to unk. Clients re-add the braces before parsing."
+        ),
+    }
+
+    # The fine-tune untied the head, so the bundle config must say so.
+    assert read_json(bundle / "config.json")["tie_word_embeddings"] is False
+    # The top-level safetensors bundle keeps the checkpoint config untouched.
+    assert read_json(out / "config.json")["tie_word_embeddings"] is True
+
+    manifest = read_json(out / "manifest.json")
+    assert manifest["runtime_hints"]["formats"] == ["safetensors", "mlx"]
+    paths = {e["path"] for e in manifest["files"]}
+    assert "toy-seq2seq.mlx/serving.json" in paths
+    assert "toy-seq2seq.mlx/model.safetensors" in paths
+    assert verify_manifest(out) == []
+
+
+def test_export_mlx_seq2seq_no_repair_no_note(tmp_path: Path) -> None:
+    from maatml.export.mlx_export import build_seq2seq_serving
+
+    ckpt = _seq2seq_checkpoint(tmp_path)
+    md = _seq2seq_model_def(tmp_path)
+    md.evaluation = {}
+    serving = build_seq2seq_serving(md, ckpt)
+    assert "output_note" not in serving
+
+
+def test_export_mlx_seq2seq_missing_spiece_warns(tmp_path: Path) -> None:
+    from maatml.export.mlx_export import export_mlx
+
+    ckpt = _seq2seq_checkpoint(tmp_path, with_spiece=False)
+    # Tied checkpoint without an lm_head tensor keeps its config untouched.
+    _write_safetensors(ckpt / "model.safetensors", ["shared.weight"])
+    md = _seq2seq_model_def(tmp_path)
+    out = tmp_path / "export"
+
+    with pytest.warns(RuntimeWarning, match="spiece.model"):
+        export_mlx(md, ckpt, out)
+
+    bundle = out / "toy-seq2seq.mlx"
+    assert not (bundle / "spiece.model").exists()
+    assert read_json(bundle / "config.json")["tie_word_embeddings"] is True
+    assert verify_manifest(out) == []
+
+
 def test_gguf_missing_tools_raises(tmp_path: Path) -> None:
     from maatml.export.gguf import export_gguf
 
@@ -121,8 +256,8 @@ def test_parity_skipped_without_benchmark(tmp_path: Path) -> None:
 
 
 def test_parity_gates_with_mocked_eval(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from maatml.evaluation.harness import Report
     import maatml.evaluation.harness as harness_mod
+    from maatml.evaluation.harness import Report
 
     model_dir = tmp_path / "model"
     model_dir.mkdir()

@@ -40,6 +40,28 @@ Full enumeration in [`datasets/node_contracts.json`](https://github.com/moralfis
 and the JSON Schema at
 [`datasets/jcl_validation_schema.json`](https://github.com/moralfish/maatml/blob/main/examples/jcl-validator/datasets/jcl_validation_schema.json).
 
+## Corpus
+
+The seed corpus is **real JCL judged by a real converter**: 1,487 decks whose
+gold labels are the MVS 3.8j converter's own verdicts, captured under Hercules
+(public-domain OS, public container), plus a 294-deck benchmark from a
+disjoint generation seed with zero normalized-text overlap (enforced at build
+time). A deck the converter accepted is `valid: true` whatever happened at
+execution: missing datasets and abends are runtime events, not JCL defects.
+Rejected decks carry the converter's real diagnostic text, with `line` mapped
+from the STMT NO. listing back into the deck.
+
+Two properties of the real oracle worth knowing:
+
+- The 1981 converter reports an unresolved symbolic in a DSN as a
+  dsname-structure error (`IEF624I`, verified through a PROC expansion), so
+  `unresolved_symbolic_parameter` remains in the enum but has no instances.
+- Error lines span 1-13 because decks carry 0-2 valid prelude steps, which is
+  what gives the line-localization head something to learn.
+
+`scripts/build_seeds.py` regenerates the legacy synthetic corpus and will
+overwrite the captured one; do not run it casually.
+
 ## Layout
 
 ```
@@ -73,14 +95,16 @@ and re-running `maatml prepare` before training, or regenerate via
 
 ## Quality gates
 
-| Metric | Target |
-|---|---|
-| `json_parse_rate` | ≥ 0.95 |
-| `schema_conformance_rate` | ≥ 0.90 |
-| `severity_accuracy` | ≥ 0.85 |
-| `code_accuracy` | ≥ 0.85 |
-| `valid_flag_accuracy` | ≥ 0.95 |
-| `line_within_3_accuracy` | ≥ 0.70 |
+| Metric | Gate | Meaning |
+|---|---|---|
+| `all_layers_pass_rate` | >= 0.99 | every validator layer passed |
+| `code_accuracy` | >= 0.98 | predicted error code matches gold |
+| `consistency_rate` | >= 0.99 | cross-field consistency layer passed |
+| `json_parse_rate` | >= 1 | output is valid JSON |
+| `line_within_3_accuracy` | >= 0.96 | error line within +/-3 of gold |
+| `schema_conformance_rate` | >= 1 | matches `datasets/schema.json` |
+| `severity_accuracy` | >= 0.98 | predicted severity matches gold |
+| `valid_flag_accuracy` | >= 0.99 | predicted `valid` flag matches gold |
 
 `line_within_3` allows ±3 lines of slack on the predicted error line, a practical
 UI tolerance.

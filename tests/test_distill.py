@@ -3,6 +3,7 @@
 A fake in-process teacher stands in for the OpenAI-compatible client, so the
 gating and record/replay behaviour is tested without a network.
 """
+
 from __future__ import annotations
 
 import json
@@ -57,10 +58,19 @@ class _FakeTeacher:
         return json.dumps({"ok": True, "label": prompt.upper()})
 
 
-def _model(tmp_path: Path, *, distill_section: dict | None = None):
+def _model(
+    tmp_path: Path,
+    *,
+    distill_section: dict | None = None,
+    validator: str = "distill_test_validator",
+    prompts: list[str] | None = None,
+):
     mdir = tmp_path / "model"
     (mdir / "datasets").mkdir(parents=True, exist_ok=True)
-    write_jsonl(mdir / "datasets" / "prompts.jsonl", [{"request": p} for p in PROMPTS])
+    write_jsonl(
+        mdir / "datasets" / "prompts.jsonl",
+        [{"request": p} for p in (prompts if prompts is not None else PROMPTS)],
+    )
     section = distill_section or {
         "prompt_source": "datasets/prompts.jsonl",
         "teacher_model": "fake",
@@ -76,7 +86,7 @@ def _model(tmp_path: Path, *, distill_section: dict | None = None):
             "seed_samples": "datasets/samples/seed_samples.jsonl",
             "target_field": "expected_output",
         },
-        "evaluation": {"validator": "distill_test_validator"},
+        "evaluation": {"validator": validator},
         "distill": section,
     }
     import yaml
@@ -166,6 +176,7 @@ def test_live_run_records_a_cache_that_replays_offline(tmp_path, teacher) -> Non
 
 def test_offline_run_skips_uncached_prompts(tmp_path) -> None:
     md = _model(tmp_path)
+
     # No cache exists and no teacher is available: every prompt is a cache miss.
     class _NoNetwork:
         def __init__(self, *a, **k):
@@ -227,7 +238,9 @@ def test_cache_key_binds_prompt_and_teacher() -> None:
 
 
 def test_config_rejects_unknown_keys() -> None:
-    with pytest.raises(Exception):
+    # pydantic's ValidationError subclasses ValueError; matching the key
+    # keeps this specific instead of a blind `Exception`.
+    with pytest.raises(ValueError, match="teecher_model"):
         DistillConfig(prompt_source="p.jsonl", teecher_model="typo")
 
 
@@ -277,3 +290,128 @@ def test_triage_distill_replays_offline_from_the_shipped_cache(tmp_path, monkeyp
     assert "platform" not in teams
     for row in rows:
         assert row["provenance"]["teacher_model"] == "recorded-teacher"
+
+
+# --- request params and cache durability -----------------------------------
+
+
+def test_request_params_reach_the_teacher_call(tmp_path, teacher, monkeypatch) -> None:
+    """distill.request_params is merged into the chat payload; timeout goes to
+    the client constructor instead."""
+    seen: dict = {}
+
+    class _Recording(_FakeTeacher):
+        def __init__(self, *args, **kwargs):
+            seen["client_kwargs"] = kwargs
+            super().__init__(*args, **kwargs)
+
+        def chat_completions(self, messages, **kwargs):
+            seen["request_kwargs"] = kwargs
+            return super().chat_completions(messages, **kwargs)
+
+    monkeypatch.setattr(distill_mod, "TeacherClient", _Recording)
+    md = _model(
+        tmp_path,
+        distill_section={
+            "prompt_source": "datasets/prompts.jsonl",
+            "teacher_model": "fake",
+            "teacher_revision": "v1",
+            "cache": "datasets/cache.jsonl",
+            "request_params": {
+                "timeout": 300,
+                "max_tokens": 4096,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        },
+    )
+    run_distill(md, append=False, out_path=str(tmp_path / "out.jsonl"))
+
+    assert seen["client_kwargs"] == {"model": "fake", "timeout": 300.0}
+    assert seen["request_kwargs"] == {
+        "max_tokens": 4096,
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
+def test_cache_flushes_incrementally(tmp_path) -> None:
+    """A crash mid-run must not lose every teacher response: the cache hits
+    disk every FLUSH_EVERY puts, not only at the final flush."""
+    cache = TeacherCache(tmp_path / "cache.jsonl")
+    for index in range(TeacherCache.FLUSH_EVERY):
+        cache.put(f"k{index}", "v")
+    on_disk = list(iter_jsonl(tmp_path / "cache.jsonl"))
+    assert len(on_disk) == TeacherCache.FLUSH_EVERY
+    # A rewritten identical value stays clean: no dirty flag, no rewrite.
+    cache.put("k0", "v")
+    assert cache._dirty is False
+
+
+# --- robustness ------------------------------------------------------------
+
+
+def test_parse_target_accepts_reasoning_teacher_output() -> None:
+    """A reasoning teacher emits its trace in the message content. The local
+    fence-only parser rejected all of it as unparseable; _parse_target now uses
+    the canonical strip_fences, which also drops <think> blocks."""
+    from maatml.data.distill import _parse_target
+
+    assert _parse_target('<think>weighing it up</think>{"ok": true}') == {"ok": True}
+    assert _parse_target('```json\n{"ok": true}\n```') == {"ok": True}
+    assert _parse_target('<think>hmm</think>\n```json\n{"ok": true}\n```') == {"ok": True}
+    assert _parse_target("not json at all") is None
+
+
+def test_validator_exception_rejects_the_row_without_aborting(tmp_path, monkeypatch):
+    """A validator that raises on one row must not discard the whole run: the
+    row is rejected and counted, and the good rows still reach the corpus."""
+    from maatml.registry import register_validator
+
+    @register_validator("distill_raises_on_bad")
+    def _raiser(raw_output, **_kw):
+        parsed = json.loads(raw_output)
+        # Only the 'bad prompt' response carries this key.
+        if parsed.get("why") == "wrong":
+            raise RuntimeError("validator blew up")
+        result = ValidationResult(raw_output=raw_output, n_layers=1, required_layers={1})
+        result.parsed = parsed
+        result.passed_layers.add(1)
+        return result
+
+    md = _model(tmp_path, validator="distill_raises_on_bad")
+    monkeypatch.setattr(distill_mod, "TeacherClient", _FakeTeacher)
+
+    summary = run_distill(md)
+    assert summary["validator_errors"] == 1
+    assert summary["accepted"] == 2
+    assert summary["aborted"] is None
+    reasons = [
+        r["_reject_reason"]
+        for r in iter_jsonl(
+            Path(summary["out_path"]).with_name(
+                Path(summary["out_path"]).stem + ".distill_rejected.jsonl"
+            )
+        )
+    ]
+    assert any(r.startswith("validator_error:") for r in reasons)
+
+
+def test_consecutive_teacher_failures_abort_the_run(tmp_path, monkeypatch) -> None:
+    """An unreachable endpoint fails every prompt identically; stop rather than
+    walking the whole pool to produce a run that accepted nothing."""
+
+    class _DeadTeacher:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def chat_completions(self, messages, **kwargs):
+            raise ConnectionError("connection refused")
+
+    md = _model(tmp_path, prompts=[f"prompt {i}" for i in range(20)])
+    monkeypatch.setattr(distill_mod, "TeacherClient", _DeadTeacher)
+
+    summary = run_distill(md)
+    assert summary["accepted"] == 0
+    assert summary["aborted"] is not None
+    assert "consecutive teacher failures" in summary["aborted"]
+    # Stopped early rather than calling the dead endpoint for every prompt.
+    assert summary["teacher_failures"] == 5

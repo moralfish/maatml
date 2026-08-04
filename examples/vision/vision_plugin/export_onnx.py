@@ -1,4 +1,5 @@
 """ONNX exporter + Jetson deploy kit for ``vision_multitask``."""
+
 from __future__ import annotations
 
 import json
@@ -56,7 +57,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 '''
 
-_BUILD_ENGINE_SH = '''\
+_BUILD_ENGINE_SH = """\
 #!/usr/bin/env bash
 # Optional power-user path: build a TensorRT engine with trtexec.
 # Prefer ``maatml serve`` with onnxruntime TensorRT EP for most deployments.
@@ -72,9 +73,9 @@ if ! command -v trtexec >/dev/null 2>&1; then
 fi
 trtexec --onnx="$ONNX" --fp16 --saveEngine="$OUT"
 echo "wrote $OUT"
-'''
+"""
 
-_DEPLOY_README = '''\
+_DEPLOY_README = """\
 # Deploy kit
 
 ## Serve (recommended)
@@ -94,7 +95,7 @@ python deploy/client.py path/to/image.png --url http://HOST:8080/predict
    for offline pipelines (not required for serve).
 
 Int8 calibration is out of scope for this example.
-'''
+"""
 
 
 def _copy_sidecars(model_def: ModelDefinition, out_dir: Path) -> list[Path]:
@@ -112,6 +113,11 @@ def _copy_sidecars(model_def: ModelDefinition, out_dir: Path) -> list[Path]:
     return copied
 
 
+# Registered twice on purpose. "onnx" is the name the docs and this example's
+# README use, and it is unambiguous whenever one model folder is loaded. The
+# namespaced alias stays reachable in a process that loads several examples at
+# once, where a bare "onnx" resolves to whichever plugin loaded last.
+@register_exporter("vision_onnx")
 @register_exporter("onnx")
 def export_onnx(
     model_def: ModelDefinition,
@@ -127,9 +133,7 @@ def export_onnx(
     out_dir = Path(out_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    model, cfg = load_checkpoint(
-        checkpoint_dir, device="cpu", pretrained_backbone=False
-    )
+    model, cfg = load_checkpoint(checkpoint_dir, device="cpu", pretrained_backbone=False)
     model.eval()
 
     # Persist config alongside ONNX for predictor reload.
@@ -177,12 +181,10 @@ def export_onnx(
 
     # Smoke-check with onnxruntime when available.
     try:
-        import onnxruntime as ort
         import numpy as np
+        import onnxruntime as ort
 
-        sess = ort.InferenceSession(
-            str(onnx_path), providers=["CPUExecutionProvider"]
-        )
+        sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
         sess.run(None, {"image": dummy.numpy().astype(np.float32)})
     except ImportError:
         pass

@@ -1,4 +1,5 @@
 """Export manifest build / verify checksum roundtrip."""
+
 from __future__ import annotations
 
 import json
@@ -9,6 +10,7 @@ from maatml.config import ModelDefinition, PackagingSpec
 from maatml.export.manifest import (
     build_manifest,
     read_safetensors_dtypes,
+    read_safetensors_tensor_names,
     verify_manifest,
     write_manifest,
 )
@@ -110,6 +112,15 @@ def test_read_safetensors_dtypes(tmp_path: Path) -> None:
     junk = tmp_path / "notes.txt"
     junk.write_text("hello", encoding="utf-8")
     assert read_safetensors_dtypes(junk) == []
+
+
+def test_read_safetensors_tensor_names(tmp_path: Path) -> None:
+    st = tmp_path / "model.safetensors"
+    _write_safetensors(st, [("shared.weight", "F32", 4), ("lm_head.weight", "F32", 4)])
+    assert read_safetensors_tensor_names(st) == ["shared.weight", "lm_head.weight"]
+    junk = tmp_path / "notes.txt"
+    junk.write_text("hello", encoding="utf-8")
+    assert read_safetensors_tensor_names(junk) == []
 
 
 def test_weights_dtype_verified_from_tensors(tmp_path: Path) -> None:

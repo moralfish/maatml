@@ -8,6 +8,7 @@ paths, architecture, splits, and gates are actually in place.
 Nothing here mutates state or imports a model folder's plugins beyond what
 ``load_model_def`` already does.
 """
+
 from __future__ import annotations
 
 import platform
@@ -59,9 +60,7 @@ class Diagnostics:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            section: [
-                {"name": c.name, "status": c.status, "detail": c.detail} for c in checks
-            ]
+            section: [{"name": c.name, "status": c.status, "detail": c.detail} for c in checks]
             for section, checks in self.sections.items()
         }
 
@@ -106,8 +105,7 @@ def _device(diag: Diagnostics) -> None:
             "device",
             "torch",
             WARN,
-            "not installed, so training and evaluation are unavailable "
-            '(pip install "maatml[ml]")',
+            'not installed, so training and evaluation are unavailable (pip install "maatml[ml]")',
         )
         return
 
@@ -200,7 +198,7 @@ def _model_folder(diag: Diagnostics, model_dir: Path) -> None:
     for split in ("train", "val", "test"):
         path = md.prepared_dir / f"{split}.jsonl"
         splits.append(f"{split}={_count_rows(path) if path.is_file() else 'missing'}")
-    empty = [s for s in splits if s.endswith("=0") or s.endswith("=missing")]
+    empty = [s for s in splits if s.endswith(("=0", "=missing"))]
     diag.add(
         section,
         "prepared splits",
@@ -247,8 +245,7 @@ def _model_folder(diag: Diagnostics, model_dir: Path) -> None:
             section,
             "evaluation.gates",
             WARN,
-            "none configured: `maatml evaluate --gate` fails rather than passing "
-            "vacuously",
+            "none configured: `maatml evaluate --gate` fails rather than passing vacuously",
         )
 
 

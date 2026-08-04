@@ -1,4 +1,5 @@
 """Torch Dataset over prepared JSONL + image paths + CenterNet target encoding."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,8 +12,7 @@ def _gaussian2d(h: int, w: int, cx: float, cy: float, sigma: float):
     import numpy as np
 
     ys, xs = np.ogrid[0:h, 0:w]
-    g = np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma**2))
-    return g
+    return np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma**2))
 
 
 def encode_targets(
@@ -54,11 +54,7 @@ def encode_targets(
         center_mask[0, iy, ix] = 1.0
 
     scene_label = (expected.get("scene") or {}).get("label")
-    scene_idx = (
-        cfg.scene_labels.index(scene_label)
-        if scene_label in cfg.scene_labels
-        else 0
-    )
+    scene_idx = cfg.scene_labels.index(scene_label) if scene_label in cfg.scene_labels else 0
 
     kps = {k["name"]: k for k in (expected.get("pose") or {}).get("keypoints") or []}
     pose = []
@@ -77,8 +73,8 @@ def encode_targets(
 
 
 def _load_image(path: Path, size: int):
-    from PIL import Image
     import numpy as np
+    from PIL import Image
 
     img = Image.open(path).convert("RGB")
     if img.size != (size, size):
@@ -118,9 +114,7 @@ def resolve_image_bytes_or_path(
     # Otherwise treat as a filesystem path, confined to model_dir. This runs on
     # client-controlled input at serve time, so reject absolute and '..' paths.
     if model_dir is None:
-        raise ValueError(
-            f"image path {value!r} given but no model_dir to resolve it against"
-        )
+        raise ValueError(f"image path {value!r} given but no model_dir to resolve it against")
     rel = Path(value)
     if rel.is_absolute() or ".." in rel.parts:
         raise ValueError(
@@ -138,9 +132,10 @@ def resolve_image_bytes_or_path(
 
 def image_bytes_to_tensor(data: bytes, size: int):
     import io
-    from PIL import Image
+
     import numpy as np
     import torch
+    from PIL import Image
 
     img = Image.open(io.BytesIO(data)).convert("RGB")
     if img.size != (size, size):

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import pytest
-from pydantic import ValidationError
-
 from jcl_plugin.schemas import (
     ErrorCategory,
     JclError,
@@ -10,6 +8,8 @@ from jcl_plugin.schemas import (
     JclValidationResult,
     Severity,
 )
+from pydantic import ValidationError
+
 from maatml.data.schemas import Split
 
 
@@ -78,3 +78,20 @@ def test_jcl_validation_result_round_trip() -> None:
     )
     j = result.model_dump_json()
     assert JclValidationResult.model_validate_json(j) == result
+
+
+def test_validator_rejects_non_object_json_without_raising() -> None:
+    """A valid-JSON non-object has no fields to check. It must score as a failed
+    row, not raise AttributeError and abort the whole evaluate/distill run."""
+    from pathlib import Path
+
+    from jcl_plugin.validator import validate_jcl_result
+
+    root = Path(__file__).resolve().parents[1]
+    schema = root / "datasets" / "jcl_validation_schema.json"
+    contracts = root / "datasets" / "node_contracts.json"
+
+    for payload in ("[]", '"a string"', "42", "null", "true"):
+        result = validate_jcl_result(payload, schema_path=schema, contracts_path=contracts)
+        assert result.ok is False, payload
+        assert any(e.code == "not_an_object" for e in result.errors), payload

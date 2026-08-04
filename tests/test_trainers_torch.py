@@ -4,6 +4,7 @@ Skipped on the torch-free matrix; the ml CI job runs them. Stub tokenizers
 keep the tests hermetic (no hub download), so what is under test is maatml's
 masking and tensor assembly, not a specific tokenizer's vocabulary.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -12,7 +13,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from maatml.training.multi_head import HeadSpec, _build_dataset as build_head_dataset  # noqa: E402
+from maatml.training.multi_head import HeadSpec  # noqa: E402
+from maatml.training.multi_head import _build_dataset as build_head_dataset  # noqa: E402
 from maatml.training.seq2seq import _build_dataset as build_seq2seq_dataset  # noqa: E402
 
 
@@ -22,9 +24,7 @@ class _CharTokenizer:
     pad_token_id = 0
     eos_token_id = 1
 
-    def apply_chat_template(
-        self, messages, tokenize=False, add_generation_prompt=False, **kwargs
-    ):
+    def apply_chat_template(self, messages, tokenize=False, add_generation_prompt=False, **kwargs):
         del tokenize, kwargs
         text = "".join(f"[{m['role']}]{m['content']}" for m in messages)
         if add_generation_prompt:
@@ -109,7 +109,9 @@ def test_build_chat_example_unmasks_every_assistant_turn() -> None:
         target_field="unused",
     )
     unmasked = "".join(
-        chr(tok) for tok, lab in zip(example["input_ids"], example["labels"]) if lab != -100
+        chr(tok)
+        for tok, lab in zip(example["input_ids"], example["labels"], strict=False)
+        if lab != -100
     )
     # Both assistant turns contribute to the loss; the user turns do not.
     assert unmasked == "bd"
@@ -175,7 +177,9 @@ def test_seq2seq_dataset_refuses_an_empty_target() -> None:
 
 def test_multi_head_dataset_builds_class_and_line_targets() -> None:
     heads = [
-        HeadSpec(name="validity", kind="classification", labels=["invalid", "valid"], target_path="valid"),
+        HeadSpec(
+            name="validity", kind="classification", labels=["invalid", "valid"], target_path="valid"
+        ),
         HeadSpec(name="line", kind="line_pointer", target_path="errors[0].line"),
     ]
     ds = build_head_dataset(
@@ -200,9 +204,7 @@ def test_multi_head_dataset_builds_class_and_line_targets() -> None:
 def test_multi_head_dataset_rejects_unknown_gold_labels() -> None:
     from maatml.training.multi_head import UnknownLabelError
 
-    heads = [
-        HeadSpec(name="code", kind="classification", labels=["a", "none"], target_path="code")
-    ]
+    heads = [HeadSpec(name="code", kind="classification", labels=["a", "none"], target_path="code")]
     ds = build_head_dataset(
         [{"request": "x", "target": {"code": "unknown"}}],
         _PaddingTokenizer(),

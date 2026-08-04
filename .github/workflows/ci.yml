@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, flow-init]
+    branches: [main]
   pull_request:
 
 permissions:
@@ -22,8 +22,41 @@ jobs:
           pip install -e ".[dev]"
       - name: Ruff
         run: ruff check src tests scripts examples
+      # Formatting was enforced only for contributors who installed the
+      # optional pre-commit hooks, so the tree had drifted from `ruff format`
+      # in 147 of 157 files.
+      - name: Ruff format
+        run: ruff format --check src tests scripts examples
       - name: Mypy
         run: mypy src/maatml --ignore-missing-imports
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The history scan needs every commit; a shallow clone would hide
+          # anything committed and later removed.
+          fetch-depth: 0
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$asset" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}"
+          echo "${GITLEAKS_SHA256}  ${asset}" | sha256sum -c -
+          sudo tar -xzf "$asset" -C /usr/local/bin gitleaks
+          gitleaks version
+      # Two scans: the working tree catches what is about to be committed, the
+      # history scan catches anything committed and later deleted. Both exit
+      # non-zero on a finding.
+      - name: Scan working tree
+        run: gitleaks dir . --config .gitleaks.toml --redact --no-banner
+      - name: Scan commit history
+        run: gitleaks git . --config .gitleaks.toml --redact --no-banner
 
   test:
     runs-on: ubuntu-latest
@@ -38,11 +71,25 @@ jobs:
       - name: Install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # pillow on top of [dev] because the vision seed builders below
+          # render their images with it. This job stays torch-free; the floor
+          # is the one declared for the `vision` extra in pyproject.toml.
+          pip install -e ".[dev]" "pillow>=12.3"
       # -rs prints the reason for every skip: the torch-gated tests must be
       # visibly skipped here, not silently absent.
       - name: Pytest
         run: pytest tests/ examples/ -q -rs
+      # Regenerate the synthetic corpora (images are not tracked) so the
+      # invariant check runs against what build_seeds actually produces.
+      - name: Rebuild example corpora
+        run: |
+          python examples/vision/scripts/build_seeds.py --target 400 --benchmark-n 100
+          python examples/vision-vlm/scripts/build_seeds.py --target 300 --benchmark-n 80
+      # Cheap per-example invariants: non-empty splits, gates naming metrics the
+      # plugin emits, gold passing its own validator. No training, no GPU.
+      # Full lifecycle verification is local (scripts/train_all.py).
+      - name: Example invariants
+        run: python scripts/check_examples.py
       - name: Validate model scaffolds
         run: |
           python scripts/validate_repo.py

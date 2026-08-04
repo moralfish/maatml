@@ -1,4 +1,5 @@
 """S3: tokenized cache loads with weights_only=True (plain int-list payload)."""
+
 from __future__ import annotations
 
 import pytest

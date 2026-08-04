@@ -1,4 +1,5 @@
 """Dual-backend predictor: transformers locally, or OpenAI-compatible vLLM endpoint."""
+
 from __future__ import annotations
 
 import base64
@@ -35,9 +36,7 @@ def _resolve_image_bytes(value: Any, *, model_dir: Optional[Path] = None) -> byt
     # Otherwise treat as a filesystem path, confined to model_dir. This runs on
     # client-controlled input at serve time, so reject absolute and '..' paths.
     if model_dir is None:
-        raise ValueError(
-            f"image path {value!r} given but no model_dir to resolve it against"
-        )
+        raise ValueError(f"image path {value!r} given but no model_dir to resolve it against")
     rel = Path(value)
     if rel.is_absolute() or ".." in rel.parts:
         raise ValueError(
@@ -153,9 +152,7 @@ class VisionVlmPredictor:
         dtype = torch.float32
         if self.device.startswith("cuda") or self.device == "mps":
             dtype = torch.bfloat16
-        self.model = AutoModelForImageTextToText.from_pretrained(
-            self.checkpoint_dir, dtype=dtype
-        )
+        self.model = AutoModelForImageTextToText.from_pretrained(self.checkpoint_dir, dtype=dtype)
         self.model.to(self.device)
         self.model.eval()
         self.backend = "transformers"
@@ -190,9 +187,7 @@ class VisionVlmPredictor:
         prompt = self.processor.apply_chat_template(
             messages, add_generation_prompt=True, tokenize=False
         )
-        inputs = self.processor(
-            text=prompt, images=[image], return_tensors="pt"
-        ).to(self.device)
+        inputs = self.processor(text=prompt, images=[image], return_tensors="pt").to(self.device)
         with torch.inference_mode():
             generated = self.model.generate(
                 **inputs,
@@ -202,9 +197,7 @@ class VisionVlmPredictor:
         # Decode only the new tokens when possible.
         in_len = inputs["input_ids"].shape[-1]
         new_tokens = generated[0, in_len:]
-        return self.processor.tokenizer.decode(
-            new_tokens, skip_special_tokens=True
-        ).strip()
+        return self.processor.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def _infer_vllm(self, data: bytes) -> str:
         assert self.vllm_endpoint is not None

@@ -18,6 +18,7 @@ and git SHA, plugin sources, device profile, exporter identity) in
 the prior step completed, and its declared outputs still exist. Anything else
 re-runs, and the plan says which component changed.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -170,9 +171,7 @@ def plugin_sources_hash(model_def: ModelDefinition) -> str:
             parts.append(
                 (
                     entry,
-                    stable_hash(
-                        [(str(p.relative_to(path)), sha256_file(p)) for p in files]
-                    ),
+                    stable_hash([(str(p.relative_to(path)), sha256_file(p)) for p in files]),
                 )
             )
         else:
@@ -198,20 +197,19 @@ def _declared_assets_hash(model_def: ModelDefinition) -> str:
 
 def _prepared_hash(model_def: ModelDefinition, splits: tuple[str, ...]) -> str:
     return stable_hash(
-        [
-            (split, _file_hash(model_def.prepared_dir / f"{split}.jsonl"))
-            for split in splits
-        ]
+        [(split, _file_hash(model_def.prepared_dir / f"{split}.jsonl")) for split in splits]
     )
 
 
 def _environment_component() -> str:
-    from .training.guards import _git_sha, _pkg_version
+    from .training.guards import _pkg_version, maatml_checkout_sha
 
     return stable_hash(
         _pkg_version("maatml"),
         # A checkout's SHA distinguishes "same version string, different code".
-        _git_sha(Path(__file__).resolve().parent),
+        # None for an installed package, so an unrelated repository's commits
+        # cannot invalidate every step.
+        maatml_checkout_sha(),
     )
 
 
@@ -227,11 +225,18 @@ def compute_components(
     checkpoint: Optional[Path] = None,
     export_dir: Optional[Path] = None,
     export_format: Optional[str] = None,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> dict[str, dict[str, str]]:
     """Fingerprint components per step, keyed by component name.
 
     Named components (rather than one opaque hash) are what lets ``--dry-run``
     say *why* a step is stale.
+
+    ``limit`` and ``seed`` belong to the train fingerprint because both change
+    the checkpoint: a run truncated with ``--limit`` trained on a fraction of
+    the corpus, and leaving them out let the next plain ``maatml run`` report
+    "all fresh" over it, with evaluate/export/verify inheriting the skip.
     """
     from .evaluation.harness import effective_gates
     from .scaffold import normalize_architecture
@@ -260,6 +265,8 @@ def compute_components(
         ),
         "smoke": str(bool(smoke)),
         "device": str(device),
+        "limit": "none" if limit is None else str(int(limit)),
+        "seed": "none" if seed is None else str(int(seed)),
         "prepared_data": _prepared_hash(model_def, ("train", "val")),
     }
     train_fp = stable_hash(sorted(train.items()))
@@ -354,9 +361,7 @@ def outputs_present(
 # ---------------------------------------------------------------------------
 
 
-def _selected_steps(
-    from_step: Optional[str], until_step: Optional[str]
-) -> tuple[str, ...]:
+def _selected_steps(from_step: Optional[str], until_step: Optional[str]) -> tuple[str, ...]:
     start = 0
     end = len(STEPS) - 1
     if from_step:
@@ -368,15 +373,11 @@ def _selected_steps(
             raise ValueError(f"--until must be one of {', '.join(STEPS)}; got {until_step!r}")
         end = STEPS.index(until_step)
     if start > end:
-        raise ValueError(
-            f"--from {from_step!r} comes after --until {until_step!r}; nothing to run"
-        )
+        raise ValueError(f"--from {from_step!r} comes after --until {until_step!r}; nothing to run")
     return STEPS[start : end + 1]
 
 
-def _stale_reason(
-    stored: Optional[dict[str, Any]], components: dict[str, str]
-) -> Optional[str]:
+def _stale_reason(stored: Optional[dict[str, Any]], components: dict[str, str]) -> Optional[str]:
     """None when the step is fresh, else why it is not."""
     if not stored:
         return "never run"
@@ -384,9 +385,7 @@ def _stale_reason(
         return f"last run {stored.get('status', 'unknown')}"
     stored_components = stored.get("components") or {}
     changed = [
-        name
-        for name, value in sorted(components.items())
-        if stored_components.get(name) != value
+        name for name, value in sorted(components.items()) if stored_components.get(name) != value
     ]
     if changed:
         return "changed: " + ", ".join(changed)
@@ -407,6 +406,8 @@ def plan_pipeline(
     export_dir: Optional[Path] = None,
     export_format: Optional[str] = None,
     eval_report: Optional[Path] = None,
+    limit: Optional[int] = None,
+    seed: Optional[int] = None,
 ) -> list[StepPlan]:
     """Per-step fresh/stale decision, with the reason a step is stale."""
     selected = _selected_steps(from_step, until_step)
@@ -418,6 +419,8 @@ def plan_pipeline(
         checkpoint=checkpoint,
         export_dir=export_dir,
         export_format=export_format,
+        limit=limit,
+        seed=seed,
     )
 
     plans: list[StepPlan] = []
@@ -606,9 +609,7 @@ def _step_export(model_def: ModelDefinition, options: RunOptions) -> str:
     run = get_run(model_def, checkpoint.name)
     run_id = run.run_id if run else checkpoint.name
     out_dir = model_def.output_dir / "export" / run_id
-    export_model(
-        model_def, checkpoint, out_dir, format=options.export_format, run_id=run_id
-    )
+    export_model(model_def, checkpoint, out_dir, format=options.export_format, run_id=run_id)
     return f"export={out_dir.name}"
 
 
@@ -667,6 +668,8 @@ def run_pipeline(
                 export_dir=export_dir,
                 export_format=options.export_format,
                 eval_report=report,
+                limit=options.limit,
+                seed=options.seed,
             )
         }
         plan = plans[step]
@@ -708,6 +711,8 @@ def run_pipeline(
             checkpoint=checkpoint,
             export_dir=export_dir,
             export_format=options.export_format,
+            limit=options.limit,
+            seed=options.seed,
         )[step]
         record_step(
             model_def,

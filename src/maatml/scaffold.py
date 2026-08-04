@@ -1,4 +1,5 @@
 """Scaffold a new model folder and validate existing ones."""
+
 from __future__ import annotations
 
 import json
@@ -453,9 +454,7 @@ def scaffold_model(
         },
     }
     if plugin_entries:
-        model_yml["plugins"] = [
-            _plugin_reference(entry, target_dir) for entry in plugin_entries
-        ]
+        model_yml["plugins"] = [_plugin_reference(entry, target_dir) for entry in plugin_entries]
 
     samples_dir = target_dir / "datasets" / "samples"
     samples_dir.mkdir(parents=True, exist_ok=True)
@@ -553,17 +552,14 @@ def validate_model_dir(model_dir: Path | str, *, load_plugins: bool = True) -> l
     if TRAINERS.get(arch) is None and TRAINERS.get(md.architecture) is None:
         known = ", ".join(TRAINERS.names()) or "(none)"
         errors.append(
-            f"architecture {md.architecture!r} is not a registered trainer. "
-            f"Known: {known}"
+            f"architecture {md.architecture!r} is not a registered trainer. Known: {known}"
         )
 
     cfg = get_dataset_cfg(md)
     fmt = cfg.get("format")
     if fmt is not None and FORMATS.get(str(fmt)) is None:
         known = ", ".join(FORMATS.names()) or "(none)"
-        errors.append(
-            f"dataset.format {fmt!r} is not registered. Known: {known}"
-        )
+        errors.append(f"dataset.format {fmt!r} is not registered. Known: {known}")
 
     return errors
 

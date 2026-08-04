@@ -11,6 +11,7 @@ Public surface:
   - ``train_multi_head(model_def, ...)``: CLI entry point
   - ``_resolve_path`` / ``parse_heads``: shared by trainer + predictor
 """
+
 from __future__ import annotations
 
 import re
@@ -26,9 +27,12 @@ from ..device import (
 from ..registry import TRANSFORMS
 from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
+from ..utils.tokenizers import resolve_special_tokens as _default_special_tokens
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs
-from .sft_config import validate_precision
+from .schedule import precision_flags, total_training_steps
+from .schedule import warmup_steps as resolve_warmup_steps
+from .sft_config import reject_unknown_training_keys, validate_precision
 
 _PATH_TOKEN = re.compile(r"([^[.\]]+)|\[(\d+)\]")
 
@@ -47,10 +51,7 @@ def _resolve_path(obj: Any, path: str) -> Any:
         if cur is None:
             return None
         if key is not None:
-            if isinstance(cur, dict):
-                cur = cur.get(key)
-            else:
-                cur = getattr(cur, key, None)
+            cur = cur.get(key) if isinstance(cur, dict) else getattr(cur, key, None)
         else:
             i = int(idx)
             if isinstance(cur, (list, tuple)) and 0 <= i < len(cur):
@@ -200,9 +201,7 @@ def _label_index(value: Any, labels: list[str]) -> int:
     if value is None or value == "":
         if "none" in labels:
             return labels.index("none")
-        raise UnknownLabelError(
-            f"missing gold value and no 'none' label declared in {labels!r}"
-        )
+        raise UnknownLabelError(f"missing gold value and no 'none' label declared in {labels!r}")
     s = str(value)
     if s in labels:
         return labels.index(s)
@@ -248,6 +247,36 @@ def _line_start_offset(text: str, line_no: int) -> int:
     return len(text)
 
 
+# Every `training:` key this architecture reads, here, in parse_heads, and in
+# the trainer body.
+_MULTI_HEAD_KEYS = frozenset(
+    {
+        "model_id",
+        "max_input_tokens",
+        "batch_size",
+        "grad_accum",
+        "learning_rate",
+        "epochs",
+        "weight_decay",
+        "warmup_ratio",
+        "seed",
+        "precision",
+        "grad_checkpointing",
+        "eval_steps",
+        "save_steps",
+        "logging_steps",
+        "max_steps",
+        "attn_implementation",
+        "dataloader_workers",
+        "model_revision",
+        "heads",
+        "head_loss_weights",
+        "embedding_strategy",
+        "report_to",
+    }
+)
+
+
 @dataclass
 class MultiHeadConfig:
     model_id: str = "answerdotai/ModernBERT-base"
@@ -272,6 +301,7 @@ class MultiHeadConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "MultiHeadConfig":
+        reject_unknown_training_keys(d, _MULTI_HEAD_KEYS, architecture="multi_head")
         return cls(
             model_id=d.get("model_id", "answerdotai/ModernBERT-base"),
             max_input_tokens=int(d.get("max_input_tokens", 2048)),
@@ -292,9 +322,7 @@ class MultiHeadConfig:
             heads=parse_heads(d),
             attn_implementation=d.get("attn_implementation"),
             dataloader_workers=(
-                int(d["dataloader_workers"])
-                if d.get("dataloader_workers") is not None
-                else None
+                int(d["dataloader_workers"]) if d.get("dataloader_workers") is not None else None
             ),
             model_revision=d.get("model_revision"),
         )
@@ -344,8 +372,8 @@ def _build_dataset(
     text_transform,
 ):
     """Flatten prepared JSONL rows into per-head classifier targets."""
-    from torch.utils.data import Dataset
     import torch
+    from torch.utils.data import Dataset
 
     class _MultiHeadDataset(Dataset):
         def __init__(self, samples: list[dict]) -> None:
@@ -411,43 +439,6 @@ def _build_dataset(
     return _MultiHeadDataset(rows)
 
 
-def _default_special_tokens(tokenizer_path: Optional[Path]) -> dict[str, Any]:
-    """Read special tokens from tokenizer.json when possible."""
-    defaults = {
-        "pad_token": "<PAD>",
-        "unk_token": "<UNK>",
-        "cls_token": "<CLS>",
-        "sep_token": "<SEP>",
-        "mask_token": "<MASK>",
-        "additional_special_tokens": ["<COL1>", "<CONT>"],
-    }
-    if tokenizer_path is None or not tokenizer_path.exists():
-        return defaults
-    try:
-        import json
-
-        data = json.loads(tokenizer_path.read_text(encoding="utf-8"))
-        added = data.get("added_tokens") or []
-        specials = [t["content"] for t in added if isinstance(t, dict) and t.get("special")]
-        if not specials:
-            return defaults
-        # Prefer known names from the file; keep defaults for missing slots.
-        known = set(specials)
-        for key, val in list(defaults.items()):
-            if key == "additional_special_tokens":
-                defaults[key] = [t for t in val if t in known] or val
-            elif val in known:
-                pass
-            else:
-                for s in specials:
-                    if key.replace("_token", "").upper() in s.upper().strip("<>"):
-                        defaults[key] = s
-                        break
-        return defaults
-    except Exception:  # noqa: BLE001
-        return defaults
-
-
 def _train_loop(
     cfg: MultiHeadConfig,
     train_ds,
@@ -468,7 +459,7 @@ def _train_loop(
     distributed: bool = False,
 ) -> MultiHeadResult:
     from torch import nn
-    from transformers import AutoModel, TrainingArguments, Trainer, set_seed
+    from transformers import AutoModel, Trainer, TrainingArguments, set_seed
 
     set_seed(cfg.seed)
 
@@ -479,9 +470,7 @@ def _train_loop(
         revision=cfg.model_revision,
     )
     encoder = AutoModel.from_pretrained(cfg.model_id, **load_kwargs)
-    ensure_tokenizer_model_contract(
-        encoder, tokenizer, embedding_strategy=embedding_strategy
-    )
+    ensure_tokenizer_model_contract(encoder, tokenizer, embedding_strategy=embedding_strategy)
     hidden = encoder.config.hidden_size
     head_module = _build_head_module(hidden, heads)
 
@@ -532,15 +521,16 @@ def _train_loop(
 
     model = MultiHeadModel()
 
-    total_steps = (
-        int(len(train_ds) / cfg.batch_size / cfg.grad_accum * cfg.epochs)
-        if cfg.max_steps < 0
-        else cfg.max_steps
+    total_steps = total_training_steps(
+        len(train_ds),
+        batch_size=cfg.batch_size,
+        grad_accum=cfg.grad_accum,
+        epochs=cfg.epochs,
+        max_steps=cfg.max_steps,
     )
-    warmup_steps = max(0, int(round(total_steps * cfg.warmup_ratio)))
+    warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
 
-    use_bf16 = cfg.precision == "bf16"
-    use_fp16 = cfg.precision == "fp16"
+    use_bf16, use_fp16 = precision_flags(cfg.precision, device=device_name, distributed=distributed)
     use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
@@ -578,7 +568,12 @@ def _train_loop(
             super().__init__(*a, **kw)
             self._last_head_losses: dict[str, float] = {}
 
-        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        # num_items_in_batch is named rather than swept into **kwargs so the
+        # override stays signature-compatible with transformers' Trainer. It is
+        # unused here; the multi-head loss is already reduced by the model.
+        def compute_loss(
+            self, model, inputs, return_outputs=False, num_items_in_batch=None, **kwargs
+        ):
             outputs = model(**inputs)
             loss = outputs["loss"]
             head_losses = outputs.get("head_losses") or {}
@@ -591,7 +586,7 @@ def _train_loop(
             self._last_head_losses = stashed
             return (loss, outputs) if return_outputs else loss
 
-        def log(self, logs: dict[str, float], *args, **kwargs):  # type: ignore[override]
+        def log(self, logs: dict[str, float], *args, **kwargs):
             merged = dict(logs)
             for name, val in self._last_head_losses.items():
                 merged[f"loss_{name}"] = val
@@ -705,11 +700,7 @@ def train_multi_head(
         resolved_tokenizer = (
             Path(tokenizer_path)
             if tokenizer_path
-            else (
-                model_def.resolve(ds_cfg["tokenizer"])
-                if ds_cfg.get("tokenizer")
-                else None
-            )
+            else (model_def.resolve(ds_cfg["tokenizer"]) if ds_cfg.get("tokenizer") else None)
         )
         if resolved_tokenizer and resolved_tokenizer.exists():
             from transformers import PreTrainedTokenizerFast
@@ -721,9 +712,7 @@ def train_multi_head(
                 **specials,
             )
         else:
-            tokenizer = AutoTokenizer.from_pretrained(
-                cfg.model_id, revision=cfg.model_revision
-            )
+            tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, revision=cfg.model_revision)
 
         train_rows = list(iter_jsonl(dataset_dir / "train.jsonl"))
         val_rows = list(iter_jsonl(dataset_dir / "val.jsonl"))
@@ -733,20 +722,16 @@ def train_multi_head(
         if not train_rows:
             raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
 
-        unknown = scan_label_coverage(
-            train_rows + val_rows, heads, target_field=target_field
-        )
+        unknown = scan_label_coverage(train_rows + val_rows, heads, target_field=target_field)
         if unknown:
-            detail = "; ".join(
-                f"{head}: {counts}" for head, counts in sorted(unknown.items())
-            )
+            detail = "; ".join(f"{head}: {counts}" for head, counts in sorted(unknown.items()))
             raise ValueError(
                 "gold values do not map to the declared head labels "
                 f"({detail}). Fix training.heads[].labels or the corpus; these "
                 "rows would otherwise train as class 0 / 'none'."
             )
 
-        print(
+        print(  # noqa: T201  training progress goes to stdout
             f"multi_head: run={run.run_id} model={cfg.model_id} heads={[h.name for h in heads]} "
             f"train={len(train_rows)} val={len(val_rows)} "
             f"max_len={cfg.max_input_tokens} epochs={cfg.epochs}"

@@ -4,6 +4,7 @@
 route through :func:`apply_overrides` / :func:`expand_param_grid` so nested
 ``model.yml`` dicts stay editable without Optuna.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -58,8 +59,7 @@ def parse_override(spec: str) -> tuple[str, Any]:
     m = _OVERRIDE_RX.match(spec.strip())
     if not m:
         raise ValueError(
-            f"Invalid override {spec!r}; expected KEY=VALUE "
-            "(e.g. training.learning_rate=1e-4)"
+            f"Invalid override {spec!r}; expected KEY=VALUE (e.g. training.learning_rate=1e-4)"
         )
     key = m.group(1).strip()
     if not key:
@@ -109,9 +109,7 @@ def apply_overrides(
                 _set_dotted(section, rest, value)
             else:
                 if not isinstance(value, dict):
-                    raise ValueError(
-                        f"Replacing entire {head!r} requires a JSON object value"
-                    )
+                    raise ValueError(f"Replacing entire {head!r} requires a JSON object value")
                 setattr(model_def, head, value)
         elif rest:
             # e.g. packaging.max_input_tokens, only packaging is a nested model
@@ -128,9 +126,7 @@ def apply_overrides(
                 try:
                     setattr(pkg, leaf[0], value)
                 except ValidationError as exc:
-                    raise ValueError(
-                        f"invalid override {key!r}: {exc.errors()[0]['msg']}"
-                    ) from exc
+                    raise ValueError(f"invalid override {key!r}: {exc.errors()[0]['msg']}") from exc
             else:
                 raise ValueError(
                     f"Unknown override path {key!r}; "
@@ -142,9 +138,7 @@ def apply_overrides(
             try:
                 setattr(model_def, head, value)
             except ValidationError as exc:
-                raise ValueError(
-                    f"invalid override {key!r}: {exc.errors()[0]['msg']}"
-                ) from exc
+                raise ValueError(f"invalid override {key!r}: {exc.errors()[0]['msg']}") from exc
     return model_def
 
 
@@ -212,7 +206,7 @@ def expand_param_grid(
     combos = list(itertools.product(*value_lists))
     if max_trials is not None and max_trials >= 0:
         combos = combos[:max_trials]
-    return [dict(zip(keys, combo)) for combo in combos]
+    return [dict(zip(keys, combo, strict=False)) for combo in combos]
 
 
 def overrides_from_mapping(mapping: dict[str, Any]) -> list[str]:

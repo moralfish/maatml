@@ -1,4 +1,5 @@
 """Shared generate → validate → accept/reject corpus builder."""
+
 from __future__ import annotations
 
 from typing import Any, Callable, Optional

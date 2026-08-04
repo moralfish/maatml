@@ -1,4 +1,5 @@
 """Validator for vision-vlm description JSON outputs."""
+
 from __future__ import annotations
 
 import json
@@ -28,9 +29,7 @@ def validate_vision_vlm(
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
         return result
     if not isinstance(parsed, dict):
         result.errors.append(
@@ -49,9 +48,7 @@ def validate_vision_vlm(
             jsonschema.validate(parsed, schema)
             result.passed_layers.add(2)
         except Exception as exc:  # noqa: BLE001
-            result.errors.append(
-                ValidationError(layer=2, code="schema", message=str(exc))
-            )
+            result.errors.append(ValidationError(layer=2, code="schema", message=str(exc)))
     else:
         # Minimal shape check without schema file.
         if "description" not in parsed or not isinstance(parsed.get("description"), str):
@@ -71,9 +68,7 @@ def validate_vision_vlm(
     words = [w for w in desc.strip().split() if w]
     ok3 = True
     if not words:
-        result.errors.append(
-            ValidationError(layer=3, code="empty", message="description is empty")
-        )
+        result.errors.append(ValidationError(layer=3, code="empty", message="description is empty"))
         ok3 = False
     if len(words) > _MAX_WORDS:
         result.errors.append(

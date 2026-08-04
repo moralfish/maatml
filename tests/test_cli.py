@@ -3,6 +3,7 @@
 Torch-free by construction: every command here fails (or succeeds) before any
 model load, which is exactly the behaviour that has to hold in CI.
 """
+
 from __future__ import annotations
 
 import json
@@ -194,9 +195,7 @@ def test_verify_on_a_missing_manifest_exits_nonzero(tmp_path: Path) -> None:
 
 def test_scaffold_creates_a_model_folder(tmp_path: Path) -> None:
     target = tmp_path / "fresh"
-    result = runner.invoke(
-        app, ["scaffold", str(target), "--architecture", "causal_sft"]
-    )
+    result = runner.invoke(app, ["scaffold", str(target), "--architecture", "causal_sft"])
     assert result.exit_code == 0, result.output
     assert (target / "model.yml").is_file()
     assert (target / "datasets" / "samples" / "seed_samples.jsonl").is_file()
@@ -210,9 +209,7 @@ def test_scaffold_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    result = runner.invoke(
-        app, ["scaffold", str(target), "--architecture", "causal_sft"]
-    )
+    result = runner.invoke(app, ["scaffold", str(target), "--architecture", "causal_sft"])
     assert result.exit_code == 1
     assert "scaffold refused" in result.output
     # The hand-written corpus survives.
@@ -226,9 +223,7 @@ def test_scaffold_refuses_to_overwrite_without_force(tmp_path: Path) -> None:
 
 
 def test_scaffold_rejects_an_unknown_architecture(tmp_path: Path) -> None:
-    result = runner.invoke(
-        app, ["scaffold", str(tmp_path / "x"), "--architecture", "not_an_arch"]
-    )
+    result = runner.invoke(app, ["scaffold", str(tmp_path / "x"), "--architecture", "not_an_arch"])
     assert result.exit_code != 0
 
 
@@ -498,9 +493,7 @@ def test_run_with_an_invalid_set_leaves_no_state(tmp_path: Path) -> None:
 def test_run_with_a_misspelled_validator_exits_nonzero(tmp_path: Path) -> None:
     """Exit criterion: the config error surfaces before any step runs."""
     mdir = _runnable_model(tmp_path)
-    result = runner.invoke(
-        app, ["run", str(mdir), "--set", "evaluation.validator=nope_misspelled"]
-    )
+    result = runner.invoke(app, ["run", str(mdir), "--set", "evaluation.validator=nope_misspelled"])
     assert result.exit_code != 0
     assert "nope_misspelled" in plain(result.output)
     assert not (mdir / "output" / "pipeline.json").exists()

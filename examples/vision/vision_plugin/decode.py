@@ -3,11 +3,11 @@
 Shared by the maatml predictor and the Jetson/deploy client so ONNX graphs
 stay free of NonMaxSuppression.
 """
+
 from __future__ import annotations
 
-from typing import Any, Optional
-
 import math
+from typing import Any, Optional
 
 
 def _softmax(logits: list[float]) -> list[float]:
@@ -121,10 +121,7 @@ def decode_detections(
         labels.append(shape_labels[ci] if ci < len(shape_labels) else str(ci))
 
     keep = _nms_xyxy(boxes, scores, nms_iou)
-    return [
-        {"label": labels[i], "box": boxes[i], "confidence": float(scores[i])}
-        for i in keep
-    ]
+    return [{"label": labels[i], "box": boxes[i], "confidence": float(scores[i])} for i in keep]
 
 
 def decode_pose(

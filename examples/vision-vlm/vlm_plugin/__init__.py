@@ -1,4 +1,5 @@
 """Vision-VLM example plugin, SmolVLM SFT + vLLM-oriented serving."""
+
 from __future__ import annotations
 
 from maatml.registry import (

@@ -1,4 +1,5 @@
 """Metrics for vision-vlm: scene mention, shape F1, pose phrase, brevity."""
+
 from __future__ import annotations
 
 import json
@@ -72,9 +73,7 @@ def compute_vision_vlm_metrics(row_results: Sequence[Any]) -> dict[str, float]:
             pose_ok = False
         if stance and stance not in text:
             pose_ok = False
-        if pose_ok and (arms or stance):
-            pose_hits += 1
-        elif not arms and not stance:
+        if pose_ok and (arms or stance) or not arms and not stance:
             pose_hits += 1
 
         # Shape mention F1 vs gt shape_counts keys.

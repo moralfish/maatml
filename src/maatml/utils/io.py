@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -64,10 +65,8 @@ def write_jsonl_atomic(path: str | Path, rows: Iterable[dict]) -> Path:
                 f.write("\n")
         os.replace(tmp, p)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
     return p
 
@@ -88,10 +87,8 @@ def write_json_atomic(
             json.dump(data, f, indent=indent, sort_keys=sort_keys)
         os.replace(tmp, p)
     except BaseException:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass
         raise
     return p
 

@@ -3,6 +3,7 @@
 Task-specific sample / result schemas live in example plugins
 (``jcl_plugin.schemas``, ``spool_plugin.schemas``).
 """
+
 from __future__ import annotations
 
 from enum import Enum

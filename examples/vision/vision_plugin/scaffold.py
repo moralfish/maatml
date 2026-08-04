@@ -5,6 +5,7 @@ weights), so the plugin supplies it. ``maatml scaffold DIR --architecture
 vision_multitask --plugin <this folder>`` then produces a folder that
 ``maatml validate`` accepts and ``maatml datagen`` can fill.
 """
+
 from __future__ import annotations
 
 import json
@@ -100,9 +101,7 @@ def scaffold_schema() -> str:
 
 
 @register_scaffold_hook("vision_multitask")
-def scaffold_vision_multitask(
-    target_dir: Path, *, architecture: str, name: str
-) -> dict[str, Any]:
+def scaffold_vision_multitask(target_dir: Path, *, architecture: str, name: str) -> dict[str, Any]:
     """Contribute the vision sections, a schema, and an empty seed corpus."""
     del target_dir, architecture, name
     return {

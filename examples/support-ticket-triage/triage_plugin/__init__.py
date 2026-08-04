@@ -3,6 +3,7 @@
 The triage model uses the built-in ``causal_sft`` predictor; this package only
 adds the task's out-of-model contract (validator) and its scoring (metrics).
 """
+
 from __future__ import annotations
 
 from maatml.registry import register_metrics, register_validator

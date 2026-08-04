@@ -1,4 +1,5 @@
 """Support-ticket-triage tests, dependency-free (no torch required)."""
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,9 @@ BENCH = ROOT / "datasets/samples/test_prompt_set.jsonl"
 
 
 def _rows(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+    ]
 
 
 @pytest.fixture(scope="module")

@@ -3,6 +3,7 @@
 Mirrors the category builders in ``scripts/build_seeds.py``. Registration
 happens in package ``__init__.py`` so it re-binds after registry wipes.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -41,16 +42,14 @@ def spool_generator(
     counter = {"n": 0}
 
     related_docs: dict = {}
-    contracts_rel = (model_def.data or {}).get("contracts") or (
-        model_def.dataset or {}
-    ).get("contracts")
+    contracts_rel = (model_def.data or {}).get("contracts") or (model_def.dataset or {}).get(
+        "contracts"
+    )
     if isinstance(contracts_rel, str):
         contracts_path = model_def.resolve(contracts_rel)
         if contracts_path.is_file():
             related_docs = (
-                json.loads(contracts_path.read_text(encoding="utf-8")).get(
-                    "related_docs_catalog"
-                )
+                json.loads(contracts_path.read_text(encoding="utf-8")).get("related_docs_catalog")
                 or {}
             )
 

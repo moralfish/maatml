@@ -20,10 +20,14 @@ Public surface:
   - `_resolve_device`, `_maybe_attach_lora`
   - `render_assistant_target(sample, target_field) -> str`
   - `render_inference_prompt(request, prompt_spec, tokenizer, *, user_placeholder) -> list[int]`
-  - `build_chat_example(sample, prompt_spec, tokenizer, *, max_length, target_field, request_field, user_placeholder)`
-  - `SFTDataCollator(tokenizer, prompt_spec, *, max_length, target_field, request_field, user_placeholder)`
-  - `train_sft(model_def, *, config_cls, target_field, request_field, user_placeholder, default_prompt_spec, ...)`
+  - `build_chat_example(sample, prompt_spec, tokenizer, *, max_length,
+    target_field, request_field, user_placeholder)`
+  - `SFTDataCollator(tokenizer, prompt_spec, *, max_length, target_field,
+    request_field, user_placeholder)`
+  - `train_sft(model_def, *, config_cls, target_field, request_field,
+    user_placeholder, default_prompt_spec, ...)`
 """
+
 from __future__ import annotations
 
 import json
@@ -53,6 +57,8 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl, read_json, sha256_file, stable_hash
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
+from .schedule import precision_flags, total_training_steps
+from .schedule import warmup_steps as resolve_warmup_steps
 from .sft_config import (  # noqa: F401  re-export public config surface
     LoraSettings,
     QuantizationSettings,
@@ -166,9 +172,7 @@ def _messages_from_sample(
         if out:
             return out
 
-    user_text = prompt_spec["user_template"].replace(
-        user_placeholder, sample[request_field]
-    )
+    user_text = prompt_spec["user_template"].replace(user_placeholder, sample[request_field])
     target_text = render_assistant_target(sample, target_field)
     return [
         {"role": "system", "content": prompt_spec["system"]},
@@ -208,9 +212,7 @@ def build_chat_example(
     for i, msg in enumerate(rendered):
         if msg.get("role") != "assistant":
             continue
-        prefix_ids = _render_then_tokenize(
-            rendered[:i], tokenizer, add_generation_prompt=True
-        )
+        prefix_ids = _render_then_tokenize(rendered[:i], tokenizer, add_generation_prompt=True)
         through_ids = _render_then_tokenize(
             rendered[: i + 1], tokenizer, add_generation_prompt=False
         )
@@ -263,9 +265,7 @@ class SFTDataCollator:
         self.user_placeholder = user_placeholder
         self.pretokenized = pretokenized
         self.pad_id = (
-            tokenizer.pad_token_id
-            if tokenizer.pad_token_id is not None
-            else tokenizer.eos_token_id
+            tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
         )
 
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
@@ -346,9 +346,7 @@ def _save_sft_artifacts(
     """
     mode = (save_mode or "merged").lower()
     if mode not in ("merged", "adapter", "both"):
-        raise ValueError(
-            f"training.lora.save_mode must be merged|adapter|both; got {save_mode!r}"
-        )
+        raise ValueError(f"training.lora.save_mode must be merged|adapter|both; got {save_mode!r}")
     meta: dict[str, Any] = {"lora_save_mode": mode, "base_model_id": base_model_id}
     is_peft = hasattr(model, "merge_and_unload") and hasattr(model, "save_pretrained")
 
@@ -361,11 +359,11 @@ def _save_sft_artifacts(
 
     if mode in ("merged", "both"):
         if is_peft:
-            # For "both", clone path: merge_and_unload mutates; save adapter first.
-            if mode == "both":
-                merged = model.merge_and_unload()
-            else:
-                merged = model.merge_and_unload()
+            # merge_and_unload mutates the model, which is why "both" saves the
+            # adapter above before reaching here. The branch this replaced had
+            # identical arms, so it never cloned anything: the ordering is what
+            # makes "both" correct.
+            merged = model.merge_and_unload()
             merged.save_pretrained(out_dir)
         else:
             model.save_pretrained(out_dir)
@@ -452,10 +450,10 @@ def train_sft(
 
     ds_cfg = get_dataset_cfg(model_def)
     target_field = target_field or ds_cfg.get("target_field") or "expected_output"
-    request_field = request_field or ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
-    user_placeholder = (
-        user_placeholder or ds_cfg.get("user_placeholder") or "<<USER_REQUEST>>"
+    request_field = (
+        request_field or ds_cfg.get("request_field") or ds_cfg.get("raw_field") or "request"
     )
+    user_placeholder = user_placeholder or ds_cfg.get("user_placeholder") or "<<USER_REQUEST>>"
 
     if prompt_spec_path is not None:
         spec_path = Path(prompt_spec_path)
@@ -500,17 +498,12 @@ def train_sft(
             + (f" quant={cfg.quantization.enabled()}" if cfg.quantization else "")
         )
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            cfg.model_id, revision=cfg.model_revision
-        )
+        tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, revision=cfg.model_revision)
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        use_bf16 = cfg.precision == "bf16" and (
-            distributed or target_device.type in ("cuda", "mps")
-        )
-        use_fp16 = cfg.precision == "fp16" and (
-            distributed or target_device.type in ("cuda", "mps")
+        use_bf16, use_fp16 = precision_flags(
+            cfg.precision, device=target_device, distributed=distributed
         )
         quant = cfg.quantization if cfg.quantization and cfg.quantization.enabled() else None
         load_kwargs = from_pretrained_kwargs(
@@ -569,9 +562,7 @@ def train_sft(
             )
 
         train_tok = _load_or_build_tokenized_cache(train_rows, train_cache, _tok)
-        val_tok = (
-            _load_or_build_tokenized_cache(val_rows, val_cache, _tok) if val_rows else []
-        )
+        val_tok = _load_or_build_tokenized_cache(val_rows, val_cache, _tok) if val_rows else []
 
         collator = SFTDataCollator(
             tokenizer,
@@ -585,18 +576,18 @@ def train_sft(
         train_ds = _ListDataset(train_tok)
         val_ds = _ListDataset(val_tok) if val_tok else None
 
-        total_steps = (
-            int(len(train_rows) / cfg.batch_size / cfg.grad_accum * cfg.epochs)
-            if cfg.max_steps < 0
-            else cfg.max_steps
+        total_steps = total_training_steps(
+            len(train_rows),
+            batch_size=cfg.batch_size,
+            grad_accum=cfg.grad_accum,
+            epochs=cfg.epochs,
+            max_steps=cfg.max_steps,
         )
         use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
         run_eval_during_training = (
-            val_ds is not None
-            and profile.allow_mid_train_eval
-            and cfg.eval_steps < total_steps
+            val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
         )
-        warmup_steps = max(0, int(round(total_steps * cfg.warmup_ratio)))
+        warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
         report_to = normalize_report_to(cfg.report_to)
         num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
 
@@ -634,7 +625,7 @@ def train_sft(
 
         if "group_by_length" in inspect.signature(TrainingArguments.__init__).parameters:
             args_kwargs["group_by_length"] = bool(cfg.group_by_length)
-        args = TrainingArguments(**args_kwargs)  # type: ignore[call-arg]
+        args = TrainingArguments(**args_kwargs)
 
         trainer = Trainer(
             model=model,
@@ -664,9 +655,7 @@ def train_sft(
             spec_path=spec_path,
         )
 
-        metrics_out = {
-            k: float(v) for k, v in eval_metrics.items() if isinstance(v, (int, float))
-        }
+        metrics_out = {k: float(v) for k, v in eval_metrics.items() if isinstance(v, (int, float))}
         write_run_metadata(
             out_dir,
             model_def,
@@ -698,4 +687,3 @@ def train_sft(
     except Exception as exc:
         finish_run(model_def, run.run_id, "aborted", error=str(exc))
         raise
-

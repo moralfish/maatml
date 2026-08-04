@@ -1,5 +1,9 @@
 """Build the JCL Validator seed corpus deterministically.
 
+LEGACY GENERATOR. The committed corpus is real captured system output;
+running this script overwrites it with synthetic templates. Keep it for
+reference and for bootstrapping a fresh corpus only.
+
 Reuses the template + defect-injection primitives in
 `jcl_plugin.generator` to produce a balanced corpus across all eight
 categories (valid + 7 error codes), then gates every sample through the
@@ -14,6 +18,7 @@ Usage:
     python examples/jcl-validator/scripts/build_seeds.py --target 800
     python examples/jcl-validator/scripts/build_seeds.py --append
 """
+
 from __future__ import annotations
 
 import argparse
@@ -28,15 +33,15 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(EXAMPLE_ROOT))
 
 from jcl_plugin.generator import (  # noqa: E402
+    DEFAULT_TEMPLATE_DIR,
     INJECTORS,
     _load_templates,
     _render_template,
-    DEFAULT_TEMPLATE_DIR,
 )
 from jcl_plugin.schemas import ErrorCategory  # noqa: E402
 from jcl_plugin.validator import validate_jcl_result  # noqa: E402
-from maatml.utils.io import stable_hash  # noqa: E402
 
+from maatml.utils.io import stable_hash  # noqa: E402
 
 MODEL_DIR = EXAMPLE_ROOT
 DATASETS = MODEL_DIR / "datasets"
@@ -95,7 +100,9 @@ def _build_valid_sample(
     return {
         "sample_id": sample_id,
         "source": f"synthetic:{template_id}",
-        "family": template_id,
+        # Split group key: deck skeleton plus category is the near-duplicate
+        # unit. Skeleton alone gives 8 groups, too few to fill three splits.
+        "family": f"{template_id}:valid",
         "category": "valid",
         "request": rendered,
         "expected_validation_result": {
@@ -138,7 +145,8 @@ def _build_error_sample(
     return {
         "sample_id": sample_id,
         "source": f"synthetic:{template_id}",
-        "family": template_id,
+        # Split group key; see _build_valid_sample.
+        "family": f"{template_id}:{category.value}",
         "category": category.value,
         "request": request,
         "expected_validation_result": {
@@ -255,10 +263,7 @@ def main(argv: list[str] | None = None) -> int:
             produced += 1
         print(f"  {category}: produced={produced}/{n} attempts={attempts}")
 
-    if args.append:
-        rows_to_write = existing_rows + accepted
-    else:
-        rows_to_write = accepted
+    rows_to_write = existing_rows + accepted if args.append else accepted
 
     with out_path.open("w", encoding="utf-8") as f:
         for row in rows_to_write:

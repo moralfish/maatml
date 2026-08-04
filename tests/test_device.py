@@ -1,4 +1,5 @@
 """Device profile + distributed / quantization guard tests."""
+
 from __future__ import annotations
 
 import os

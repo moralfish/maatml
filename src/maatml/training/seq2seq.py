@@ -8,6 +8,7 @@ Public surface:
   - ``Seq2SeqConfig``: typed config built from ``model.yml::training``
   - ``train_seq2seq_model(model_def, ...)``: entry point invoked by the CLI
 """
+
 from __future__ import annotations
 
 import json
@@ -24,13 +25,45 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs
-from .sft_config import validate_precision
+from .schedule import precision_flags, total_training_steps
+from .schedule import warmup_steps as resolve_warmup_steps
+from .sft_config import reject_unknown_training_keys, validate_precision
 
 
 @dataclass
 class GenerationCfg:
     num_beams: int = 1
     max_new_tokens: int = 512
+
+
+# Every `training:` key this architecture reads, here and in the trainer body.
+_SEQ2SEQ_KEYS = frozenset(
+    {
+        "model_id",
+        "source_max_len",
+        "target_max_len",
+        "batch_size",
+        "grad_accum",
+        "learning_rate",
+        "epochs",
+        "weight_decay",
+        "warmup_ratio",
+        "seed",
+        "precision",
+        "grad_checkpointing",
+        "eval_steps",
+        "save_steps",
+        "logging_steps",
+        "max_steps",
+        "generation",
+        "attn_implementation",
+        "dataloader_workers",
+        "model_revision",
+        "embedding_strategy",
+        "report_to",
+        "group_by_length",
+    }
+)
 
 
 @dataclass
@@ -58,6 +91,7 @@ class Seq2SeqConfig:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Seq2SeqConfig":
+        reject_unknown_training_keys(d, _SEQ2SEQ_KEYS, architecture="seq2seq")
         gen = d.get("generation") or {}
         return cls(
             model_id=d.get("model_id", "google/flan-t5-base"),
@@ -84,9 +118,7 @@ class Seq2SeqConfig:
             ),
             attn_implementation=d.get("attn_implementation"),
             dataloader_workers=(
-                int(d["dataloader_workers"])
-                if d.get("dataloader_workers") is not None
-                else None
+                int(d["dataloader_workers"]) if d.get("dataloader_workers") is not None else None
             ),
             model_revision=d.get("model_revision"),
         )
@@ -122,9 +154,7 @@ def _drop_targetless(rows: list[dict], target_field: str) -> tuple[list[dict], i
     return kept, len(rows) - len(kept)
 
 
-def _serialise_target(
-    target, *, key_order: Optional[list[str]] = None
-) -> str:
+def _serialise_target(target, *, key_order: Optional[list[str]] = None) -> str:
     """Canonical compact-JSON (or passthrough string) serialisation of the target."""
     if target is None or (hasattr(target, "__len__") and len(target) == 0):
         raise ValueError(
@@ -220,9 +250,9 @@ def _train_loop(
 ) -> Seq2SeqResult:
     from transformers import (
         AutoModelForSeq2SeqLM,
+        DataCollatorForSeq2Seq,
         Seq2SeqTrainer,
         Seq2SeqTrainingArguments,
-        DataCollatorForSeq2Seq,
         set_seed,
     )
 
@@ -235,21 +265,20 @@ def _train_loop(
         revision=cfg.model_revision,
     )
     model = AutoModelForSeq2SeqLM.from_pretrained(cfg.model_id, **load_kwargs)
-    ensure_tokenizer_model_contract(
-        model, tokenizer, embedding_strategy=embedding_strategy
-    )
+    ensure_tokenizer_model_contract(model, tokenizer, embedding_strategy=embedding_strategy)
     model.generation_config.max_new_tokens = cfg.generation.max_new_tokens
     model.generation_config.num_beams = cfg.generation.num_beams
 
-    total_steps = (
-        int(len(train_ds) / cfg.batch_size / cfg.grad_accum * cfg.epochs)
-        if cfg.max_steps < 0
-        else cfg.max_steps
+    total_steps = total_training_steps(
+        len(train_ds),
+        batch_size=cfg.batch_size,
+        grad_accum=cfg.grad_accum,
+        epochs=cfg.epochs,
+        max_steps=cfg.max_steps,
     )
-    warmup_steps = max(0, int(round(total_steps * cfg.warmup_ratio)))
+    warmup_steps = resolve_warmup_steps(total_steps, cfg.warmup_ratio)
 
-    use_bf16 = cfg.precision == "bf16"
-    use_fp16 = cfg.precision == "fp16"
+    use_bf16, use_fp16 = precision_flags(cfg.precision, device=device_name, distributed=distributed)
     use_grad_ckpt = bool(cfg.grad_checkpointing) and profile.allow_grad_checkpointing
     run_eval = val_ds is not None and profile.allow_mid_train_eval and cfg.eval_steps < total_steps
     num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
@@ -289,7 +318,7 @@ def _train_loop(
 
     if "group_by_length" in inspect.signature(Seq2SeqTrainingArguments.__init__).parameters:
         args_kwargs["group_by_length"] = bool(group_by_length)
-    args = Seq2SeqTrainingArguments(**args_kwargs)  # type: ignore[call-arg]
+    args = Seq2SeqTrainingArguments(**args_kwargs)
 
     collator = DataCollatorForSeq2Seq(
         tokenizer=tokenizer,
@@ -402,7 +431,7 @@ def train_seq2seq_model(
         train_rows, dropped_train = _drop_targetless(train_rows, target_field)
         val_rows, dropped_val = _drop_targetless(val_rows, target_field)
         if dropped_train or dropped_val:
-            print(
+            print(  # noqa: T201  training progress goes to stdout
                 f"seq2seq: dropped {dropped_train} train / {dropped_val} val rows "
                 f"with no {target_field!r} (they would have trained on an empty target)"
             )
@@ -412,7 +441,7 @@ def train_seq2seq_model(
                 f"{target_field!r}; check dataset.target_field"
             )
 
-        print(
+        print(  # noqa: T201  training progress goes to stdout
             f"seq2seq: run={run.run_id} model={cfg.model_id} train={len(train_rows)} "
             f"val={len(val_rows)} src_len={cfg.source_max_len} tgt_len={cfg.target_max_len} "
             f"epochs={cfg.epochs}"

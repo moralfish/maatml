@@ -8,6 +8,7 @@ Usage:
     .venv/bin/python scripts/evaluate_all.py --split val
     .venv/bin/python scripts/evaluate_all.py --limit 20
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,8 +25,8 @@ sys.path.insert(0, str(REPO / "src"))
 from rich.console import Console  # noqa: E402
 
 from maatml.config import ModelDefinition, load_model_def  # noqa: E402
+from maatml.evaluation.harness import default_eval_keys  # noqa: E402
 from maatml.registry import discover_plugins  # noqa: E402
-from maatml.scaffold import normalize_architecture  # noqa: E402
 
 console = Console()
 
@@ -78,33 +79,11 @@ def _select_dirs(only: list[str] | None) -> list[Path]:
 def _latest_checkpoint(md: ModelDefinition) -> Path:
     ckpt_root = md.checkpoints_dir
     if not ckpt_root.exists():
-        raise FileNotFoundError(
-            f"No checkpoints under {ckpt_root}. Run train_all.py first."
-        )
+        raise FileNotFoundError(f"No checkpoints under {ckpt_root}. Run train_all.py first.")
     candidates = [p for p in ckpt_root.iterdir() if p.is_dir()]
     if not candidates:
         raise FileNotFoundError(f"No checkpoint dirs in {ckpt_root}")
     return max(candidates, key=lambda p: p.stat().st_mtime)
-
-
-def _default_eval_keys(md: ModelDefinition) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    from maatml.registry import PREDICTORS
-
-    ev = md.evaluation or {}
-    predictor = ev.get("predictor")
-    validator = ev.get("validator")
-    metrics = ev.get("metrics")
-    if isinstance(metrics, list):
-        metrics = metrics[0] if metrics else None
-
-    arch = normalize_architecture(md.architecture)
-    if predictor is None:
-        if PREDICTORS.get(md.architecture):
-            predictor = md.architecture
-        elif PREDICTORS.get(arch):
-            predictor = arch
-
-    return predictor, validator, metrics
 
 
 def _run_one(
@@ -113,7 +92,7 @@ def _run_one(
     checkpoint: Optional[Path],
     split: str,
     device: str,
-    max_input_tokens: int,
+    max_input_tokens: Optional[int],
     limit: Optional[int],
 ) -> Outcome:
     label = model_dir.name
@@ -129,7 +108,7 @@ def _run_one(
         ckpt = checkpoint if checkpoint else _latest_checkpoint(md)
         md.eval_dir.mkdir(parents=True, exist_ok=True)
         out_path = md.eval_dir / f"{ckpt.name}.json"
-        predictor, validator, metrics = _default_eval_keys(md)
+        predictor, validator, metrics = default_eval_keys(md)
         if predictor is None:
             raise ValueError(f"No predictor for {md.architecture!r}")
         console.print(f"[cyan]evaluate[/] {label} checkpoint={ckpt.name} split={split}")
@@ -143,7 +122,12 @@ def _run_one(
             metrics_fn=metrics,
             device=device,
             split=split,
-            max_input_tokens=max_input_tokens,
+            # Each model is evaluated at its own declared budget unless the
+            # caller overrides it; a shared constant silently truncated any
+            # model configured wider than it.
+            max_input_tokens=(
+                max_input_tokens if max_input_tokens is not None else md.packaging.max_input_tokens
+            ),
             limit=limit,
             task=md.task,
         )
@@ -169,7 +153,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--only", nargs="+", help="Subset by folder name or alias")
     parser.add_argument("--split", default="test")
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--max-input-tokens", type=int, default=1024)
+    # Default None: each model is evaluated at its own declared packaging
+    # budget rather than a constant that silently truncated wider models.
+    parser.add_argument("--max-input-tokens", type=int, default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None)
     args = parser.parse_args(argv)

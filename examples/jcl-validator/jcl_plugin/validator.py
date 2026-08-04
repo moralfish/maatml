@@ -13,6 +13,7 @@ Six layers:
 Returns a gate result so callers (per-task evaluator, seed-row gating) can
 treat task validators uniformly.
 """
+
 from __future__ import annotations
 
 import json
@@ -25,6 +26,8 @@ from maatml.validation.base import (
     ValidationError,
     ValidationResult,
     _load_json,
+)
+from maatml.validation.base import (
     strip_fences as strip_model_fences,
 )
 
@@ -60,12 +63,23 @@ def validate_jcl_result(
     # Layer 1
     try:
         result.parsed = json.loads(text)
-        result.passed_layers.add(1)
     except json.JSONDecodeError as exc:
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
+        return result
+    if not isinstance(result.parsed, dict):
+        # Valid JSON that is not an object (a bare list, string or number) has
+        # no fields to check. Score it as a failed row instead of letting the
+        # later .get() calls raise AttributeError, which would abort the whole
+        # evaluate or distill run before the report is written.
         result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
+            ValidationError(
+                layer=1,
+                code="not_an_object",
+                message=f"expected a JSON object, got {type(result.parsed).__name__}",
+            )
         )
         return result
+    result.passed_layers.add(1)
 
     # Layer 2
     try:

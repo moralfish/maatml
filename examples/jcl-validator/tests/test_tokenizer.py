@@ -4,6 +4,7 @@ Uses `jcl_pretokenize_fixtures.json` as the normative expected output for
 `pre_tokenize_jcl`. Downstream inference pre-tokenizers should match these
 fixtures byte-for-byte.
 """
+
 from __future__ import annotations
 
 import json

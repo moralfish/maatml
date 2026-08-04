@@ -62,7 +62,7 @@ maatml verify examples/vision/output/export/<run_id>
 Same command on a Mac (onnxruntime CPU) and a Jetson (TensorRT/CUDA EP):
 
 ```bash
-maatml serve examples/vision --checkpoint output/export/<run_id> --host 0.0.0.0 --port 8080
+maatml serve examples/vision --checkpoint output/export/<run_id> --port 8080
 
 # health / info
 curl -s localhost:8080/health | jq
@@ -92,10 +92,11 @@ subset via ingest rather than streaming 20 GB in core.
 
 ## Quality gates
 
-| Metric | Gate (default) | Meaning |
+| Metric | Gate | Meaning |
 |---|---|---|
-| `scene_accuracy` | ≥ 0.85 | background-style classification |
-| `map_50` | ≥ 0.15 | VOC-style mAP @ IoU 0.5 |
-| `pck_0_2` | ≥ 0.15 | pose PCK @ 0.2 × person diagonal |
+| `all_layers_pass_rate` | >= 0.97 | every validator layer passed |
+| `map_50` | >= 0.18 | VOC-style mAP @ IoU 0.5 |
+| `pck_0_2` | >= 0.33 | pose PCK @ 0.2 x person diagonal |
+| `scene_accuracy` | >= 0.97 | background-style classification |
 
 Raise the gates after a longer train on a larger corpus (`--target 2000`).

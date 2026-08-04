@@ -1,4 +1,5 @@
 """Ensure example root is importable as a package parent for unit tests."""
+
 from __future__ import annotations
 
 import sys

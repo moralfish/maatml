@@ -1,4 +1,5 @@
 """Dual-backend predictor: torch checkpoint or ``model.onnx`` via onnxruntime."""
+
 from __future__ import annotations
 
 import json
@@ -56,9 +57,7 @@ class VisionMultitaskPredictor:
 
         cfg_path = onnx_path.parent / "config.json"
         if cfg_path.is_file():
-            self.cfg = MultitaskConfig.from_dict(
-                json.loads(cfg_path.read_text(encoding="utf-8"))
-            )
+            self.cfg = MultitaskConfig.from_dict(json.loads(cfg_path.read_text(encoding="utf-8")))
         else:
             self.cfg = MultitaskConfig()
 
@@ -124,7 +123,7 @@ class VisionMultitaskPredictor:
         input_name = self.session.get_inputs()[0].name
         outs = self.session.run(None, {input_name: x})
         names = [o.name for o in self.session.get_outputs()]
-        by_name = {n: v[0] for n, v in zip(names, outs)}
+        by_name = {n: v[0] for n, v in zip(names, outs, strict=False)}
         # Fallback positional if names differ.
         if "scene_logits" not in by_name and len(outs) >= 5:
             by_name = {

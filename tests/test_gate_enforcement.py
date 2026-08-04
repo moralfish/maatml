@@ -1,4 +1,5 @@
 """`--gate` / enforce_gates must never pass vacuously (v0.5.1 truth-and-safety)."""
+
 from __future__ import annotations
 
 from pathlib import Path

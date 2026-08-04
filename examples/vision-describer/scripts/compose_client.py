@@ -11,6 +11,7 @@ Usage:
     python examples/vision-describer/scripts/compose_client.py path/to/image.png \\
         --vision-url http://127.0.0.1:8080 --describer-url http://127.0.0.1:8081
 """
+
 from __future__ import annotations
 
 import argparse
@@ -72,9 +73,7 @@ def compose(
         # Prefer a model-relative path when the image lives under examples/vision;
         # otherwise send a data-URI so the vision server can decode it.
         try:
-            rel = image_path.resolve().relative_to(
-                (REPO / "examples" / "vision").resolve()
-            )
+            rel = image_path.resolve().relative_to((REPO / "examples" / "vision").resolve())
             vision_row: dict[str, Any] = {"image": str(rel)}
         except ValueError:
             vision_row = {"image": _image_to_data_uri(image_path)}

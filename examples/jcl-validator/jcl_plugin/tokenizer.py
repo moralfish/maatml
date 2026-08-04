@@ -13,6 +13,7 @@ CLI (via example script):
 
     python examples/jcl-validator/scripts/build_tokenizer.py
 """
+
 from __future__ import annotations
 
 import argparse
@@ -106,13 +107,13 @@ def train_jcl_tokenizer(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tokenizer.save(str(out_path))
-    print(f"saved tokenizer to {out_path} (vocab={tokenizer.get_vocab_size()})")
+    print(  # noqa: T201  build-time utility
+        f"saved tokenizer to {out_path} (vocab={tokenizer.get_vocab_size()})"
+    )
 
 
 def _cli(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="JCL pre-tokenizer + BPE trainer."
-    )
+    parser = argparse.ArgumentParser(description="JCL pre-tokenizer + BPE trainer.")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_train = sub.add_parser("train", help="Train a JCL BPE tokenizer.")
@@ -138,7 +139,7 @@ def _cli(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "pre-tokenize":
         text = sys.stdin.read()
-        print(pre_tokenize_jcl(text))
+        print(pre_tokenize_jcl(text))  # noqa: T201  CLI output
         return 0
     return 1
 

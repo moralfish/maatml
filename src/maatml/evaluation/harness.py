@@ -5,6 +5,7 @@ semantics. Asset paths (schema, contracts, prompt_spec, tokenizer) resolve
 from ``model_def`` / explicit kwargs / ``checkpoint_dir``: never from a
 hardcoded repo-relative fallback.
 """
+
 from __future__ import annotations
 
 import time
@@ -199,9 +200,9 @@ def per_class_prf(
 ) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     for label in labels:
-        tp = sum(1 for t, p in zip(true, pred) if t == label and p == label)
-        fp = sum(1 for t, p in zip(true, pred) if t != label and p == label)
-        fn = sum(1 for t, p in zip(true, pred) if t == label and p != label)
+        tp = sum(1 for t, p in zip(true, pred, strict=False) if t == label and p == label)
+        fp = sum(1 for t, p in zip(true, pred, strict=False) if t != label and p == label)
+        fn = sum(1 for t, p in zip(true, pred, strict=False) if t == label and p != label)
         out[label] = binary_prf(tp, fp, fn)
     return out
 
@@ -219,6 +220,47 @@ def baseline_delta(
     return delta
 
 
+def default_eval_keys(
+    model_def: ModelDefinition,
+) -> tuple[Optional[str], Optional[str], Any]:
+    """Infer predictor / validator / metrics from ``evaluation:`` or architecture.
+
+    ``evaluation.metrics`` may be a single name or a list; every entry runs and
+    the results are merged (the harness rejects two plugins claiming the same
+    metric key), so a list is never truncated to its first entry. Validator and
+    metrics come from ``evaluation:`` or the model's plugins; core keeps no
+    hardcoded task-name fallbacks.
+    """
+    from ..scaffold import normalize_architecture
+
+    ev = model_def.evaluation or {}
+    predictor = ev.get("predictor")
+    validator = ev.get("validator")
+    metrics = ev.get("metrics")
+    if isinstance(metrics, list) and not metrics:
+        metrics = None
+
+    arch = normalize_architecture(model_def.architecture)
+    if predictor is None:
+        if arch in PREDICTORS.names() or PREDICTORS.get(model_def.architecture):
+            predictor = model_def.architecture if PREDICTORS.get(model_def.architecture) else arch
+        elif arch in ("multi_head_classifier", "seq2seq", "causal_sft"):
+            predictor = arch
+
+    return predictor, validator, metrics
+
+
+class DeclaredAssetMissing(FileNotFoundError):
+    """An asset the caller named explicitly, or model.yml declares, is absent.
+
+    Distinct from a plain FileNotFoundError, which only means an *optional*
+    asset could not be discovered. Callers treat the optional case as "no
+    asset" and must not do the same here: a typo in ``dataset.contracts``
+    would otherwise resolve to None and surface much later as an opaque
+    TypeError from the validator, on the first evaluated row.
+    """
+
+
 def resolve_eval_asset(
     key: str,
     *,
@@ -234,7 +276,7 @@ def resolve_eval_asset(
     if explicit is not None:
         path = Path(explicit)
         if not path.is_file():
-            raise FileNotFoundError(f"{key} not found at explicit path: {path}")
+            raise DeclaredAssetMissing(f"{key} not found at explicit path: {path}")
         return path.resolve()
 
     if model_def is not None:
@@ -242,7 +284,7 @@ def resolve_eval_asset(
         if key in cfg and isinstance(cfg[key], str):
             path = model_def.resolve(cfg[key])
             if not path.is_file():
-                raise FileNotFoundError(
+                raise DeclaredAssetMissing(
                     f"model.yml declares {key}={cfg[key]!r} but file missing: {path}"
                 )
             return path
@@ -289,9 +331,7 @@ def _noop_validate(
     except json.JSONDecodeError as exc:
         from ..validation.base import ValidationError
 
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
     return result
 
 
@@ -376,7 +416,7 @@ def _merge_metrics(
 ) -> dict[str, float]:
     merged: dict[str, float] = {}
     owner: dict[str, str] = {}
-    for name, fn in zip(names, callables):
+    for name, fn in zip(names, callables, strict=False):
         produced = fn(row_results) or {}
         for key, value in produced.items():
             if key in merged:
@@ -451,9 +491,10 @@ def run_evaluation(
             ),
             explicit=schema_path,
         )
+    except DeclaredAssetMissing:
+        # Declared and missing is a config error, not an absent optional asset.
+        raise
     except FileNotFoundError:
-        if schema_path is not None:
-            raise
         # Causal-SFT / no-validator paths may omit schema.
         resolved_schema = None
 
@@ -465,9 +506,9 @@ def run_evaluation(
             filenames=("node_contracts.json",),
             explicit=contracts_path,
         )
+    except DeclaredAssetMissing:
+        raise
     except FileNotFoundError:
-        if contracts_path is not None:
-            raise
         resolved_contracts = None
 
     try:
@@ -478,9 +519,9 @@ def run_evaluation(
             filenames=("prompt_spec.json",),
             explicit=prompt_spec_path,
         )
+    except DeclaredAssetMissing:
+        raise
     except FileNotFoundError:
-        if prompt_spec_path is not None:
-            raise
         resolved_prompt = None
 
     setup = getattr(pred_obj, "setup", None)
@@ -519,9 +560,7 @@ def run_evaluation(
     request_field = "request"
     if model_def is not None:
         cfg = get_dataset_cfg(model_def)
-        request_field = str(
-            cfg.get("request_field") or cfg.get("raw_field") or "request"
-        )
+        request_field = str(cfg.get("request_field") or cfg.get("raw_field") or "request")
 
     predict = pred_obj.predict if hasattr(pred_obj, "predict") else pred_obj
 
@@ -595,9 +634,7 @@ def run_evaluation(
                 layer_pass[layer] = layer_pass.get(layer, 0) + 1
             if item.result.ok:
                 all_ok += 1
-        metrics = {
-            f"layer_{k}_pass_rate": layer_pass.get(k, 0) / n for k in sorted(layer_pass)
-        }
+        metrics = {f"layer_{k}_pass_rate": layer_pass.get(k, 0) / n for k in sorted(layer_pass)}
         metrics["all_layers_pass_rate"] = all_ok / n if n else 0.0
 
     for key, value in coverage_metrics(row_results).items():
@@ -632,11 +669,7 @@ def run_evaluation(
 
     identity_name = model_def.name if model_def else checkpoint_dir.name
     identity_version = model_def.version if model_def else ""
-    identity_id = (
-        model_def.model_id
-        if model_def
-        else str(checkpoint_dir)
-    )
+    identity_id = model_def.model_id if model_def else str(checkpoint_dir)
     report_task = task or (model_def.task if model_def else "")
 
     gates_payload: Optional[dict[str, Any]] = None

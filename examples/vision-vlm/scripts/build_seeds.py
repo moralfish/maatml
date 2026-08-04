@@ -5,6 +5,7 @@ Usage:
   python examples/vision-vlm/scripts/build_seeds.py --target 16
   python examples/vision-vlm/scripts/build_seeds.py --target 300
 """
+
 from __future__ import annotations
 
 import argparse

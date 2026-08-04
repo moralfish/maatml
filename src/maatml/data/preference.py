@@ -3,6 +3,7 @@
 Rows are ``{prompt, chosen, rejected}`` (+ optional ``sample_id`` / ``family``).
 ``mint_preference_pairs`` builds pairs from validator outcomes without a model.
 """
+
 from __future__ import annotations
 
 import json
@@ -18,6 +19,7 @@ from .pipeline import prepare_rows
 
 class MintConfigError(ValueError):
     """maatml mint was asked to run without a validator or usable candidates."""
+
 
 ValidatorFn = Callable[[str, str], bool]
 CandidatesFn = Callable[[str], Sequence[str]]
@@ -46,8 +48,7 @@ def normalize_preference(row: dict) -> dict[str, Any]:
     rejected = row.get("rejected")
     if prompt is None or chosen is None or rejected is None:
         raise ValueError(
-            "preference row requires prompt, chosen, and rejected "
-            f"(keys present: {sorted(row)})"
+            f"preference row requires prompt, chosen, and rejected (keys present: {sorted(row)})"
         )
     out: dict[str, Any] = {
         "prompt": as_completion_text(prompt),
@@ -88,7 +89,7 @@ def mint_preference_pairs(
         if callable(candidates) and not isinstance(candidates, (list, tuple)):
             cands = list(candidates(prompt))
         else:
-            cands = list(candidates[i])  # type: ignore[index]
+            cands = list(candidates[i])
         passed: list[str] = []
         failed: list[str] = []
         for completion in cands:
@@ -130,13 +131,9 @@ def _validator_scorer(model_def: ModelDefinition) -> ValidatorFn:
             f"(known: {', '.join(VALIDATORS.names()) or '(none)'})."
         ) from exc
     cfg = get_dataset_cfg(model_def)
-    schema_path = (
-        model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
-    )
+    schema_path = model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
     contracts_path = (
-        model_def.resolve(cfg["contracts"])
-        if isinstance(cfg.get("contracts"), str)
-        else None
+        model_def.resolve(cfg["contracts"]) if isinstance(cfg.get("contracts"), str) else None
     )
 
     def _score(prompt: str, completion: str) -> bool:
@@ -230,9 +227,7 @@ def _pair_id(row: dict[str, Any]) -> str:
 
 
 @register_format("preference_jsonl")
-def prepare_preference_jsonl(
-    model_def: ModelDefinition, out_dir: Optional[Path] = None
-) -> dict:
+def prepare_preference_jsonl(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
     """Prepare preference JSONL into train/val/test splits."""
     cfg = get_dataset_cfg(model_def)
     if "seed_samples" not in cfg:
@@ -256,7 +251,5 @@ def prepare_preference_jsonl(
         out_dir=out_dir,
         seed_label=str(seed_path),
         benchmark_rows=bench_rows or None,
-        benchmark_label=(
-            str(model_def.resolve(benchmark_path)) if benchmark_path else None
-        ),
+        benchmark_label=(str(model_def.resolve(benchmark_path)) if benchmark_path else None),
     )

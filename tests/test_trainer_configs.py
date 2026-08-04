@@ -4,9 +4,11 @@ seq2seq / multi_head keep their torch imports inside functions, so their
 config surface is unit-testable on the torch-free matrix. The tokenization
 and label-masking tests live in test_trainers_torch.py.
 """
+
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from maatml.data.preference import as_completion_text, normalize_preference
 from maatml.training.multi_head import (
@@ -24,7 +26,6 @@ from maatml.training.seq2seq import (
     has_target,
 )
 from maatml.training.sft_config import SFTTrainConfig, validate_precision
-
 
 # --- precision -------------------------------------------------------------
 
@@ -46,9 +47,12 @@ def test_precision_validated_at_parse_time() -> None:
 
 def test_fractional_epochs_survive_config_parse() -> None:
     assert Seq2SeqConfig.from_dict({"epochs": 0.5}).epochs == 0.5
-    assert MultiHeadConfig.from_dict(
-        {"epochs": 0.25, "heads": [{"name": "h", "labels": ["a", "b"]}]}
-    ).epochs == 0.25
+    assert (
+        MultiHeadConfig.from_dict(
+            {"epochs": 0.25, "heads": [{"name": "h", "labels": ["a", "b"]}]}
+        ).epochs
+        == 0.25
+    )
     # Parity with the SFT config, which already modelled epochs as a float.
     assert SFTTrainConfig(epochs=0.5).epochs == 0.5
 
@@ -96,9 +100,7 @@ def test_scan_label_coverage_counts_unknown_gold() -> None:
         {"target": {"code": "zzz"}},
         {"target": {"code": "zzz"}},
     ]
-    assert scan_label_coverage(rows, heads, target_field="target") == {
-        "code": {"'zzz'": 2}
-    }
+    assert scan_label_coverage(rows, heads, target_field="target") == {"code": {"'zzz'": 2}}
     assert scan_label_coverage(rows[:1], heads, target_field="target") == {}
 
 
@@ -132,9 +134,7 @@ def test_structured_completions_serialise_as_json_not_repr() -> None:
     assert as_completion_text({"a": 1, "b": None}) == '{"a":1,"b":null}'
     assert as_completion_text(["x"]) == '["x"]'
     assert as_completion_text("already text") == "already text"
-    row = normalize_preference(
-        {"prompt": "p", "chosen": {"ok": True}, "rejected": {"ok": False}}
-    )
+    row = normalize_preference({"prompt": "p", "chosen": {"ok": True}, "rejected": {"ok": False}})
     assert row["chosen"] == '{"ok":true}'
     assert "'" not in row["chosen"]
 
@@ -142,3 +142,166 @@ def test_structured_completions_serialise_as_json_not_repr() -> None:
 def test_identical_chosen_and_rejected_warns() -> None:
     with pytest.warns(UserWarning, match="identical chosen and rejected"):
         normalize_preference({"prompt": "p", "chosen": "same", "rejected": "same"})
+
+
+def test_lora_typo_is_rejected_not_silently_dropped() -> None:
+    """LoraSettings is strict like its siblings: a typo under training.lora
+    would otherwise train at the default while the run looks legitimately fresh
+    (training_config is hashed into the lifecycle fingerprint)."""
+    with pytest.raises(ValidationError):
+        SFTTrainConfig(lora={"enabled": True, "alpah": 32})
+    # The correctly spelled key still parses.
+    assert SFTTrainConfig(lora={"enabled": True, "alpha": 32}).lora.alpha == 32
+
+
+# --- shared schedule / precision helpers ------------------------------------
+
+
+def test_total_steps_divides_by_world_size() -> None:
+    """Each rank sees len(dataset)/world_size rows. Sizing the schedule as
+    though the run were single-process made a 0.06 warmup ratio cover ~48% of
+    an 8-GPU schedule."""
+    from maatml.training.schedule import total_training_steps, warmup_steps
+
+    kwargs = {"batch_size": 2, "grad_accum": 8, "epochs": 3.0}
+    single = total_training_steps(1600, processes=1, **kwargs)
+    eight = total_training_steps(1600, processes=8, **kwargs)
+    assert single == 300
+    assert eight == 37, "8 ranks each see an eighth of the corpus"
+    # The warmup ratio now lands on the real schedule instead of 8x it.
+    assert warmup_steps(eight, 0.06) == 2
+    assert warmup_steps(single, 0.06) == 18
+
+
+def test_total_steps_honours_explicit_max_steps() -> None:
+    from maatml.training.schedule import total_training_steps
+
+    assert total_training_steps(10_000, batch_size=2, grad_accum=8, epochs=3.0, max_steps=50) == 50
+
+
+@pytest.mark.parametrize("device", ["cpu", "cpu:0", None])
+def test_precision_flags_off_without_accelerator(device) -> None:
+    """transformers rejects bf16=True on an unsupported CPU. seq2seq and
+    multi_head passed it unguarded, so the same config trained for causal_sft
+    and hard-failed for them on the same host."""
+    from maatml.training.schedule import precision_flags
+
+    assert precision_flags("bf16", device=device) == (False, False)
+    assert precision_flags("fp16", device=device) == (False, False)
+
+
+@pytest.mark.parametrize("device", ["cuda", "cuda:0", "mps"])
+def test_precision_flags_on_for_accelerators(device) -> None:
+    from maatml.training.schedule import precision_flags
+
+    assert precision_flags("bf16", device=device) == (True, False)
+    assert precision_flags("fp16", device=device) == (False, True)
+
+
+def test_precision_flags_allowed_when_distributed() -> None:
+    """Under torchrun the Trainer owns placement, so the device string is not
+    the deciding factor."""
+    from maatml.training.schedule import precision_flags
+
+    assert precision_flags("bf16", device="cpu", distributed=True) == (True, False)
+
+
+def test_all_trainers_share_one_precision_derivation() -> None:
+    """Regression guard for the drift itself: no trainer may re-derive the
+    mixed-precision flags locally."""
+    import pathlib
+
+    for name in ("sft_base", "seq2seq", "multi_head", "preference"):
+        src = pathlib.Path(f"src/maatml/training/{name}.py").read_text()
+        assert "precision_flags(" in src, f"{name} does not use the shared helper"
+        assert 'cfg.precision == "bf16"' not in src, f"{name} re-derives use_bf16"
+
+
+def test_dpo_and_orpo_share_one_config_body() -> None:
+    """DPO and ORPO previously duplicated a 42-line config block that differed
+    only in two class names, so a one-sided edit changed one method silently.
+
+    Structural guard: the trl config is constructed once. This path needs the
+    [pref] extra to execute, so nothing runs it in the offline suite.
+    """
+    import pathlib
+
+    src = pathlib.Path("src/maatml/training/preference.py").read_text()
+    assert src.count("PreferenceConfig(") == 1, "config built in more than one place"
+    assert "DPOConfig(" not in src and "ORPOConfig(" not in src
+    # Both methods must still be reachable.
+    assert "DPOConfig as PreferenceConfig" in src
+    assert "ORPOConfig as PreferenceConfig" in src
+
+
+def test_seq2seq_and_multi_head_reject_unknown_training_keys() -> None:
+    """Parity with the pydantic configs' extra="forbid". These two build
+    themselves with d.get(...), so a typo silently trained at the built-in
+    default while the run still looked fresh."""
+    from maatml.training.multi_head import MultiHeadConfig
+    from maatml.training.seq2seq import Seq2SeqConfig
+
+    with pytest.raises(ValueError, match="learning_rat"):
+        Seq2SeqConfig.from_dict({"learning_rat": 3e-5})
+    with pytest.raises(ValueError, match="learning_rat"):
+        MultiHeadConfig.from_dict({"learning_rat": 3e-5, "heads": [{"name": "x"}]})
+
+    # Correct spelling still parses.
+    assert Seq2SeqConfig.from_dict({"learning_rate": 3e-5}).learning_rate == 3e-5
+
+
+def test_shipped_example_configs_survive_the_strict_key_check() -> None:
+    """The key sets are hand-maintained, so pin them against the real models:
+    a missing entry would reject a config that is actually valid."""
+    from maatml.config import load_model_def
+    from maatml.training.multi_head import MultiHeadConfig
+    from maatml.training.seq2seq import Seq2SeqConfig
+
+    for name, cls in (
+        ("spool-interpreter", Seq2SeqConfig),
+        ("vision-describer", Seq2SeqConfig),
+        ("jcl-validator", MultiHeadConfig),
+    ):
+        md = load_model_def(f"examples/{name}")
+        cls.from_dict(dict(md.training))
+        # smoke maps base_model -> model_id and drops smoke-only keys.
+        cls.from_dict(md.merged_smoke())
+
+
+def test_trainer_and_predictor_resolve_identical_special_tokens(tmp_path) -> None:
+    """Train/eval tokenization skew: the trainer rebound pad_token to the
+    tokenizer file's name while the predictor kept the built-in <PAD>, so a
+    tokenizer declaring [PAD] trained and evaluated with different pad tokens."""
+    import json
+
+    from maatml.evaluation.predictors import _tokenizer_specials
+    from maatml.training.multi_head import _default_special_tokens
+    from maatml.utils.tokenizers import resolve_special_tokens
+
+    def _tok(names):
+        path = tmp_path / f"tok_{abs(hash(tuple(names)))}.json"
+        path.write_text(
+            json.dumps({"added_tokens": [{"content": n, "special": True} for n in names]}),
+            encoding="utf-8",
+        )
+        return path
+
+    for names in (
+        ["<PAD>", "<UNK>", "<CLS>", "<SEP>", "<MASK>", "<COL1>", "<CONT>"],
+        ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "[MASK]"],
+        [],
+    ):
+        path = _tok(names)
+        assert _default_special_tokens(path) == _tokenizer_specials(path)
+
+    # The square-bracket tokenizer is the case that used to diverge.
+    square = resolve_special_tokens(_tok(["[PAD]", "[UNK]"]))
+    assert square["pad_token"] == "[PAD]"
+    assert square["unk_token"] == "[UNK]"
+
+    # A missing or unreadable tokenizer falls back rather than raising.
+    assert resolve_special_tokens(None)["pad_token"] == "<PAD>"
+    assert resolve_special_tokens(tmp_path / "nope.json")["pad_token"] == "<PAD>"
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert resolve_special_tokens(bad)["pad_token"] == "<PAD>"

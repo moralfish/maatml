@@ -10,6 +10,7 @@ are recorded so a run replays offline and reproduces the same corpus.
 The stage config is typed (:class:`DistillConfig`); there is no new untyped
 ``dict[str, Any]`` surface.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import VALIDATORS
 from ..utils.io import iter_jsonl, sha256_bytes, write_jsonl_atomic
+from ..validation.base import strip_fences
 from .ingest import _row_id
 from .teacher import TeacherClient
 
@@ -44,6 +46,10 @@ class DistillConfig(BaseModel):
     teacher_model: str = "gpt-4o-mini"
     teacher_revision: str = "unpinned"
     system_prompt: Optional[str] = None
+    # Merged into the chat-completions payload. Reasoning teachers need a
+    # max_tokens above the 1024 default (hidden reasoning spends it before any
+    # content) and template switches like chat_template_kwargs.
+    request_params: dict[str, Any] = Field(default_factory=dict)
     max_prompts: Optional[int] = Field(default=None, gt=0)
     family: str = "distill"
     cache: str = "output/distill/cache.jsonl"
@@ -90,10 +96,17 @@ class TeacherCache:
     def get(self, key: str) -> Optional[str]:
         return self._store.get(key)
 
+    # Flush cadence: a long local-teacher run is hours of paid-for responses,
+    # and an end-only flush loses all of them to one crash.
+    FLUSH_EVERY = 25
+
     def put(self, key: str, response: str) -> None:
         if self._store.get(key) != response:
             self._store[key] = response
             self._dirty = True
+            self._unflushed = getattr(self, "_unflushed", 0) + 1
+            if self._unflushed >= self.FLUSH_EVERY:
+                self.flush()
 
     def flush(self) -> None:
         if not self._dirty:
@@ -101,6 +114,7 @@ class TeacherCache:
         rows = [{"key": k, "response": v} for k, v in sorted(self._store.items())]
         write_jsonl_atomic(self.path, rows)
         self._dirty = False
+        self._unflushed = 0
 
 
 def _prompt_hash(prompt: str) -> str:
@@ -144,13 +158,9 @@ def _build_validate_fn(model_def: ModelDefinition):
             f"evaluation.validator={validator_name!r} is not registered "
             f"(known: {', '.join(VALIDATORS.names()) or '(none)'})."
         ) from exc
-    schema_path = (
-        model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
-    )
+    schema_path = model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
     contracts_path = (
-        model_def.resolve(cfg["contracts"])
-        if isinstance(cfg.get("contracts"), str)
-        else None
+        model_def.resolve(cfg["contracts"]) if isinstance(cfg.get("contracts"), str) else None
     )
 
     def _fn(prompt: str, target: Any) -> bool:
@@ -218,9 +228,21 @@ def run_distill(
 
     accepted: list[dict[str, Any]] = []
     rejected: list[dict[str, Any]] = []
-    stats = {"cache_hits": 0, "teacher_calls": 0, "teacher_failures": 0, "cache_misses": 0}
+    stats = {
+        "cache_hits": 0,
+        "teacher_calls": 0,
+        "teacher_failures": 0,
+        "cache_misses": 0,
+        "validator_errors": 0,
+    }
+    # An unreachable endpoint, a wrong base URL or a revoked key fails every
+    # prompt identically. Stop instead of walking the whole pool to produce a
+    # run that accepted nothing.
+    max_consecutive_failures = 5
+    consecutive_failures = 0
+    aborted_reason: Optional[str] = None
 
-    for index, prompt in enumerate(prompts):
+    for prompt in prompts:
         phash = _prompt_hash(prompt)
         key = TeacherCache.key(phash, cfg.teacher_model, cfg.teacher_revision)
         response = cache.get(key)
@@ -234,31 +256,57 @@ def run_distill(
             continue
         else:
             if teacher is None:
-                teacher = TeacherClient(model=cfg.teacher_model)
+                # `timeout` rides in request_params but belongs to the client:
+                # a local reasoning teacher on long documents routinely needs
+                # more than the 60 s default.
+                params = dict(cfg.request_params)
+                timeout = params.pop("timeout", None)
+                if timeout is not None:
+                    teacher = TeacherClient(model=cfg.teacher_model, timeout=float(timeout))
+                else:
+                    teacher = TeacherClient(model=cfg.teacher_model)
             try:
                 response = teacher.chat_completions(
                     [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
-                    ]
+                    ],
+                    **params,
                 )
             except Exception as exc:  # noqa: BLE001  a teacher failure is a rejected row
                 stats["teacher_failures"] += 1
-                rejected.append(
-                    {"prompt_sha256": phash, "_reject_reason": f"teacher_error: {exc}"}
-                )
+                consecutive_failures += 1
+                rejected.append({"prompt_sha256": phash, "_reject_reason": f"teacher_error: {exc}"})
+                if consecutive_failures >= max_consecutive_failures:
+                    aborted_reason = (
+                        f"{consecutive_failures} consecutive teacher failures; last error: {exc}"
+                    )
+                    break
                 continue
             stats["teacher_calls"] += 1
+            consecutive_failures = 0
             cache.put(key, response)
 
         target = _parse_target(response)
-        if target is None or not validate_fn(prompt, target):
+        ok = False
+        reason = "unparseable"
+        if target is not None:
+            reason = "invalid_target"
+            try:
+                ok = bool(validate_fn(prompt, target))
+            except Exception as exc:  # noqa: BLE001  a raising validator is a rejected row
+                # Without this, one malformed target aborts the whole run and
+                # discards every accepted row plus any teacher response since
+                # the last cache flush.
+                reason = f"validator_error: {exc}"
+                stats["validator_errors"] += 1
+        if not ok:
             rejected.append(
                 {
                     "prompt_sha256": phash,
                     request_field: prompt[:500],
                     "teacher_response": response[:1500],
-                    "_reject_reason": "invalid_target" if target is not None else "unparseable",
+                    "_reject_reason": reason,
                 }
             )
             continue
@@ -284,7 +332,9 @@ def run_distill(
     dest = (
         model_def.resolve(seed_target)
         if seed_target
-        else model_def.resolve(str(ds_cfg.get("seed_samples") or "datasets/samples/seed_samples.jsonl"))
+        else model_def.resolve(
+            str(ds_cfg.get("seed_samples") or "datasets/samples/seed_samples.jsonl")
+        )
     )
     duplicates = 0
     seed_written = False
@@ -311,6 +361,7 @@ def run_distill(
         "rejected": len(rejected),
         "duplicates": duplicates,
         "seed_written": seed_written,
+        "aborted": aborted_reason,
         "replay": bool(replay or offline),
         "teacher_model": cfg.teacher_model,
         "teacher_revision": cfg.teacher_revision,
@@ -323,16 +374,14 @@ def run_distill(
 
 
 def _parse_target(response: str) -> Optional[Any]:
-    text = response.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
+    """Parse the teacher's JSON target.
+
+    Uses the canonical ``strip_fences`` so a reasoning teacher that emits a
+    ``<think>`` block in the message content parses instead of being rejected
+    as unparseable; a local copy here previously handled fences only.
+    """
     try:
-        return json.loads(text)
+        return json.loads(strip_fences(response))
     except (json.JSONDecodeError, ValueError):
         return None
 
@@ -349,6 +398,8 @@ def _write_distill_card(dest: Path, summary: dict[str, Any]) -> Path:
         f"- replay: {summary['replay']}",
         f"- cache: hits={summary['cache_hits']} calls={summary['teacher_calls']} "
         f"misses={summary['cache_misses']} failures={summary['teacher_failures']}",
+        f"- validator_errors: {summary['validator_errors']}",
+        *([f"- aborted: {summary['aborted']}"] if summary.get("aborted") else []),
         "",
         "Every accepted row was gated by evaluation.validator before entering "
         "the corpus, and carries teacher provenance. Teacher responses are "

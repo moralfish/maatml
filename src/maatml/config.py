@@ -8,6 +8,7 @@ Nested `data:` / `dataset:`, `training:`, `smoke:`, `evaluation:`, and
 `packaging:` sections are plain dicts so each pipeline stage can validate
 them against its own typed config without a rigid super-schema.
 """
+
 from __future__ import annotations
 
 import re
@@ -217,9 +218,7 @@ def load_model_def(model_dir: str | Path, *, load_plugins: bool = True) -> Model
         raise FileNotFoundError(f"Model directory not found: {model_dir}")
     yml_path = model_dir / "model.yml"
     if not yml_path.is_file():
-        raise FileNotFoundError(
-            f"{yml_path} not found - each model folder must contain model.yml"
-        )
+        raise FileNotFoundError(f"{yml_path} not found - each model folder must contain model.yml")
 
     raw = read_yaml(yml_path)
     if not isinstance(raw, dict):
@@ -242,16 +241,33 @@ def load_model_def(model_dir: str | Path, *, load_plugins: bool = True) -> Model
 # Known keys for the untyped dataset:/evaluation: sections. Kept in sync with
 # the readers in data/, training/, export/ and scaffold's section builders. A
 # typo produces a warning (never a hard failure), so plugins can still extend.
-_DATASET_KNOWN_KEYS = frozenset({
-    "format", "request_field", "raw_field", "target_field", "target_key_order",
-    "group_by", "seed_samples", "schema", "split_ratios", "seed", "sanitize",
-    "prompt_spec", "source_prefix", "user_placeholder", "text_transform",
-    "tokenizer", "generator", "benchmark_samples", "contracts", "template_dir",
-    "sources", "base_model_name_or_path",
-})
-_EVALUATION_KNOWN_KEYS = frozenset(
-    {"predictor", "validator", "metrics", "gates", "repair_braces"}
+_DATASET_KNOWN_KEYS = frozenset(
+    {
+        "format",
+        "request_field",
+        "raw_field",
+        "target_field",
+        "target_key_order",
+        "group_by",
+        "seed_samples",
+        "schema",
+        "split_ratios",
+        "seed",
+        "sanitize",
+        "prompt_spec",
+        "source_prefix",
+        "user_placeholder",
+        "text_transform",
+        "tokenizer",
+        "generator",
+        "benchmark_samples",
+        "contracts",
+        "template_dir",
+        "sources",
+        "base_model_name_or_path",
+    }
 )
+_EVALUATION_KNOWN_KEYS = frozenset({"predictor", "validator", "metrics", "gates", "repair_braces"})
 
 
 def config_key_warnings(md: ModelDefinition) -> list[str]:

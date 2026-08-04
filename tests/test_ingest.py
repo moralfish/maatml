@@ -1,4 +1,5 @@
 """Ingest external JSONL into seed corpus."""
+
 from __future__ import annotations
 
 import json
@@ -122,6 +123,53 @@ def test_ingest_skips_unvalidated_when_validator_configured(tmp_path: Path) -> N
     assert [r["sample_id"] for r in rows] == ["a"]
 
 
+def test_no_truncation_when_nothing_accepted(tmp_path: Path) -> None:
+    """A zero-accept run must not destroy a hand-curated corpus, even with
+    --no-append, whose truncating write previously emptied the seed file."""
+
+    class _Res:
+        ok = False
+
+    VALIDATORS.register("ing_reject_all", lambda raw, **k: _Res(), source="test")
+
+    model_dir = tmp_path / "model"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    md = _model(model_dir, evaluation={"validator": "ing_reject_all"})
+    seeds = md.resolve("datasets/samples/seed_samples.jsonl")
+    gold = [{"sample_id": f"seed-{i}", "request": "r", "target": {"y": i}} for i in range(5)]
+    write_jsonl(seeds, gold)
+    before = seeds.read_bytes()
+
+    inp = tmp_path / "incoming.jsonl"
+    write_jsonl(inp, [{"sample_id": "new-1", "request": "x", "target": {"y": 1}}])
+
+    for append in (True, False):
+        result = ingest_samples(md, inp, append=append)
+        assert result["accepted"] == 0
+        assert result["seed_written"] is False
+        assert result["protected_existing"] is True
+        assert result["total_seeds"] == 5
+        assert seeds.read_bytes() == before, f"corpus rewritten with append={append}"
+
+
+def test_ingest_empty_input_leaves_corpus_intact(tmp_path: Path) -> None:
+    """An input that yields no rows at all is the other zero-accept path."""
+    model_dir = tmp_path / "model"
+    (model_dir / "datasets" / "samples").mkdir(parents=True)
+    md = _model(model_dir)
+    seeds = md.resolve("datasets/samples/seed_samples.jsonl")
+    write_jsonl(seeds, [{"sample_id": "keep-me", "request": "r", "target": {"y": 1}}])
+    before = seeds.read_bytes()
+
+    inp = tmp_path / "empty.jsonl"
+    inp.write_text("", encoding="utf-8")
+
+    result = ingest_samples(md, inp, append=False)
+    assert result["accepted"] == 0
+    assert result["protected_existing"] is True
+    assert seeds.read_bytes() == before
+
+
 def test_ingest_refuses_unapproved_serve_capture(tmp_path: Path) -> None:
     """Exit criterion: a captured row lacking approval is refused, not ingested."""
     model_dir = tmp_path / "model"
@@ -133,11 +181,21 @@ def test_ingest_refuses_unapproved_serve_capture(tmp_path: Path) -> None:
         inp,
         [
             # Straight off serve --capture: unreviewed, must be refused.
-            {"request": "unreviewed", "target": {"x": 1}, "source": "serve_capture",
-             "approved": False, "needs_review": True},
+            {
+                "request": "unreviewed",
+                "target": {"x": 1},
+                "source": "serve_capture",
+                "approved": False,
+                "needs_review": True,
+            },
             # A reviewer corrected and approved this one.
-            {"request": "reviewed", "target": {"x": 2}, "source": "serve_capture",
-             "approved": True, "needs_review": False},
+            {
+                "request": "reviewed",
+                "target": {"x": 2},
+                "source": "serve_capture",
+                "approved": True,
+                "needs_review": False,
+            },
         ],
     )
     result = ingest_samples(md, inp, append=False)

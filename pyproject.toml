@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "maatml"
-version = "0.8.0"
+version = "0.9.0"
 description = "A machine learning models framework from experimentation to production: data, training, evaluation, export, and deploy pipelines for small task-specific language models"
 readme = "README.md"
 keywords = [
@@ -56,19 +56,29 @@ dev = [
   # Adopting it needs config decisions, tracked separately; without the bound
   # CI lints against whatever ruff released today.
   "ruff>=0.5,<0.16",
-  "mypy>=1.10",
+  # Bounded like ruff above: a major bump changes what the gate reports, and
+  # CI installs whatever resolves on the day. mypy 2.x passes today.
+  "mypy>=1.10,<3",
   "types-PyYAML>=6.0",
 ]
 ml = [
-  "torch>=2.3",
-  "transformers>=5.0",
+  # Security floor, not a feature floor: torch < 2.6 carries GHSA-53q9-r3pm-6pq6,
+  # a critical RCE in `torch.load` *despite* weights_only=True, which is exactly
+  # the call the SFT tokenized cache relies on (training/sft_base.py). Advisories
+  # above 2.6 are LOW/MODERATE (memory corruption, local DoS) and not reachable
+  # from maatml's own inputs, so the floor stops here rather than at the latest
+  # fix: JetPack pins torch to NVIDIA's builds and a higher floor would put
+  # maatml out of reach on Jetson.
+  "torch>=2.6",
+  # transformers < 5.5 carries advisories on the from_pretrained path every
+  # trainer and predictor calls.
+  "transformers>=5.5",
   "datasets>=2.19",
-  "evaluate>=0.4",
   "tokenizers>=0.19",
   "safetensors>=0.4",
   "accelerate>=0.30",
   "peft>=0.10",
-  "sentencepiece>=0.2"
+  "sentencepiece>=0.2.1"
 ]
 cuda = [
   # QLoRA / bitsandbytes: CUDA Linux only (not macOS / MPS). Also install [ml].
@@ -91,8 +101,10 @@ vision = [
   # Multitask vision (classification / detection / pose) + ONNX export.
   # Also install [ml].
   "torchvision>=0.18",
-  "pillow>=10.0",
-  "onnx>=1.16",
+  # pillow and onnx floors are security floors: the previous ones admitted
+  # 35 and 18 known advisories respectively.
+  "pillow>=12.3",
+  "onnx>=1.22",
   "onnxscript>=0.1.0",
   "onnxruntime>=1.18",
 ]
@@ -113,8 +125,83 @@ maatml = ["py.typed"]
 [tool.setuptools.exclude-package-data]
 "*" = ["**/__pycache__/*", "**/*.py[cod]"]
 
+[tool.mypy]
+# There was no [tool.mypy] at all, so the gate ran on defaults: untyped
+# function bodies went unchecked and inert `type: ignore` comments accumulated.
+# Every setting below passes today, verified both with and without the ML stack
+# installed (mypy --python-executable against a torch/transformers venv).
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+strict_equality = true
+
+# Deferred, with reasons:
+#   disallow_untyped_defs  43 errors; worth its own annotation pass
+#   warn_unreachable        2 errors, both false: they are isinstance guards
+#                           over YAML-sourced values that mypy believes are
+#                           already the declared type. Removing them would
+#                           delete real runtime protection.
+
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+# An explicit selection: without one, only ruff's ~4-rule default set runs, so
+# the lint gate went green while catching almost nothing and 118 of the repo's
+# 132 `noqa` directives suppressed rules that were never enabled.
+#
+# BLE is here specifically to make the 48 `# noqa: BLE001` directives mean
+# something: broad excepts in this codebase are deliberate and annotated, and
+# now that is enforced rather than asserted. E402 likewise covers the scripts'
+# sys.path preamble.
+select = [
+  "E",    # pycodestyle errors
+  "W",    # pycodestyle warnings
+  "F",    # pyflakes
+  "I",    # import sorting
+  "B",    # bugbear
+  "BLE",  # blind except
+  "C4",   # comprehensions
+  "SIM",  # simplify
+  "RET",  # return consistency
+  "PIE",  # misc lints
+  "ISC",  # implicit string concat
+  "RSE",  # raise
+  "ERA",  # commented-out code
+  "T20",  # print / pprint
+]
+ignore = [
+  # typer declares CLI options as `x: T = typer.Option(...)` defaults, which is
+  # the documented API. This is the rule that forced the ruff<0.16 ceiling.
+  "B008",
+]
+
+# Families deliberately left out for now, each because adopting it today would
+# mean churn or bad changes rather than better code:
+#   UP   (466) large mechanical rewrite, worth its own pass
+#   S   (1017) bandit; mostly false positives for a local developer CLI
+#   PL   (640) opinionated complexity thresholds this codebase has not agreed
+#   COM  (441) the formatter already owns comma placement
+#   ARG  (134) plugin contracts require unused parameters by design
+#   TID  (138) relative imports are the house style
+#   N    naming: N815/N818 would rename identifiers that mirror JSON schema
+#        fields and public exception names
+#   PTH  `open()` is idiomatic here and the codebase already uses Path widely
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts and example builders are console programs: printing is their output.
+"scripts/*" = ["T201"]
+"examples/*/scripts/*" = ["T201"]
+# The JCL and spool seed builders embed literal mainframe output as templates.
+# Those lines are column-sensitive (a wrapped IEF374I record is no longer the
+# record the model must learn), so they are exempt from the line cap rather
+# than reflowed. SIM113 likewise: the index feeds the emitted record, not just
+# the loop.
+"examples/spool-interpreter/scripts/build_seeds.py" = ["E501", "SIM113"]
+"examples/jcl-validator/scripts/build_seeds.py" = ["E501", "SIM113"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "examples"]

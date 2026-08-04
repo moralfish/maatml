@@ -3,6 +3,7 @@
 Delegates to ``maatml.scaffold.validate_model_dir``: no hardcoded
 scaffold file lists or runtime checks.
 """
+
 from __future__ import annotations
 
 import sys

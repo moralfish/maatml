@@ -3,11 +3,13 @@
 Configured via ``MAATML_TEACHER_BASE_URL`` and ``MAATML_TEACHER_API_KEY``.
 Requires the optional ``[teacher]`` extra (``httpx``).
 """
+
 from __future__ import annotations
 
 import json
 import os
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 _INSTALL_HINT = "Teacher client requires httpx; install with `pip install maatml[teacher]`"
 
@@ -31,11 +33,24 @@ class TeacherClient:
         model: str = "gpt-4o-mini",
         timeout: float = 60.0,
     ) -> None:
-        self.base_url = (
-            base_url
-            or os.environ.get("MAATML_TEACHER_BASE_URL")
-            or "https://api.openai.com/v1"
-        ).rstrip("/")
+        resolved = base_url or os.environ.get("MAATML_TEACHER_BASE_URL")
+        if not resolved or not resolved.strip():
+            # No implicit third-party default: datagen and distill send the
+            # prompt pool to whatever this points at, and for the shipped
+            # domains (JCL, spool output, support tickets) the prompt pool is
+            # the sensitive asset. The destination is always a stated choice.
+            raise ValueError(
+                "teacher base URL is not set. Export MAATML_TEACHER_BASE_URL "
+                "(for example http://127.0.0.1:8000/v1 for a local server, or "
+                "https://api.openai.com/v1) or pass base_url explicitly. "
+                "maatml does not default to a third-party endpoint because "
+                "your prompts are sent to it."
+            )
+        resolved = resolved.strip().rstrip("/")
+        scheme = urlparse(resolved).scheme
+        if scheme not in ("http", "https"):
+            raise ValueError(f"teacher base URL must be http or https, got {resolved!r}")
+        self.base_url = resolved
         self.api_key = api_key or os.environ.get("MAATML_TEACHER_API_KEY") or ""
         self.model = model
         self.timeout = timeout
@@ -45,11 +60,15 @@ class TeacherClient:
         messages: list[dict[str, str]],
         *,
         model: Optional[str] = None,
-        temperature: float = 0.7,
+        temperature: Optional[float] = 0.7,
         max_tokens: int = 1024,
         **kwargs: Any,
     ) -> str:
-        """POST ``/chat/completions`` and return the assistant message content."""
+        """POST ``/chat/completions`` and return the assistant message content.
+
+        ``temperature=None`` omits the field entirely: some endpoints reject
+        the parameter itself, not just particular values.
+        """
         httpx = _require_httpx()
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json"}
@@ -58,9 +77,10 @@ class TeacherClient:
         payload: dict[str, Any] = {
             "model": model or self.model,
             "messages": messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if temperature is not None:
+            payload["temperature"] = temperature
         payload.update(kwargs)
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(url, headers=headers, json=payload)
@@ -79,8 +99,15 @@ class TeacherClient:
         user_prompt: str,
         *,
         model: Optional[str] = None,
+        request_params: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Ask the teacher for a JSON object row; parse and return it."""
+        """Ask the teacher for a JSON object row; parse and return it.
+
+        ``request_params`` is merged into the request payload. Reasoning
+        teachers need it: the default 1024-token budget is spent on hidden
+        reasoning before any content arrives, and switches like
+        ``chat_template_kwargs`` have no other way in.
+        """
         content = self.chat_completions(
             [
                 {"role": "system", "content": system_prompt},
@@ -88,6 +115,7 @@ class TeacherClient:
             ],
             model=model,
             temperature=0.8,
+            **(request_params or {}),
         )
         text = content.strip()
         if text.startswith("```"):

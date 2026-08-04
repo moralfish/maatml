@@ -1,4 +1,5 @@
 """Generator factory for ``maatml datagen`` (described_scenes)."""
+
 from __future__ import annotations
 
 from pathlib import Path

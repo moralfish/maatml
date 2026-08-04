@@ -1,4 +1,5 @@
 """JCL-shaped predictor: multi-head outputs → JclValidationResult JSON."""
+
 from __future__ import annotations
 
 import json
@@ -8,6 +9,8 @@ from typing import Any, Optional
 from maatml.config import ModelDefinition
 from maatml.evaluation.harness import resolve_eval_asset
 from maatml.evaluation.predictors import MultiHeadClassifierPredictor
+
+
 class JclClassifierPredictor(MultiHeadClassifierPredictor):
     """Assemble a ``JclValidationResult`` from generic multi-head outputs."""
 
@@ -55,9 +58,7 @@ class JclClassifierPredictor(MultiHeadClassifierPredictor):
         line_h = heads.get("line") or {}
 
         label = validity.get("label", "valid")
-        is_valid = label == "valid" or (
-            validity.get("index") == 1 and label not in ("invalid",)
-        )
+        is_valid = label == "valid" or (validity.get("index") == 1 and label not in ("invalid",))
         # Prefer explicit invalid/valid labels.
         if label == "invalid":
             is_valid = False
@@ -71,18 +72,32 @@ class JclClassifierPredictor(MultiHeadClassifierPredictor):
 
         errors_out: list[dict] = []
         if not is_valid:
-            tpl = self._templates.get(code) or self._templates.get("other") or {
-                "message": f"{code} (no template registered)",
-                "suggestion": "",
-            }
+            # The heads are independent, so they can disagree: the validity head
+            # says invalid while the code head says "none". Normalise the code
+            # BEFORE the template lookup. Looking it up under the raw "none" (a
+            # deliberately empty template) while emitting "other" produced rows
+            # with an empty message and a null suggestion, and the schema
+            # requires strings for both. That capped schema conformance at 0.74
+            # with the model never once emitting unparseable JSON.
+            code_out = code if code != "none" else "other"
+            tpl = self._templates.get(code_out) or {}
+            message = tpl.get("message") or (
+                f"Validator flagged this deck under {code_out}; no message "
+                "template is registered for that code."
+            )
+            suggestion = tpl.get("suggestion") or (
+                "Review the deck against the IBM z/OS JCL Reference."
+            )
             errors_out.append(
                 {
                     "line": int(line_no) if line_no else 1,
                     "column": 1,
                     "severity": severity_str if severity_str != "none" else "error",
-                    "code": code if code != "none" else "other",
-                    "message": tpl.get("message", ""),
-                    "suggestion": tpl.get("suggestion") or None,
+                    "code": code_out,
+                    # Both fields are required strings in the schema, so they
+                    # always carry text: never "" and never null.
+                    "message": message,
+                    "suggestion": suggestion,
                 }
             )
         pred_json = {

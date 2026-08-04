@@ -5,12 +5,17 @@ Plugins can come from:
   - Setuptools entry points group ``maatml.plugins``
   - Per-model ``model.yml`` ``plugins:`` list (module paths or folder-local packages)
 """
+
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import importlib
 import importlib.util
 import os
+import re
 import sys
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional, TypeVar
@@ -27,16 +32,44 @@ class PluginEntry:
     source: str  # e.g. "decorator:maatml.training.sft_base" or "entry_point:..."
 
 
+_MODEL_PLUGIN_NS_RX = re.compile(r"maatml\._model_plugins\.[^.]+\.")
+
+
+def _comparable_source(source: str) -> str:
+    """Source string with the per-folder plugin namespace removed.
+
+    The namespace encodes the model folder's resolved path, so the same plugin
+    loaded from two locations (a copy under tmp_path, or a folder loaded both
+    directly and by path) has two source strings for identical code. Comparing
+    raw sources reported those as collisions. What matters is the plugin module
+    itself: ``vision_plugin.export_onnx`` and ``jcl_plugin.export_onnx`` are two
+    implementations claiming one name, and stay distinguishable here.
+    """
+    return _MODEL_PLUGIN_NS_RX.sub("", source)
+
+
 class _Registry:
     def __init__(self, kind: str) -> None:
         self.kind = kind
         self._entries: dict[str, PluginEntry] = {}
 
-    def register(
-        self, name: str, obj: Any, *, source: str = "unknown"
-    ) -> Any:
+    def register(self, name: str, obj: Any, *, source: str = "unknown") -> Any:
         # Allow overwrite so discover_plugins(force=True) / module reload can
-        # re-bind the same plugin name after a registry wipe.
+        # re-bind the same plugin name after a registry wipe. Re-binding from
+        # the same source is that case and stays silent; a *different* source
+        # claiming the name is two plugins colliding, where the later one wins
+        # and the earlier one becomes unreachable under that name.
+        existing = self._entries.get(name)
+        if existing is not None and _comparable_source(existing.source) != _comparable_source(
+            source
+        ):
+            warnings.warn(
+                f"{self.kind} plugin {name!r} re-registered by {source}, "
+                f"replacing {existing.source}. The later registration wins; "
+                "give them distinct names if both are meant to coexist.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
         self._entries[name] = PluginEntry(name=name, obj=obj, source=source)
         return obj
 
@@ -145,7 +178,7 @@ def _caller_source(extra: str = "") -> str:
     frame = inspect.currentframe()
     try:
         # decorator helper -> register_* -> caller module
-        caller = frame.f_back.f_back if frame and frame.f_back else None  # type: ignore[union-attr]
+        caller = frame.f_back.f_back if frame and frame.f_back else None
         mod = caller.f_globals.get("__name__", "unknown") if caller else "unknown"
     finally:
         del frame
@@ -265,9 +298,7 @@ def looks_like_plugin_path(entry: str, base_dir: Optional[Path] = None) -> bool:
         return True
     if os.path.splitdrive(entry)[0]:
         return True
-    if base_dir is not None and (Path(base_dir) / entry).exists():
-        return True
-    return False
+    return bool(base_dir is not None and (Path(base_dir) / entry).exists())
 
 
 def load_model_plugins(
@@ -291,6 +322,7 @@ def load_model_plugins(
     """
     model_dir = Path(model_dir).resolve()
     loaded: list[str] = []
+    namespace = _model_plugin_namespace(model_dir)
     for entry in plugin_list or []:
         entry = entry.strip()
         if not entry:
@@ -300,21 +332,19 @@ def load_model_plugins(
             if not path.is_absolute():
                 path = (model_dir / entry).resolve()
             if path.is_dir():
-                mod_name = f"maatml._model_plugins.{model_dir.name}.{path.name}"
+                mod_name = f"maatml._model_plugins.{namespace}.{path.name}"
                 if force or not _already_loaded(mod_name, path):
                     _load_package_from_dir(path, mod_name)
                     _loaded_model_plugins[mod_name] = str(path)
                 loaded.append(mod_name)
             elif path.is_file():
-                mod_name = f"maatml._model_plugins.{model_dir.name}.{path.stem}"
+                mod_name = f"maatml._model_plugins.{namespace}.{path.stem}"
                 if force or not _already_loaded(mod_name, path):
                     _load_module_from_path(path, mod_name)
                     _loaded_model_plugins[mod_name] = str(path)
                 loaded.append(mod_name)
             else:
-                raise FileNotFoundError(
-                    f"Model plugin not found: {path} (from plugins: {entry!r})"
-                )
+                raise FileNotFoundError(f"Model plugin not found: {path} (from plugins: {entry!r})")
         else:
             if force or entry not in sys.modules:
                 importlib.import_module(entry)
@@ -322,11 +352,23 @@ def load_model_plugins(
     return loaded
 
 
+def _model_plugin_namespace(model_dir: Path) -> str:
+    """Module namespace for a model folder, unique per resolved path.
+
+    Keyed on the basename alone, two folders of the same name (``~/models/triage``
+    and ``./examples/triage`` is a normal layout) shared one module name, so
+    loading the second replaced the first in ``sys.modules`` and the registry
+    kept whichever ran last. Folding the resolved path into the name keeps them
+    distinct while staying stable across runs.
+    """
+    digest = hashlib.sha256(str(model_dir.resolve()).encode("utf-8")).hexdigest()[:8]
+    safe = re.sub(r"\W+", "_", model_dir.name).strip("_") or "model"
+    return f"{safe}_{digest}"
+
+
 def _already_loaded(mod_name: str, path: Path) -> bool:
     """Has this exact plugin path already been executed as ``mod_name``?"""
-    return (
-        _loaded_model_plugins.get(mod_name) == str(path) and mod_name in sys.modules
-    )
+    return _loaded_model_plugins.get(mod_name) == str(path) and mod_name in sys.modules
 
 
 _BUILTIN_PLUGIN_MODULES = (
@@ -383,7 +425,7 @@ def discover_plugins(*, force: bool = False) -> None:
         if hasattr(eps, "select"):
             selected = eps.select(group="maatml.plugins")
         else:
-            selected = eps["maatml.plugins"]  # type: ignore[index]
+            selected = eps["maatml.plugins"]
     except Exception as exc:  # noqa: BLE001  discovery must not abort CLI startup
         _record_load_error("entry_points:maatml.plugins", exc)
         selected = []
@@ -392,10 +434,8 @@ def discover_plugins(*, force: bool = False) -> None:
         try:
             loaded = ep.load()
             if callable(loaded) and not isinstance(loaded, type):
-                try:
+                with contextlib.suppress(TypeError):
                     loaded()
-                except TypeError:
-                    pass
         except Exception as exc:  # noqa: BLE001
             _record_load_error(f"entry_point:{getattr(ep, 'name', ep)}", exc)
 

@@ -7,6 +7,7 @@ Usage:
     .venv/bin/python scripts/train_all.py --smoke
     .venv/bin/python scripts/train_all.py --only jcl spool
 """
+
 from __future__ import annotations
 
 import argparse

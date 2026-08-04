@@ -9,6 +9,7 @@ Layers:
 Layer 3 is the one a plain schema cannot express: it ties two fields together
 by a task rule. That is where the validator earns its keep.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,9 +50,7 @@ def validate_triage(
         result.parsed = parsed
         result.passed_layers.add(1)
     except json.JSONDecodeError as exc:
-        result.errors.append(
-            ValidationError(layer=1, code="invalid_json", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=1, code="invalid_json", message=str(exc)))
         return result
 
     # Layer 2: schema (structure + enums + required fields)
@@ -69,9 +68,7 @@ def validate_triage(
             )
         )
     except Exception as exc:  # noqa: BLE001  malformed schema file, etc.
-        result.errors.append(
-            ValidationError(layer=2, code="schema_error", message=str(exc))
-        )
+        result.errors.append(ValidationError(layer=2, code="schema_error", message=str(exc)))
 
     category = result.parsed.get("category")
     team = result.parsed.get("team")
@@ -98,8 +95,7 @@ def validate_triage(
                 layer=3,
                 code="misrouted",
                 message=(
-                    f"category {category!r} must route to {expected_team!r}, "
-                    f"got team {team!r}"
+                    f"category {category!r} must route to {expected_team!r}, got team {team!r}"
                 ),
                 location="team",
             )

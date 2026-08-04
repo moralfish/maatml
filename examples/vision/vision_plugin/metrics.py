@@ -1,4 +1,5 @@
 """Metrics for multitask vision: scene accuracy, VOC-style mAP@0.5, PCK@0.2."""
+
 from __future__ import annotations
 
 import json
@@ -68,7 +69,7 @@ def _ap_for_class(
     precs = []
     recs = []
     n_gt = len(gts)
-    for t, f in zip(tp, fp):
+    for t, f in zip(tp, fp, strict=False):
         cum_tp += t
         cum_fp += f
         precs.append(cum_tp / max(1, cum_tp + cum_fp))
@@ -76,7 +77,7 @@ def _ap_for_class(
     # 11-point interpolation
     ap = 0.0
     for t in [i / 10 for i in range(11)]:
-        prec_at = [p for p, r in zip(precs, recs) if r >= t]
+        prec_at = [p for p, r in zip(precs, recs, strict=False) if r >= t]
         ap += max(prec_at) if prec_at else 0.0
     return ap / 11.0
 
@@ -124,8 +125,6 @@ def compute_vision_metrics(row_results: Sequence[Any]) -> dict[str, float]:
     pck_sum = 0.0
     layers_ok = 0
     # Collect detections per class across the whole set for mAP.
-    preds_by_cls: dict[str, list[tuple[float, list[float]]]] = {c: [] for c in SHAPE_LABELS}
-    gts_by_cls: dict[str, list[list[float]]] = {c: [] for c in SHAPE_LABELS}
     # For image-level mAP we accumulate all preds/gts with image ids, simple
     # VOC-style: concatenate all boxes per class (approx for synthetic small sets).
     per_image_aps: list[float] = []
@@ -158,24 +157,15 @@ def compute_vision_metrics(row_results: Sequence[Any]) -> dict[str, float]:
             ]
             if gts or preds:
                 class_aps.append(_ap_for_class(preds, gts, 0.5))
-            preds_by_cls[cls].extend(preds)
-            gts_by_cls[cls].extend(gts)
         per_image_aps.append(sum(class_aps) / len(class_aps) if class_aps else 1.0)
 
         exp_pose = (expected.get("pose") or {}).get("keypoints") or []
         pred_pose = (pred.get("pose") or {}).get("keypoints") or []
         pck_sum += _pck(pred_pose, exp_pose, 0.2)
 
-    # Global class-mean AP (also informative)
-    global_aps = []
-    for cls in SHAPE_LABELS:
-        if gts_by_cls[cls] or preds_by_cls[cls]:
-            global_aps.append(_ap_for_class(preds_by_cls[cls], gts_by_cls[cls], 0.5))
-
     return {
         "scene_accuracy": scene_correct / n,
         "map_50": (sum(per_image_aps) / n) if n else 0.0,
-        "map_50_global": (sum(global_aps) / len(global_aps)) if global_aps else 0.0,
         "pck_0_2": pck_sum / n,
         "all_layers_pass_rate": layers_ok / n,
     }

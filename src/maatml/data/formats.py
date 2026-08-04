@@ -4,6 +4,7 @@ Registered via ``@register_format`` and discovered by ``discover_plugins``.
 Normalized rows carry ``messages: [{role, content}, ...]`` plus optional
 ``sample_id`` / ``family`` / ``source`` for group-aware splits.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -98,8 +99,7 @@ def is_degenerate(row: dict) -> bool:
         m.get("role") == "user" and str(m.get("content") or "").strip() for m in messages
     )
     has_assistant = any(
-        m.get("role") == "assistant" and str(m.get("content") or "").strip()
-        for m in messages
+        m.get("role") == "assistant" and str(m.get("content") or "").strip() for m in messages
     )
     return not (has_user and has_assistant)
 
@@ -140,9 +140,7 @@ def _prepare_normalized(
             "Remove dataset.sanitize or use the jsonl_seed format."
         )
     seed_path = model_def.resolve(cfg["seed_samples"])
-    rows, dropped = _normalize_rows(
-        iter_jsonl(seed_path), normalize_fn, label=str(seed_path)
-    )
+    rows, dropped = _normalize_rows(iter_jsonl(seed_path), normalize_fn, label=str(seed_path))
     if not rows:
         raise ValueError(
             f"No usable rows in {seed_path}: every row was empty after "
@@ -163,25 +161,19 @@ def _prepare_normalized(
         out_dir=out_dir,
         seed_label=str(seed_path),
         benchmark_rows=bench_rows or None,
-        benchmark_label=(
-            str(model_def.resolve(benchmark_path)) if benchmark_path else None
-        ),
+        benchmark_label=(str(model_def.resolve(benchmark_path)) if benchmark_path else None),
     )
     summary["degenerate_dropped"] = dropped
     return summary
 
 
 @register_format("alpaca")
-def prepare_alpaca(
-    model_def: ModelDefinition, out_dir: Optional[Path] = None
-) -> dict:
+def prepare_alpaca(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
     """Prepare Alpaca-format JSONL into train/val/test splits."""
     return _prepare_normalized(model_def, normalize_alpaca, out_dir=out_dir)
 
 
 @register_format("sharegpt")
-def prepare_sharegpt(
-    model_def: ModelDefinition, out_dir: Optional[Path] = None
-) -> dict:
+def prepare_sharegpt(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
     """Prepare ShareGPT-format JSONL into train/val/test splits."""
     return _prepare_normalized(model_def, normalize_sharegpt, out_dir=out_dir)

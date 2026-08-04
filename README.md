@@ -12,11 +12,11 @@ Licensed under **Apache-2.0**.
 
 **What makes it different:** correctness is checked *outside* the model by
 **validators**. The same validator gates your synthetic **data** and your
-**evaluation**, and guards your **live inference**: `maatml serve` runs it on
-every response, reporting the result by default and rejecting outputs that fail
-under `--enforce`. So a MaatML model ships with a contract, not just weights.
-That validator-gated *data → eval → serving* loop, now across modalities, is
-what general fine-tuning tools leave out.
+**evaluation**, and can guard your **live inference**: `maatml serve` runs it
+per request on `/predict?validate=1`, and on every response under `--enforce`,
+where a failing output is rejected with HTTP 422. So a MaatML model ships with a
+contract, not just weights. That validator-gated *data → eval → serving* loop,
+now across modalities, is what general fine-tuning tools leave out.
 
 Site: [maatml.pages.dev](https://maatml.pages.dev) ·
 PyPI: [`maatml`](https://pypi.org/project/maatml/) ·

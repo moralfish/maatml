@@ -1,6 +1,15 @@
 # JCL Validator — ModernBERT-base multi-head classifier with custom
 # column-aware JCL tokenizer.
 #
+# Corpus: real JCL decks judged by the real MVS 3.8j converter (Hercules
+# capture). A deck the converter accepted is valid whatever happened at
+# execution; a rejected deck carries the converter's own diagnostics, with
+# line numbers mapped from the STMT NO. listing. The 1981 converter reports
+# unresolved symbolics as dsname-structure errors (IEF624I, verified through
+# a PROC expansion), so unresolved_symbolic_parameter stays in the enum but
+# has no instances on this oracle. scripts/build_seeds.py regenerates the
+# LEGACY synthetic corpus and will overwrite this one.
+#
 # Architecture: 4-head sequence classifier (validity / error_code /
 # severity / line_localization). Full fine-tune, no LoRA. Output is a
 # structured `JclValidationResult` JSON built from head logits (no
@@ -28,7 +37,9 @@ data:
   seed_samples: datasets/samples/seed_samples.jsonl
   benchmark_samples: datasets/samples/test_prompt_set.jsonl
   raw_field: request
-  split_ratios: [0.8, 0.1, 0.1]
+  # Capture families cannot fill three hash splits; the
+  # benchmark set (pinned to test) is the whole test split.
+  split_ratios: [0.85, 0.15, 0.0]
   # The custom JCL tokenizer is trained separately (one-shot) on a
   # 10k-sample corpus, then committed alongside the model.
   tokenizer: datasets/tokenizer.json
@@ -47,14 +58,23 @@ evaluation:
   validator: jcl
   metrics: jcl
   predictor: jcl_classifier
-  # Enforced contract for `maatml evaluate --gate`
+  # Enforced contract for `maatml evaluate --gate`. Layers the predictor
+  # guarantees structurally (it assembles the JSON; the enum heads cannot emit
+  # an unknown label) are gated at 1.0. The rest use the Wilson 95% lower
+  # bound of the measured rate, rounded down. Measured on the converter-verdict
+  # benchmark (run 20260726-150305-3bb796, n=484: v2 and v3 captures with
+  # decorrelated jobnames plus the v4 operational shapes; invalid subset
+  # n=297). The class-coded jobname scheme leaked the label through the name
+  # in earlier corpora; names are decorrelated from v5 on.
   gates:
-    json_parse_rate: 0.95
-    schema_conformance_rate: 0.90
-    valid_flag_accuracy: 0.95
-    severity_accuracy: 0.85
-    code_accuracy: 0.85
-    line_within_3_accuracy: 0.70
+    json_parse_rate: 1.00          # structural
+    schema_conformance_rate: 1.00  # structural
+    consistency_rate: 0.99         # measured 1.000 (484/484)
+    all_layers_pass_rate: 0.99     # measured 1.000 (484/484)
+    valid_flag_accuracy: 0.99      # measured 1.000 (484/484)
+    severity_accuracy: 0.98        # measured 1.000 (297/297)
+    line_within_3_accuracy: 0.96   # measured 0.987 (293/297)
+    code_accuracy: 0.98            # measured 1.000 (297/297)
 
 training:
   model_id: answerdotai/ModernBERT-base

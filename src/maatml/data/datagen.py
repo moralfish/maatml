@@ -1,4 +1,5 @@
 """Datagen orchestration: registered generators + optional teacher."""
+
 from __future__ import annotations
 
 import json
@@ -47,13 +48,9 @@ def _default_validate_fn(
             "Register it via @register_validator or a model.yml plugins: entry. "
             "--allow-ungated does not bypass a misconfigured validator."
         ) from exc
-    schema_path = (
-        model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
-    )
+    schema_path = model_def.resolve(cfg["schema"]) if isinstance(cfg.get("schema"), str) else None
     contracts_path = (
-        model_def.resolve(cfg["contracts"])
-        if isinstance(cfg.get("contracts"), str)
-        else None
+        model_def.resolve(cfg["contracts"]) if isinstance(cfg.get("contracts"), str) else None
     )
     target_field = str(cfg.get("target_field") or "target")
     request_field = str(cfg.get("request_field") or cfg.get("raw_field") or "request")
@@ -166,9 +163,7 @@ def run_datagen(
     }
     if use_teacher:
         teacher = TeacherClient()
-        generate_fn = _teacher_generate_fn(
-            model_def, teacher, seed=seed, stats=teacher_stats
-        )
+        generate_fn = _teacher_generate_fn(model_def, teacher, seed=seed, stats=teacher_stats)
         gen_name = "teacher"
     else:
         raw_gen = cfg.get("generator")

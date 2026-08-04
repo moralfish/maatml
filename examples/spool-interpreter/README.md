@@ -16,17 +16,27 @@ minor for retrain/data/config changes, patch for metadata-only edits.
 
 ```json
 {
-  "summary": "Build job ABENDed at STEP02 (S0C7).",
+  "summary": "Job abended with S0C7 before completion.",
   "status": "abended",
   "returnCode": null,
-  "rootCause": "Data exception (S0C7) reading numeric field with invalid packed-decimal data in INFILE record 17.",
-  "suggestedFix": "Validate INFILE before submission; clean or reject record 17.",
-  "explanation": "STEP02 failed with S0C7 while reading INFILE. Record 17 contained invalid packed-decimal data in a numeric field.",
-  "relatedDocs": ["s0c7-data-exception"],
+  "rootCause": "IEF450I PA700043 GO - ABEND S0C7 U0000 - TIME=21.52.07",
+  "suggestedFix": "Inspect the abend code and the failing step's input data, correct, and rerun the step.",
   "failureCategory": "execution_abend",
-  "confidence": 0.91
+  "confidence": 0.93
 }
 ```
+
+## Corpus
+
+The seed corpus is **real JES2 output**: 1,200 job documents captured from
+MVS 3.8j running under Hercules (public-domain OS, public container), with a
+600-document benchmark captured from a disjoint generation seed and verified
+to share no normalized document text with the seed side. Gold labels are
+extracted from the system's own messages (completion codes, abend codes,
+converter diagnostics), so every row's `status`/`returnCode`/`failureCategory`
+is what actually happened. The capture kit lives outside this repo;
+`scripts/build_seeds.py` regenerates the legacy synthetic corpus and will
+overwrite the captured one, so do not run it casually.
 
 `status` is one of: `completed`, `failed`, `abended`, `skipped`, `running`.
 `failureCategory` is one of 8 enum values (see `node_contracts.json`)
@@ -69,12 +79,14 @@ and re-running `maatml prepare` before training, or regenerate via
 
 ## Quality gates
 
-| Metric | Target |
-|---|---|
-| `json_parse_rate` | ≥ 0.95 |
-| `schema_conformance_rate` | ≥ 0.90 |
-| `status_accuracy` | ≥ 0.90 |
-| `failure_category_accuracy` | ≥ 0.80 |
-| `return_code_accuracy` | ≥ 0.85 (when present) |
-| `explanation_present_rate` | ≥ 0.95 (when status ≠ completed) |
-| `related_docs_coverage_rate` | ≥ 0.90 |
+| Metric | Gate | Meaning |
+|---|---|---|
+| `all_layers_pass_rate` | >= 0.99 | every validator layer passed |
+| `consistency_rate` | >= 0.99 | cross-field consistency layer passed |
+| `failure_category_accuracy` | >= 0.99 | predicted failureCategory matches gold |
+| `json_parse_rate` | >= 0.99 | output is valid JSON |
+| `remediation_validity_rate` | >= 0.99 | remediation layer passed |
+| `return_code_accuracy` | >= 0.99 | predicted returnCode matches gold |
+| `schema_conformance_rate` | >= 0.99 | matches `datasets/schema.json` |
+| `status_accuracy` | >= 0.99 | predicted status matches gold |
+| `suggested_fix_present_rate` | >= 0.99 | a suggestedFix is present when required |

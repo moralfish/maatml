@@ -4,6 +4,7 @@
 a folder that ``maatml validate`` accepts; the corpus itself comes from
 ``maatml datagen`` because the rows reference rendered images.
 """
+
 from __future__ import annotations
 
 import json
@@ -121,9 +122,7 @@ def scaffold_vlm_sft(target_dir: Path, *, architecture: str, name: str) -> dict[
         "seed_rows": [],
         "files": {
             "datasets/schema.json": _asset("schema.json", _FALLBACK_SCHEMA),
-            "datasets/prompt_spec.json": _asset(
-                "prompt_spec.json", _FALLBACK_PROMPT_SPEC
-            ),
+            "datasets/prompt_spec.json": _asset("prompt_spec.json", _FALLBACK_PROMPT_SPEC),
             "GENERATE.md": (
                 "# Next steps\n\n"
                 "Seed rows reference rendered images, so this corpus starts\n"

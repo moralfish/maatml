@@ -6,9 +6,7 @@ from maatml.data.sanitizer import make_tag_sanitizer
 
 REPO = Path(__file__).resolve().parents[1]
 JCL_RULES = REPO / "examples" / "jcl-validator" / "jcl_plugin" / "sanitization.yaml"
-SPOOL_RULES = (
-    REPO / "examples" / "spool-interpreter" / "spool_plugin" / "sanitization.yaml"
-)
+SPOOL_RULES = REPO / "examples" / "spool-interpreter" / "spool_plugin" / "sanitization.yaml"
 
 sanitize_jcl = make_tag_sanitizer(JCL_RULES, tag="jcl", length_preserving_only=True)
 sanitize_spool = make_tag_sanitizer(SPOOL_RULES, tag="spool")
@@ -63,8 +61,10 @@ def test_length_preserving_truncation_warns_once_per_rule() -> None:
     from maatml.data import sanitizer as sanitizer_mod
 
     sanitizer_mod._warned_truncating_rules.discard("userid_assignment")
-    with pytest.warns(RuntimeWarning, match="redaction is incomplete"):
-        sanitize_jcl("//STEP1 EXEC PGM=P,TSO=BOB\n")
+    with pytest.warns(RuntimeWarning, match="marker is abbreviated"):
+        out = sanitize_jcl("//STEP1 EXEC PGM=P,TSO=BOB\n")
+    # The warning is about legibility, not leakage: the original value is gone.
+    assert "BOB" not in out
     # Second hit stays quiet so a large corpus does not emit one warning per row.
     with warnings.catch_warnings():
         warnings.simplefilter("error")
@@ -105,3 +105,21 @@ def test_fixed_replacement_that_fits_loads(tmp_path: Path) -> None:
     )
     rules = load_rules(rules_path)
     assert apply_rules("ID=ABCD end", rules) == "ID=XXXX end"
+
+
+def test_spool_hostname_rule_preserves_mainframe_dataset_names() -> None:
+    """A z/OS dataset name has the same three-part dotted shape as an FQDN. The
+    looser rule rewrote every dataset name to HOST.REDACTED while the labels
+    still named them, training the model to invent names absent from its input."""
+    src = "IEF212I MYJOB STEP1 - DATA SET PROD.PAYROLL.MASTER NOT FOUND"
+    out = sanitize_spool(src)
+    assert "PROD.PAYROLL.MASTER" in out
+    assert "HOST.REDACTED" not in out
+
+    # Four-part names too.
+    assert "SYS1.PROD.LOAD.LIB" in sanitize_spool("ALLOC FAILED FOR SYS1.PROD.LOAD.LIB")
+
+    # Real FQDNs are still redacted.
+    redacted = sanitize_spool("connect failed to batch01.corp.example.com port 1414")
+    assert "batch01.corp.example.com" not in redacted
+    assert "HOST.REDACTED" in redacted

@@ -1,4 +1,5 @@
 """Family-aware group split: members of one family must not straddle splits."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -160,22 +161,30 @@ dataset:
         encoding="utf-8",
     )
     md = load_model_def(mdir)
+    # Distinct request texts: rows that are byte-identical would trip the
+    # content-level duplicate check, which is not what these tests are about.
     seed_rows = [
-        {"sample_id": f"{fam}-{i}", "family": fam, "request": "r"}
+        {"sample_id": f"{fam}-{i}", "family": fam, "request": f"request {fam} {i}"}
         for fam in ("alpha", "beta", "gamma", "delta")
         for i in range(4)
     ]
     _splits, assignment, _degenerate = _assign_group_splits(seed_rows, (0.8, 0.1, 0.1))
-    trained_family = next(
-        key for key, split in assignment.items() if split.value == "train"
-    ).split(":", 1)[1]
+    trained_family = next(key for key, split in assignment.items() if split.value == "train").split(
+        ":", 1
+    )[1]
 
     with pytest.raises(ValueError, match="share group keys with the training splits"):
         prepare_rows(
             md,
             seed_rows,
             out_dir=tmp_path / "out",
-            benchmark_rows=[{"sample_id": "b-1", "family": trained_family, "request": "r"}],
+            benchmark_rows=[
+                {
+                    "sample_id": "b-1",
+                    "family": trained_family,
+                    "request": "unseen benchmark request",
+                }
+            ],
         )
 
 
@@ -193,8 +202,10 @@ dataset:
         encoding="utf-8",
     )
     md = load_model_def(mdir)
+    # Distinct request texts: rows that are byte-identical would trip the
+    # content-level duplicate check, which is not what these tests are about.
     seed_rows = [
-        {"sample_id": f"{fam}-{i}", "family": fam, "request": "r"}
+        {"sample_id": f"{fam}-{i}", "family": fam, "request": f"request {fam} {i}"}
         for fam in ("alpha", "beta", "gamma", "delta")
         for i in range(4)
     ]
@@ -202,8 +213,68 @@ dataset:
         md,
         seed_rows,
         out_dir=tmp_path / "out",
-        benchmark_rows=[{"sample_id": "b-1", "family": "bench_alpha", "request": "r"}],
+        benchmark_rows=[{"sample_id": "b-1", "family": "bench_alpha", "request": "unseen request"}],
     )
     test_rows = list(iter_jsonl(tmp_path / "out" / "test.jsonl"))
     assert any(row["sample_id"] == "b-1" for row in test_rows)
     assert summary["split_counts"]["test"] == len(test_rows)
+
+
+def test_benchmark_duplicating_seed_content_is_refused(tmp_path: Path) -> None:
+    """A benchmark drawn from the same generator as the seeds is caught even
+    when it carries its own family namespace: re-tagging renames a duplicate,
+    it does not prevent one. This is what let 66 of 120 triage benchmark rows
+    score memorisation while the family-key guard reported no leakage."""
+    mdir = tmp_path / "model"
+    mdir.mkdir(parents=True)
+    (mdir / "model.yml").write_text(
+        """name: bench-dupe
+model_id: bench-dupe
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  seed_samples: seeds.jsonl
+  request_field: request
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    seed_rows = [
+        {"sample_id": f"{fam}-{i}", "family": fam, "request": f"request {fam} {i}"}
+        for fam in ("alpha", "beta", "gamma", "delta")
+        for i in range(4)
+    ]
+    # Same text, different sample_id and a bench: family namespace, exactly the
+    # shape the old guard waved through.
+    dupe = {
+        "sample_id": "bench-1",
+        "family": "bench:alpha",
+        "request": "request alpha 0",
+    }
+    with pytest.raises(ValueError, match="duplicate seed rows by content"):
+        prepare_rows(md, seed_rows, out_dir=tmp_path / "out", benchmark_rows=[dupe])
+
+
+def test_benchmark_content_check_ignores_identity_fields(tmp_path: Path) -> None:
+    """With no request_field configured the check hashes the row minus its
+    identity fields, so a re-tagged duplicate still collides."""
+    mdir = tmp_path / "model"
+    mdir.mkdir(parents=True)
+    (mdir / "model.yml").write_text(
+        """name: bench-dupe2
+model_id: bench-dupe2
+architecture: causal_sft
+version: 0.1.0
+dataset:
+  seed_samples: seeds.jsonl
+""",
+        encoding="utf-8",
+    )
+    md = load_model_def(mdir)
+    seed_rows = [
+        {"sample_id": f"s-{i}", "family": f"fam{i}", "source": "seed", "payload": i}
+        for i in range(8)
+    ]
+    dupe = {"sample_id": "b-1", "family": "bench:fam0", "source": "bench", "payload": 0}
+    with pytest.raises(ValueError, match="duplicate seed rows by content"):
+        prepare_rows(md, seed_rows, out_dir=tmp_path / "out", benchmark_rows=[dupe])

@@ -7,8 +7,10 @@ CUDA can run more aggressively; CPU sits in between.
 Torch is imported lazily so CPU-only installs (``pip install maatml`` without
 the ``[ml]`` extra) can still import this module for CLI plugins / validate.
 """
+
 from __future__ import annotations
 
+import contextlib
 import os
 from dataclasses import dataclass
 from typing import Any, Optional, Union
@@ -27,10 +29,9 @@ class DeviceProfile:
         """Release allocator caches when the backend supports it."""
         torch = _torch()
         if self.name == "mps" and hasattr(torch, "mps"):
-            try:
+            # A backend that refuses to drop its cache is not a failure.
+            with contextlib.suppress(Exception):
                 torch.mps.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
         elif self.name == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
@@ -72,9 +73,7 @@ def _torch() -> Any:
     try:
         import torch
     except ImportError as exc:  # pragma: no cover - exercised by wheel smoke
-        raise ImportError(
-            "torch is required for device resolution; install maatml[ml]"
-        ) from exc
+        raise ImportError("torch is required for device resolution; install maatml[ml]") from exc
     return torch
 
 
@@ -190,9 +189,7 @@ def resolve_load_dtype(profile: DeviceProfile, precision: str) -> Any | None:
     return None
 
 
-def effective_dataloader_workers(
-    profile: DeviceProfile, override: Optional[int] = None
-) -> int:
+def effective_dataloader_workers(profile: DeviceProfile, override: Optional[int] = None) -> int:
     """Profile default, overridable via ``training.dataloader_workers``."""
     if override is not None:
         return int(override)

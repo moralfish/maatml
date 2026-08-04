@@ -9,6 +9,7 @@ Usage:
         --corpus datasets/samples/tokenizer_corpus.jsonl \\
         --out datasets/tokenizer.json
 """
+
 from __future__ import annotations
 
 import argparse

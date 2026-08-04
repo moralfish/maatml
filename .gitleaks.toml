@@ -1,12 +1,23 @@
 title = "maatml"
 
+# Inherit gitleaks' default ruleset. Without this a config file that declares
+# only an allowlist has no rules at all, so every scan reports "no leaks found"
+# whatever the tree contains.
+[extend]
+useDefault = true
+
 [allowlist]
 paths = [
-  '''(?i)\.venv''',
-  '''(?i)\.mypy_cache''',
-  '''(?i)\.git''',
-  '''(?i)dist/''',
+  # Anchored with a trailing separator so `.git/` does not also match
+  # `.github/`, which would silently exclude the workflows from scanning.
+  '''(?i)(^|/)\.git/''',
+  '''(?i)(^|/)\.venv/''',
+  '''(?i)(^|/)\.mypy_cache/''',
+  '''(?i)(^|/)__pycache__/''',
+  '''(?i)(^|/)build/''',
+  '''(?i)(^|/)dist/''',
   '''(?i).*\.egg-info''',
-  '''(?i)__pycache__''',
-  '''(?i)build/''',
+  # Local training artifacts: gitignored, never committed, and large enough
+  # (tens of GB after a few runs) that a --no-git scan does not finish.
+  '''(?i)^examples/[^/]+/output/''',
 ]

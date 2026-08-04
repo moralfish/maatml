@@ -11,6 +11,7 @@ Endpoints:
 * ``POST /predict``: dataset-shaped JSON row → prediction
   (``?validate=1`` runs the registered validator when configured)
 """
+
 from __future__ import annotations
 
 import hmac
@@ -29,7 +30,13 @@ from urllib.parse import parse_qs, urlparse
 
 from .config import ModelDefinition, get_dataset_cfg
 from .device import resolve_device
-from .registry import PREDICTORS, VALIDATORS, discover_plugins, load_model_plugins
+from .registry import (
+    PREDICTORS,
+    SANITIZERS,
+    VALIDATORS,
+    discover_plugins,
+    load_model_plugins,
+)
 from .runs import resolve_checkpoint
 from .scaffold import normalize_architecture
 from .utils.io import sha256_bytes
@@ -41,7 +48,10 @@ DEFAULT_MAX_BODY_BYTES = 1_048_576
 
 logger = logging.getLogger("maatml.serve")
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
+# "" is deliberately absent: an empty host binds every interface, so treating it
+# as loopback would suppress the unauthenticated-bind check on the widest bind
+# there is.
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
 class RequestTooLarge(Exception):
@@ -54,8 +64,9 @@ class CaptureWriter:
     Captured rows are explicitly **not** gold: each carries ``approved: false``
     and ``needs_review: true``, and ``maatml ingest`` refuses to accept a
     captured row until a human (or teacher) has corrected and approved it. The
-    file is size-capped so an unattended server cannot fill the disk, and it
-    only ever holds the sanitized request and the model's own output.
+    file is size-capped so an unattended server cannot fill the disk, and the
+    request is passed through the model's declared ``dataset.sanitize`` tags
+    before it is written.
     """
 
     def __init__(
@@ -65,9 +76,11 @@ class CaptureWriter:
         request_field: str,
         max_rows: int = 10_000,
         max_bytes: int = 32 * 1024 * 1024,
+        sanitizers: Optional[list[Any]] = None,
     ) -> None:
         self.path = Path(path)
         self.request_field = request_field
+        self.sanitizers = list(sanitizers or ())
         self.max_rows = max_rows
         self.max_bytes = max_bytes
         self._rows = 0
@@ -87,8 +100,16 @@ class CaptureWriter:
             if self.capped():
                 return False
             request = row.get(self.request_field)
+            for sanitize in self.sanitizers:
+                if isinstance(request, str):
+                    request = sanitize(request)
+            # Identity is the (request, output) pair. Hashing the output alone
+            # collided across distinct requests, and ingest then dropped the
+            # later ones as "duplicate": exactly the reviewed rows the flywheel
+            # exists to keep.
+            identity = f"{request}\x00{raw}".encode("utf-8")
             entry = {
-                "sample_id": f"capture-{sha256_bytes(raw.encode('utf-8'))[:16]}",
+                "sample_id": f"capture-{sha256_bytes(identity)[:16]}",
                 "source": "serve_capture",
                 "captured_at": datetime.now(timezone.utc).isoformat(),
                 self.request_field: request,
@@ -103,6 +124,20 @@ class CaptureWriter:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
             self._rows += 1
             return True
+
+
+def _reject_empty_token(auth_token: Optional[str]) -> None:
+    """Refuse an empty auth token rather than serving formality-only auth.
+
+    An empty token would advertise ``auth_required`` on /info while
+    ``_token_matches`` accepted a bare ``Bearer ``. The usual cause is an unset
+    variable expanding to "" in a unit file or compose env.
+    """
+    if auth_token is not None and not auth_token.strip():
+        raise ValueError(
+            "serve auth token is empty; unset MAATML_SERVE_TOKEN to serve "
+            "without auth, or provide a non-empty token."
+        )
 
 
 def _token_matches(provided: Optional[str], expected: str) -> bool:
@@ -164,6 +199,10 @@ def _resolve_eval_asset(
         path = model_def.resolve(rel)
         if path.is_file():
             return path
+        # Declared and missing is a config error. Falling through to None would
+        # start the server with the validator silently short of an asset it was
+        # told to use, which under --enforce means gating on less than declared.
+        raise ValueError(f"model.yml declares {key}={rel!r} but the file is missing: {path}")
     for name in filenames:
         cand = checkpoint_dir / name
         if cand.is_file():
@@ -274,6 +313,8 @@ def build_serve_context(
     if isinstance(val_name, str) and val_name:
         validator = VALIDATORS.require(val_name)
 
+    _reject_empty_token(auth_token)
+
     if enforce and validator is None:
         raise ValueError(
             "serve --enforce requires evaluation.validator in model.yml so live "
@@ -298,7 +339,16 @@ def build_serve_context(
             )
         cfg = get_dataset_cfg(model_def)
         request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
-        capture = CaptureWriter(Path(capture_path), request_field=request_field)
+        # Honour the model's declared sanitizers on the way in. Capture writes
+        # live client traffic to disk, and the shipped JCL and spool models
+        # target z/OS output carrying user IDs and dataset names.
+        sanitize_tags = [
+            str(tag).strip() for tag in (cfg.get("sanitize") or []) if str(tag).strip()
+        ]
+        sanitizers = [SANITIZERS.require(tag) for tag in sanitize_tags]
+        capture = CaptureWriter(
+            Path(capture_path), request_field=request_field, sanitizers=sanitizers
+        )
 
     return ServeContext(
         model_def=model_def,
@@ -452,8 +502,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 raise ValueError("POST body required (JSON object)")
             if length > ctx.max_body_bytes:
                 raise RequestTooLarge(
-                    f"request body {length} bytes exceeds cap "
-                    f"{ctx.max_body_bytes} bytes"
+                    f"request body {length} bytes exceeds cap {ctx.max_body_bytes} bytes"
                 )
             raw = self.rfile.read(length)
             try:
@@ -511,9 +560,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                         },
                         "sidecars": {
                             "schema": str(ctx.schema_path) if ctx.schema_path else None,
-                            "contracts": (
-                                str(ctx.contracts_path) if ctx.contracts_path else None
-                            ),
+                            "contracts": (str(ctx.contracts_path) if ctx.contracts_path else None),
                             "prompt_spec": (
                                 str(ctx.prompt_spec_path) if ctx.prompt_spec_path else None
                             ),
@@ -541,9 +588,7 @@ def _make_handler(ctx: ServeContext) -> type[BaseHTTPRequestHandler]:
                 self._send_json(404, {"error": f"Unknown path {path!r}"})
                 return
             qs = parse_qs(parsed.query)
-            want_capture = any(
-                v.lower() in ("1", "true", "yes") for v in qs.get("capture", [])
-            )
+            want_capture = any(v.lower() in ("1", "true", "yes") for v in qs.get("capture", []))
             # Capture always needs the token; when a token is configured it is
             # required for every /predict.
             if (want_capture or ctx.auth_token is not None) and not self._authorized():
@@ -637,11 +682,22 @@ def run_server(
     auth_token: Optional[str] = None,
     max_retries: int = 0,
     capture_path: Optional[str | Path] = None,
+    allow_unauthenticated: bool = False,
 ) -> None:
     """Block serving until KeyboardInterrupt."""
     from rich.console import Console
 
     console = Console()
+    # Both checked before the socket is bound: refusing after `serve_model`
+    # would leave the port open on the interface we are refusing to serve on.
+    _reject_empty_token(auth_token)
+    if host not in _LOOPBACK_HOSTS and not auth_token and not allow_unauthenticated:
+        raise ValueError(
+            f"serve on non-loopback host {host!r} requires --auth-token (or "
+            "MAATML_SERVE_TOKEN): anyone who can reach the port could query the "
+            "model. Pass --allow-unauthenticated to bind anyway on a trusted "
+            "network."
+        )
     ctx = build_serve_context(
         model_def,
         checkpoint=checkpoint,
@@ -662,11 +718,11 @@ def run_server(
         device=device,
         context=ctx,
     )
-    if host not in _LOOPBACK_HOSTS and auth_token is None:
+    if host not in _LOOPBACK_HOSTS and not auth_token:
         console.print(
             f"[yellow]warning[/] binding non-loopback host {host!r} with no "
-            "auth token; anyone who can reach the port can query the model. "
-            "Pass --auth-token or expose only on a trusted network."
+            "auth token because --allow-unauthenticated was passed; anyone who "
+            "can reach the port can query the model."
         )
     console.print(
         f"[green]serving[/] {model_def.identity} ({model_def.architecture}) "

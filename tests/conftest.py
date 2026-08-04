@@ -5,7 +5,10 @@ Registries are process-global, so a test that registers a plugin (or calls
 runs after it. The autouse fixture snapshots and restores them through the
 public registry API, so tests never reach into ``_entries``.
 """
+
 from __future__ import annotations
+
+import sys
 
 import pytest
 
@@ -16,6 +19,8 @@ from maatml.registry import (
     restore_registries,
     snapshot_registries,
 )
+
+_MODEL_PLUGIN_PREFIX = "maatml._model_plugins"
 
 
 @pytest.fixture(autouse=True)
@@ -33,3 +38,10 @@ def _isolate_registries():
         # Recorded plugin failures are process-global too: a test that provokes
         # one must not leave `maatml doctor` reporting it forever after.
         restore_load_errors(errors)
+        # A model folder's plugins register through import side effects, and
+        # load_model_plugins skips a module already in sys.modules. Rolling the
+        # registry back without evicting those modules would leave them cached
+        # but unregistered, so the next load is a silent no-op and the model's
+        # validator never comes back. Evict them so the next load re-imports.
+        for name in [m for m in sys.modules if m.startswith(_MODEL_PLUGIN_PREFIX)]:
+            del sys.modules[name]

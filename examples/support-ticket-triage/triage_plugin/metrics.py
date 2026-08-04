@@ -4,6 +4,7 @@ Reports validator-layer pass rates (the contract) plus field accuracy against
 the gold ``expected_output`` (the quality). Parse failures count against
 accuracy: an unparseable prediction is a wrong answer, not a skipped one.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
@@ -29,10 +30,10 @@ def compute_triage_metrics(row_results: list["RowEval"]) -> dict[str, float]:
     if n == 0:
         return {}
 
-    layer_pass = {i: 0 for i in range(1, 5)}
+    layer_pass = dict.fromkeys(range(1, 5), 0)
     all_ok = 0
-    field_ok = {f: 0 for f in _STRUCT_FIELDS}
-    field_total = {f: 0 for f in _STRUCT_FIELDS}
+    field_ok = dict.fromkeys(_STRUCT_FIELDS, 0)
+    field_total = dict.fromkeys(_STRUCT_FIELDS, 0)
     exact = 0
     exact_total = 0
 
@@ -69,8 +70,6 @@ def compute_triage_metrics(row_results: list["RowEval"]) -> dict[str, float]:
         "all_layers_pass_rate": all_ok / n,
     }
     for f in _STRUCT_FIELDS:
-        metrics[f"{f}_accuracy"] = (
-            field_ok[f] / field_total[f] if field_total[f] else 0.0
-        )
+        metrics[f"{f}_accuracy"] = field_ok[f] / field_total[f] if field_total[f] else 0.0
     metrics["exact_match_rate"] = exact / exact_total if exact_total else 0.0
     return metrics

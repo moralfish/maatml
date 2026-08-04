@@ -3,6 +3,7 @@
 Registered as architectures ``dpo`` and ``orpo``. Requires ``trl>=0.9``;
 missing TRL raises a clear install hint.
 """
+
 from __future__ import annotations
 
 import warnings
@@ -22,6 +23,7 @@ from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl
 from .guards import make_nan_guard_callback, write_run_metadata
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
+from .schedule import precision_flags
 from .sft_base import _maybe_attach_lora, _save_sft_artifacts
 from .sft_config import LoraSettings, QuantizationSettings, validate_precision
 
@@ -148,13 +150,9 @@ def train_preference(
 
     # The run record exists from here on, so row loading failures abort it too.
     try:
-        train_rows, identical_train = _load_preference_rows(
-            dataset_dir / "train.jsonl", limit
-        )
+        train_rows, identical_train = _load_preference_rows(dataset_dir / "train.jsonl", limit)
         val_limit = None if limit is None else max(2, limit // 4)
-        val_rows, identical_val = _load_preference_rows(
-            dataset_dir / "val.jsonl", val_limit
-        )
+        val_rows, identical_val = _load_preference_rows(dataset_dir / "val.jsonl", val_limit)
         if not train_rows:
             raise ValueError(f"No training rows in {dataset_dir / 'train.jsonl'}")
         if identical_train or identical_val:
@@ -165,9 +163,7 @@ def train_preference(
                 stacklevel=2,
             )
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            cfg.model_id, revision=cfg.model_revision
-        )
+        tokenizer = AutoTokenizer.from_pretrained(cfg.model_id, revision=cfg.model_revision)
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -198,108 +194,66 @@ def train_preference(
         train_ds = Dataset.from_list(train_rows)
         eval_ds = Dataset.from_list(val_rows) if val_rows else None
 
-        use_bf16 = cfg.precision == "bf16" and (
-            distributed or target_device.type in ("cuda", "mps")
-        )
-        use_fp16 = cfg.precision == "fp16" and (
-            distributed or target_device.type in ("cuda", "mps")
+        use_bf16, use_fp16 = precision_flags(
+            cfg.precision, device=target_device, distributed=distributed
         )
         num_workers = effective_dataloader_workers(profile, cfg.dataloader_workers)
         report_to = normalize_report_to(cfg.report_to)
 
-        # Prefer modern TRL APIs; fall back to older kwargs shapes.
+        # DPO and ORPO differ only in which TRL config/trainer pair they use.
+        # Keeping one body means a change to the argument set cannot land for
+        # one method and silently miss the other.
         if method == "dpo":
-            from trl import DPOConfig, DPOTrainer
-
-            args = DPOConfig(
-                output_dir=str(out_dir),
-                run_name=run.run_id,
-                per_device_train_batch_size=cfg.batch_size,
-                per_device_eval_batch_size=cfg.batch_size,
-                gradient_accumulation_steps=cfg.grad_accum,
-                learning_rate=cfg.learning_rate,
-                num_train_epochs=cfg.epochs,
-                weight_decay=cfg.weight_decay,
-                warmup_ratio=cfg.warmup_ratio,
-                logging_steps=cfg.logging_steps,
-                save_steps=cfg.save_steps,
-                save_total_limit=2,
-                seed=cfg.seed,
-                bf16=use_bf16,
-                fp16=use_fp16,
-                gradient_checkpointing=bool(cfg.grad_checkpointing)
-                and profile.allow_grad_checkpointing,
-                dataloader_num_workers=num_workers,
-                report_to=report_to,
-                max_steps=cfg.max_steps,
-                beta=cfg.beta,
-                max_length=cfg.max_input_tokens,
-                max_prompt_length=cfg.max_input_tokens // 2,
-                remove_unused_columns=False,
-                use_cpu=(not distributed) and target_device.type == "cpu",
-            )
-            trainer_kwargs: dict[str, Any] = {
-                "model": model,
-                "args": args,
-                "train_dataset": train_ds,
-                "eval_dataset": eval_ds,
-                "processing_class": tokenizer,
-                "callbacks": [make_nan_guard_callback()],
-            }
-            if peft_config is not None:
-                trainer_kwargs["peft_config"] = peft_config
-            try:
-                trainer = DPOTrainer(**trainer_kwargs)
-            except TypeError:
-                trainer_kwargs.pop("processing_class", None)
-                trainer_kwargs["tokenizer"] = tokenizer
-                trainer = DPOTrainer(**trainer_kwargs)
+            from trl import DPOConfig as PreferenceConfig
+            from trl import DPOTrainer as PreferenceTrainer
         else:
-            from trl import ORPOConfig, ORPOTrainer
+            from trl import ORPOConfig as PreferenceConfig
+            from trl import ORPOTrainer as PreferenceTrainer
 
-            args = ORPOConfig(
-                output_dir=str(out_dir),
-                run_name=run.run_id,
-                per_device_train_batch_size=cfg.batch_size,
-                per_device_eval_batch_size=cfg.batch_size,
-                gradient_accumulation_steps=cfg.grad_accum,
-                learning_rate=cfg.learning_rate,
-                num_train_epochs=cfg.epochs,
-                weight_decay=cfg.weight_decay,
-                warmup_ratio=cfg.warmup_ratio,
-                logging_steps=cfg.logging_steps,
-                save_steps=cfg.save_steps,
-                save_total_limit=2,
-                seed=cfg.seed,
-                bf16=use_bf16,
-                fp16=use_fp16,
-                gradient_checkpointing=bool(cfg.grad_checkpointing)
-                and profile.allow_grad_checkpointing,
-                dataloader_num_workers=num_workers,
-                report_to=report_to,
-                max_steps=cfg.max_steps,
-                beta=cfg.beta,
-                max_length=cfg.max_input_tokens,
-                max_prompt_length=cfg.max_input_tokens // 2,
-                remove_unused_columns=False,
-                use_cpu=(not distributed) and target_device.type == "cpu",
-            )
-            trainer_kwargs = {
-                "model": model,
-                "args": args,
-                "train_dataset": train_ds,
-                "eval_dataset": eval_ds,
-                "processing_class": tokenizer,
-                "callbacks": [make_nan_guard_callback()],
-            }
-            if peft_config is not None:
-                trainer_kwargs["peft_config"] = peft_config
-            try:
-                trainer = ORPOTrainer(**trainer_kwargs)
-            except TypeError:
-                trainer_kwargs.pop("processing_class", None)
-                trainer_kwargs["tokenizer"] = tokenizer
-                trainer = ORPOTrainer(**trainer_kwargs)
+        args = PreferenceConfig(
+            output_dir=str(out_dir),
+            run_name=run.run_id,
+            per_device_train_batch_size=cfg.batch_size,
+            per_device_eval_batch_size=cfg.batch_size,
+            gradient_accumulation_steps=cfg.grad_accum,
+            learning_rate=cfg.learning_rate,
+            num_train_epochs=cfg.epochs,
+            weight_decay=cfg.weight_decay,
+            warmup_ratio=cfg.warmup_ratio,
+            logging_steps=cfg.logging_steps,
+            save_steps=cfg.save_steps,
+            save_total_limit=2,
+            seed=cfg.seed,
+            bf16=use_bf16,
+            fp16=use_fp16,
+            gradient_checkpointing=bool(cfg.grad_checkpointing)
+            and profile.allow_grad_checkpointing,
+            dataloader_num_workers=num_workers,
+            report_to=report_to,
+            max_steps=cfg.max_steps,
+            beta=cfg.beta,
+            max_length=cfg.max_input_tokens,
+            max_prompt_length=cfg.max_input_tokens // 2,
+            remove_unused_columns=False,
+            use_cpu=(not distributed) and target_device.type == "cpu",
+        )
+        trainer_kwargs: dict[str, Any] = {
+            "model": model,
+            "args": args,
+            "train_dataset": train_ds,
+            "eval_dataset": eval_ds,
+            "processing_class": tokenizer,
+            "callbacks": [make_nan_guard_callback()],
+        }
+        if peft_config is not None:
+            trainer_kwargs["peft_config"] = peft_config
+        try:
+            trainer = PreferenceTrainer(**trainer_kwargs)
+        except TypeError:
+            # Older TRL takes `tokenizer` rather than `processing_class`.
+            trainer_kwargs.pop("processing_class", None)
+            trainer_kwargs["tokenizer"] = tokenizer
+            trainer = PreferenceTrainer(**trainer_kwargs)
 
         train_output = trainer.train(
             resume_from_checkpoint=str(resume_path) if resume_path else None

@@ -1,4 +1,5 @@
 """Tests for the decorator-based plugin registry."""
+
 from __future__ import annotations
 
 import os
@@ -18,7 +19,6 @@ from maatml.registry import (
     register_trainer,
     reset_registries,
 )
-
 
 # Registry isolation is the autouse fixture in tests/conftest.py.
 
@@ -201,3 +201,101 @@ def test_bare_directory_name_next_to_the_model_is_a_path(tmp_path: Path) -> None
     (tmp_path / "sibling_plugin").mkdir()
     assert looks_like_plugin_path("sibling_plugin", tmp_path)
     assert not looks_like_plugin_path("sibling_plugin", tmp_path / "elsewhere")
+
+
+def test_same_named_model_folders_get_distinct_plugin_modules(tmp_path) -> None:
+    """Two model folders with the same basename must not share a module name.
+
+    Keyed on the basename alone they collided in sys.modules, so loading the
+    second replaced the first and the registry kept whichever ran last.
+    """
+    import sys
+
+    from maatml.registry import load_model_plugins
+
+    def _make(root: str, marker: str):
+        mdir = tmp_path / root / "triage"
+        pkg = mdir / "triage_plugin"
+        pkg.mkdir(parents=True)
+        (pkg / "__init__.py").write_text(
+            "from maatml.registry import register_validator\n"
+            "from maatml.validation.base import ValidationResult\n"
+            f"MARKER = {marker!r}\n"
+            f"@register_validator('v_{marker}')\n"
+            "def _v(raw, **kw):\n"
+            "    return ValidationResult(raw_output=raw, n_layers=1, required_layers=set())\n",
+            encoding="utf-8",
+        )
+        (mdir / "model.yml").write_text(
+            "name: triage\nmodel_id: triage\narchitecture: causal_sft\n"
+            "version: 0.1.0\nplugins: [triage_plugin]\n"
+            "dataset:\n  seed_samples: seeds.jsonl\n",
+            encoding="utf-8",
+        )
+        return mdir
+
+    a = _make("a", "alpha")
+    b = _make("b", "beta")
+
+    mods_a = load_model_plugins(a, ["triage_plugin"])
+    mods_b = load_model_plugins(b, ["triage_plugin"])
+
+    assert mods_a != mods_b, "same-named folders produced the same module name"
+    assert sys.modules[mods_a[0]].MARKER == "alpha"
+    assert sys.modules[mods_b[0]].MARKER == "beta"
+    # Both plugins' registrations survive, rather than the last one winning.
+    from maatml.registry import VALIDATORS
+
+    assert VALIDATORS.get("v_alpha") is not None
+    assert VALIDATORS.get("v_beta") is not None
+
+
+def test_colliding_plugin_names_warn_but_reloads_stay_silent() -> None:
+    """Two different plugins claiming one name is a silent overwrite: the later
+    wins and the earlier becomes unreachable. Re-binding the same plugin (a
+    module reload, or the same folder loaded from another path) is not."""
+    import warnings
+
+    from maatml.registry import METRICS
+
+    def _a():  # pragma: no cover - identity only
+        return None
+
+    def _b():  # pragma: no cover - identity only
+        return None
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        METRICS.register("collide_me", _a, source="decorator:pkg_one.metrics:collide_me")
+        METRICS.register("collide_me", _b, source="decorator:pkg_two.metrics:collide_me")
+    assert len(caught) == 1
+    assert "re-registered" in str(caught[0].message)
+    assert METRICS.get("collide_me") is _b, "the later registration wins"
+
+    # Same plugin module, different model-folder namespaces: a reload, not a
+    # collision, so it must not warn.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        METRICS.register(
+            "reload_me", _a, source="decorator:maatml._model_plugins.m_aaaa1111.p:reload_me"
+        )
+        METRICS.register(
+            "reload_me", _b, source="decorator:maatml._model_plugins.m_bbbb2222.p:reload_me"
+        )
+    assert caught == [], [str(w.message) for w in caught]
+
+
+def test_both_example_onnx_exporters_stay_reachable() -> None:
+    """`onnx` resolves to whichever example loaded last, so each also registers
+    a namespaced alias that survives loading both in one process."""
+    from pathlib import Path
+
+    from maatml.registry import EXPORTERS, discover_plugins, load_model_plugins
+
+    discover_plugins()
+    load_model_plugins(Path("examples/vision"), ["vision_plugin"])
+    load_model_plugins(Path("examples/jcl-validator"), ["jcl_plugin"])
+
+    names = EXPORTERS.names()
+    assert "vision_onnx" in names and "jcl_onnx" in names
+    assert EXPORTERS.get("vision_onnx") is not EXPORTERS.get("jcl_onnx")

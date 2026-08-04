@@ -4,6 +4,7 @@ Each training run gets a unique ``run_id`` and checkpoint directory under
 ``output/checkpoints/<run_id>/``. The registry records status, device profile,
 metrics, and optional eval-gate results.
 """
+
 from __future__ import annotations
 
 import json
@@ -167,7 +168,7 @@ def compare_runs(
         keys = list(dict.fromkeys(metrics))
     else:
         for rec in records:
-            for key in (rec.metrics or {}):
+            for key in rec.metrics or {}:
                 if key in keys or key in hidden:
                     continue
                 if not include_telemetry and is_telemetry(key):
@@ -350,9 +351,7 @@ def resolve_resume_checkpoint(
     if resume == "auto":
         rec = latest_incomplete_run(model_def)
         if rec is None:
-            raise FileNotFoundError(
-                f"No incomplete run to resume under {model_def.output_dir}"
-            )
+            raise FileNotFoundError(f"No incomplete run to resume under {model_def.output_dir}")
         root = Path(rec.out_dir)
         ckpt = _last_trainer_checkpoint(root)
         if ckpt is None:
@@ -408,8 +407,7 @@ def resolve_checkpoint(
         if cand.exists():
             return cand.resolve()
         raise FileNotFoundError(
-            f"Checkpoint {raw!r} not found as path or run_id under "
-            f"{model_def.checkpoints_dir}"
+            f"Checkpoint {raw!r} not found as path or run_id under {model_def.checkpoints_dir}"
         )
 
     completed = latest_completed_run(model_def)

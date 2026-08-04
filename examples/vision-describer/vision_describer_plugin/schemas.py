@@ -1,4 +1,5 @@
 """Pydantic sample + result types for the vision describer."""
+
 from __future__ import annotations
 
 from typing import Optional

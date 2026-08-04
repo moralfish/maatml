@@ -47,7 +47,7 @@ maatml verify examples/vision-vlm/output/export/<run_id>
 ## Serve locally (transformers)
 
 ```bash
-maatml serve examples/vision-vlm --checkpoint output/export/<run_id> --host 0.0.0.0 --port 8080
+maatml serve examples/vision-vlm --checkpoint output/export/<run_id> --port 8080
 python examples/vision-vlm/scripts/client_openai.py path/to.png --maatml http://127.0.0.1:8080/predict
 ```
 
@@ -79,11 +79,12 @@ The predictor switches to the OpenAI-compatible chat-completions API when
 
 ## Quality gates
 
-| Metric | Gate (default) | Meaning |
+| Metric | Gate | Meaning |
 |---|---|---|
-| `scene_mention_rate` | ≥ 0.5 | background style word appears |
-| `shape_mention_f1` | ≥ 0.3 | mentioned shape types vs gt |
-| `brevity_rate` | ≥ 0.8 | ≤ 40 words, single line |
-| `all_layers_pass_rate` | ≥ 0.7 | validator layers pass |
+| `all_layers_pass_rate` | >= 0.96 | every validator layer passed |
+| `brevity_rate` | >= 0.96 | <= 40 words, single line |
+| `pose_phrase_rate` | >= 0.52 | pose phrase appears when expected |
+| `scene_mention_rate` | >= 0.96 | background style word appears |
+| `shape_mention_f1` | >= 0.65 | mentioned shape types vs gold |
 
 Raise gates after a longer train on a larger corpus (`--target 300+`).

@@ -1,4 +1,5 @@
 """Make ``vision_plugin`` importable without installing the example as a package."""
+
 from __future__ import annotations
 
 import sys

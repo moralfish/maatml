@@ -80,6 +80,9 @@ carries the same key is split per row with a warning instead.
 
 Optional teacher path: `maatml datagen --teacher` uses
 `MAATML_TEACHER_BASE_URL` / `MAATML_TEACHER_API_KEY` (`pip install maatml[teacher]`).
+`MAATML_TEACHER_BASE_URL` is required and has no default, because your prompts
+are sent to whatever it names; point it at a local server
+(`http://127.0.0.1:8000/v1`) or at a hosted endpoint deliberately.
 
 ## Scaffolding a plugin-owned architecture
 
