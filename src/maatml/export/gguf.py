@@ -49,6 +49,61 @@ def _find_convert_script(model_def: ModelDefinition) -> Optional[Path]:
     return path.resolve()
 
 
+def _quantize_config(model_def: ModelDefinition) -> tuple[Optional[Path], list[str]]:
+    """The configured quantize binary and levels, explicit-only like convert.
+
+    ``MAATML_LLAMA_QUANTIZE`` or ``extensions.gguf.quantize_binary`` names the
+    llama.cpp ``llama-quantize`` executable; ``extensions.gguf.quant_levels``
+    lists the levels to emit (default ``Q4_K_M`` when a binary is set). No
+    binary configured means no quantization, never a PATH search.
+    """
+    ext = getattr(model_def, "extensions", None) or {}
+    gguf_cfg = ext.get("gguf") if isinstance(ext, dict) else None
+    gguf_cfg = gguf_cfg if isinstance(gguf_cfg, dict) else {}
+    raw = os.environ.get("MAATML_LLAMA_QUANTIZE") or gguf_cfg.get("quantize_binary")
+    if not raw:
+        return None, []
+    path = Path(raw)
+    if not path.is_absolute():
+        path = model_def.resolve(str(raw))
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"MAATML_LLAMA_QUANTIZE / extensions.gguf.quantize_binary points to "
+            f"{path}, which is not a file."
+        )
+    levels = gguf_cfg.get("quant_levels") or ["Q4_K_M"]
+    if not isinstance(levels, list) or not all(isinstance(x, str) for x in levels):
+        raise ValueError("extensions.gguf.quant_levels must be a list of level names")
+    return path.resolve(), levels
+
+
+def _quantize(model_def: ModelDefinition, gguf_path: Path, out_dir: Path) -> list[Path]:
+    """Emit one quantized GGUF per configured level, in-manifest.
+
+    Quantization done out-of-band left the shipped artifact outside the
+    manifest's file list, so `maatml verify` never covered the file the
+    serving catalog actually points at.
+    """
+    binary, levels = _quantize_config(model_def)
+    if binary is None:
+        return []
+    produced: list[Path] = []
+    for level in levels:
+        out_path = out_dir / f"{model_def.name}-{level}.gguf"
+        cmd = [str(binary), str(gguf_path), str(out_path), level]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except (subprocess.CalledProcessError, OSError) as exc:
+            detail = getattr(exc, "stderr", "") or str(exc)
+            raise RuntimeError(f"GGUF quantization to {level} failed: {detail}") from exc
+        if not out_path.is_file():
+            raise RuntimeError(
+                f"GGUF quantization to {level} reported success but produced no file at {out_path}"
+            )
+        produced.append(out_path)
+    return produced
+
+
 def _try_module_convert(model_dir: Path, out_path: Path) -> bool:
     """Attempt ``llama_cpp.convert``-style module if importable."""
     for mod_name in ("llama_cpp.convert", "llama_cpp_python.convert"):
@@ -103,6 +158,8 @@ def export_gguf(
 
     if not converted:
         raise ImportError(_INSTALL_HINT)
+
+    _quantize(model_def, gguf_path, out_dir)
 
     files = [p for p in out_dir.iterdir() if p.is_file() and p.name != "manifest.json"]
     manifest = build_manifest(

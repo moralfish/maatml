@@ -10,6 +10,7 @@ Outputs land under ``<model-dir>/output/`` (gitignored).
   maatml evaluate  <model-dir> [--checkpoint X] [--split test] [--gate]
   maatml export    <model-dir> [--checkpoint X] [--format gguf|mlx|safetensors|onnx]
   maatml verify    <export-dir-or-manifest>
+  maatml manifest  amend <export-dir> <files...> [--format NAME]
   maatml serve     <model-dir> [--checkpoint X] [--host HOST] [--port N]
   maatml datagen   <model-dir> [--target N] [--teacher]
   maatml ingest    <model-dir> --input PATH [--map field=col] [--sanitize tag]
@@ -350,6 +351,13 @@ def cmd_evaluate(
         "--gate",
         help="Enforce evaluation.gates minima; exit non-zero on failure",
     ),
+    max_regression: list[str] = typer.Option(
+        [],
+        "--max-regression",
+        help="With --baseline: fail when a gated metric drops more than this "
+        "(e.g. 0.03). Repeatable; metric=0.05 overrides one metric, and an "
+        "override may also name an ungated metric.",
+    ),
 ) -> None:
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
@@ -380,6 +388,42 @@ def cmd_evaluate(
         raise typer.BadParameter(_user_message(exc), param_hint="evaluation") from exc
 
     console.print(f"[green]done[/] report={out_path}")
+    if max_regression:
+        from .evaluation.harness import regression_failures
+
+        if baseline is None:
+            raise typer.BadParameter(
+                "--max-regression needs --baseline to diff against",
+                param_hint="--max-regression",
+            )
+        default_max: Optional[float] = None
+        overrides: dict[str, float] = {}
+        for entry in max_regression:
+            key, sep, value = entry.partition("=")
+            try:
+                if sep:
+                    overrides[key.strip()] = float(value)
+                else:
+                    default_max = float(entry)
+            except ValueError as exc:
+                raise typer.BadParameter(
+                    f"expected a number or metric=number, got {entry!r}",
+                    param_hint="--max-regression",
+                ) from exc
+        if not report.baseline_delta:
+            console.print(
+                "[red]regression check failed[/] the baseline report shares no "
+                "metrics with this run"
+            )
+            raise typer.Exit(code=1)
+        gate_keys = set(((md.evaluation or {}).get("gates") or {}).keys())
+        failures = regression_failures(report.baseline_delta, gate_keys, default_max, overrides)
+        if failures:
+            console.print("[red]regressions beyond the allowed drop[/]")
+            for failure in failures:
+                console.print(f"  - {failure}")
+            raise typer.Exit(code=1)
+        console.print("[green]no regressions beyond the allowed drop[/]")
     if gate and report.passed is False:
         console.print("[red]eval gates failed[/]")
         raise typer.Exit(code=1)
@@ -455,6 +499,41 @@ def cmd_verify(
             console.print(f"  - {err}")
         raise typer.Exit(code=1)
     console.print(f"[green]OK[/] {path}")
+
+
+manifest_app = typer.Typer(no_args_is_help=True, help="Inspect or amend export manifests")
+app.add_typer(manifest_app, name="manifest")
+
+
+@manifest_app.command("amend")
+def cmd_manifest_amend(
+    export_dir: Path = typer.Argument(
+        ..., exists=True, help="Export directory or path to manifest.json"
+    ),
+    files: list[Path] = typer.Argument(..., help="Files inside the export dir to add"),
+    format: list[str] = typer.Option(
+        [],
+        "--format",
+        help="Format name(s) to append to runtime_hints.formats (repeatable)",
+    ),
+) -> None:
+    """Add out-of-band artifacts (a quantized GGUF, say) to an existing manifest.
+
+    The files gain sha256 entries so `maatml verify` covers them and a serving
+    catalog's checksum can be traced to a gate-evidenced export. Everything
+    else in the manifest, gate evidence included, is left untouched.
+    """
+    from .export.manifest import amend_manifest
+
+    try:
+        manifest = amend_manifest(export_dir, files, formats=format or None)
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]amend failed[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(
+        f"[green]amended[/] {len(files)} file(s); manifest now lists "
+        f"{len(manifest.get('files', []))} file(s)"
+    )
 
 
 @app.command("serve")

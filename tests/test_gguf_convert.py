@@ -47,3 +47,53 @@ def test_path_and_cwd_not_searched(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("PATH", str(tmp_path))
     monkeypatch.chdir(tmp_path)
     assert _find_convert_script(_md(tmp_path)) is None
+
+
+def test_quantize_config_absent_means_no_quantization(tmp_path: Path, monkeypatch) -> None:
+    from maatml.export.gguf import _quantize_config
+
+    monkeypatch.delenv("MAATML_LLAMA_QUANTIZE", raising=False)
+    binary, levels = _quantize_config(_md(tmp_path))
+    assert binary is None and levels == []
+
+
+def test_quantize_produces_one_file_per_level(tmp_path: Path, monkeypatch) -> None:
+    from maatml.export.gguf import _quantize
+
+    monkeypatch.delenv("MAATML_LLAMA_QUANTIZE", raising=False)
+    binary = tmp_path / "llama-quantize"
+    # A stand-in that copies input to output, recording the level.
+    binary.write_text('#!/bin/sh\ncp "$1" "$2"\necho "$3" >> "$2"\n', encoding="utf-8")
+    binary.chmod(0o755)
+    md = _md(
+        tmp_path,
+        extensions={"gguf": {"quantize_binary": str(binary), "quant_levels": ["Q4_K_M", "Q5_K_M"]}},
+    )
+    source = tmp_path / "g.gguf"
+    source.write_bytes(b"gguf")
+    produced = _quantize(md, source, tmp_path)
+    assert [p.name for p in produced] == ["g-Q4_K_M.gguf", "g-Q5_K_M.gguf"]
+    assert all(p.is_file() for p in produced)
+
+
+def test_quantize_failure_is_loud(tmp_path: Path, monkeypatch) -> None:
+    from maatml.export.gguf import _quantize
+
+    monkeypatch.delenv("MAATML_LLAMA_QUANTIZE", raising=False)
+    binary = tmp_path / "llama-quantize"
+    binary.write_text('#!/bin/sh\necho "boom" >&2\nexit 1\n', encoding="utf-8")
+    binary.chmod(0o755)
+    md = _md(tmp_path, extensions={"gguf": {"quantize_binary": str(binary)}})
+    source = tmp_path / "g.gguf"
+    source.write_bytes(b"gguf")
+    with pytest.raises(RuntimeError, match="boom"):
+        _quantize(md, source, tmp_path)
+
+
+def test_quantize_missing_binary_raises(tmp_path: Path, monkeypatch) -> None:
+    from maatml.export.gguf import _quantize_config
+
+    monkeypatch.delenv("MAATML_LLAMA_QUANTIZE", raising=False)
+    md = _md(tmp_path, extensions={"gguf": {"quantize_binary": "nope"}})
+    with pytest.raises(FileNotFoundError):
+        _quantize_config(md)

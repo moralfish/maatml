@@ -206,3 +206,87 @@ def test_weights_dtype_mixed_precision_surfaced(tmp_path: Path) -> None:
     assert hints["weights_dtype"] == "f32"  # dominant by tensor count
     assert hints["weights_dtype_verified"] is True
     assert hints["weights_dtypes_observed"] == ["f16", "f32"]
+
+
+def test_amend_adds_files_and_verify_covers_them(tmp_path: Path) -> None:
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    st = export_dir / "model.safetensors"
+    _write_safetensors(st, [("a", "F16", 4)])
+    md = _toy_model_def(tmp_path)
+    write_manifest(
+        export_dir,
+        build_manifest(
+            model_def=md,
+            export_dir=export_dir,
+            files=[st],
+            formats=["safetensors"],
+            source_checkpoint=tmp_path / "ckpt",
+        ),
+    )
+
+    quantized = export_dir / "toy-Q4_K_M.gguf"
+    quantized.write_bytes(b"gguf-bytes")
+    from maatml.export.manifest import amend_manifest
+
+    manifest = amend_manifest(export_dir, [quantized], formats=["gguf"])
+    paths = {e["path"] for e in manifest["files"]}
+    assert "toy-Q4_K_M.gguf" in paths
+    assert manifest["runtime_hints"]["formats"] == ["safetensors", "gguf"]
+    assert verify_manifest(export_dir) == []
+
+    # Tampering with the amended file is now caught.
+    quantized.write_bytes(b"different")
+    assert verify_manifest(export_dir) != []
+
+
+def test_amend_replaces_an_existing_entry_and_keeps_evidence(tmp_path: Path) -> None:
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    st = export_dir / "model.safetensors"
+    _write_safetensors(st, [("a", "F16", 4)])
+    md = _toy_model_def(tmp_path)
+    manifest = build_manifest(
+        model_def=md,
+        export_dir=export_dir,
+        files=[st],
+        formats=["safetensors"],
+        source_checkpoint=tmp_path / "ckpt",
+    )
+    manifest["gate_evidence"] = {"gated": True, "passed": True}
+    write_manifest(export_dir, manifest)
+
+    _write_safetensors(st, [("a", "F16", 8)])
+    from maatml.export.manifest import amend_manifest
+
+    amended = amend_manifest(export_dir, [st])
+    assert len(amended["files"]) == 1
+    assert amended["files"][0]["sha256"] == sha256_file(st)
+    assert amended["gate_evidence"] == {"gated": True, "passed": True}
+    assert verify_manifest(export_dir) == []
+
+
+def test_amend_refuses_a_file_outside_the_export(tmp_path: Path) -> None:
+    export_dir = tmp_path / "export"
+    export_dir.mkdir()
+    st = export_dir / "model.safetensors"
+    _write_safetensors(st, [("a", "F16", 4)])
+    md = _toy_model_def(tmp_path)
+    write_manifest(
+        export_dir,
+        build_manifest(
+            model_def=md,
+            export_dir=export_dir,
+            files=[st],
+            formats=["safetensors"],
+            source_checkpoint=tmp_path / "ckpt",
+        ),
+    )
+    outside = tmp_path / "outside.gguf"
+    outside.write_bytes(b"x")
+    import pytest
+
+    from maatml.export.manifest import amend_manifest
+
+    with pytest.raises(ValueError, match="outside the export directory"):
+        amend_manifest(export_dir, [outside])
