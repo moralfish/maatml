@@ -8,6 +8,143 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-04
+
+Serving-bundle export paths for MLX and ONNX, a distill/teacher path that fails
+loudly instead of quietly, benchmark leakage caught at the content level, and a
+lint/type gate that actually runs.
+
+### Added
+
+- **MLX export for seq2seq.** `mlx_lm.convert` only handles decoder-only
+  models, so a seq2seq checkpoint is assembled directly into `<name>.mlx/`:
+  the safetensors bundle plus `spiece.model` and a `serving.json` declaring the
+  `maatml.serving/1` contract (`kind`, token budgets, decoder start and EOS ids,
+  input prefix, and the brace-repair note when `evaluation.repair_braces` is
+  set). `tie_word_embeddings` is set false when the checkpoint carries its own
+  `lm_head.weight`, so a downstream loader does not project logits through the
+  embedding matrix the fine-tune untied.
+- **ONNX serving-bundle exporter for the JCL multi-head classifier**
+  (`jcl_plugin/export_onnx.py`): `model.onnx` with external weights, the
+  tokenizer, and a `serving.json`, with the pooled and per-token heads baked
+  into the graph, so the model can be served without torch.
+- **`distill.request_params`**: merged into the chat-completions payload. A
+  reasoning teacher spends the default 1024-token budget on hidden reasoning
+  before any content arrives, and switches like `chat_template_kwargs` had no
+  other way in. A `timeout` in that block is routed to the client rather than
+  the payload. `TeacherClient.generate_row` takes the same parameter.
+- **`temperature=None` omits the field** from the chat-completions payload
+  instead of sending the default: some endpoints reject the parameter itself,
+  not just particular values.
+- **`serve --allow-unauthenticated`**: the explicit opt-in for a non-loopback
+  bind with no token.
+- **`reject_unknown_training_keys`**: the dataclass-backed trainer configs
+  (built with `d.get(...)`) now fail on a `training:` key the architecture does
+  not read, matching the `extra="forbid"` the pydantic ones already had.
+- **`maatml.training.schedule`**: one derivation of optimizer step counts and
+  mixed-precision flags, shared by causal SFT, seq2seq, multi-head, and
+  preference training instead of four near-copies.
+- **`realign_special_token_ids`** and one shared special-token resolver used by
+  both the multi-head trainer and the predictor, so the two cannot drift.
+- **CI:** a gitleaks secret scan (with the rule set enabled rather than
+  declared), an example-invariant check the test job runs, an explicit ruff
+  rule set plus `ruff format --check`, and a real `[tool.mypy]` section.
+- **Docs:** the gate tables in every example README are generated from
+  `model.yml` and checked in CI, so a gate change cannot leave the README
+  stating the old threshold.
+
+### Changed
+
+- **Behavior change: the teacher base URL must be set explicitly.**
+  `TeacherClient` no longer defaults to `https://api.openai.com/v1`. Set
+  `MAATML_TEACHER_BASE_URL` or pass `base_url`; the scheme must be `http` or
+  `https`. `datagen` and `distill` send the prompt pool to whatever this points
+  at, and for the shipped domains the prompt pool is the sensitive asset, so
+  the destination is always a stated choice.
+- **Behavior change: `serve` refuses an empty auth token** (the usual cause is
+  an unset variable expanding to `""` in a unit file), and an empty bind host
+  is no longer treated as loopback: `--host ""` binds every interface, so it
+  needs a token or `--allow-unauthenticated`.
+- **Behavior change: `maatml distill` exits non-zero** when a non-empty prompt
+  pool produced no accepted and no duplicate rows, and aborts after five
+  consecutive teacher failures rather than walking the whole pool. A scheduled
+  flywheel no longer reports success against an unreachable teacher.
+- **Behavior change: a declared but missing eval asset is an error.** An asset
+  named explicitly or declared in `model.yml` raises `DeclaredAssetMissing`
+  instead of resolving to `None`; only genuinely optional assets may be absent.
+  A typo in `dataset.contracts` used to surface as a `TypeError` from the
+  validator on the first evaluated row.
+- **Behavior change: `training.lora` rejects unknown keys.** A typo was dropped
+  in silence, and since `training_config` is hashed into the lifecycle
+  fingerprint the run still looked fresh.
+- **Behavior change: the train fingerprint includes `--limit` and `--seed`.**
+  Both change the checkpoint, and leaving them out let the next plain
+  `maatml run` report "all fresh" over a truncated run, with evaluate, export,
+  and verify inheriting the skip.
+- The lifecycle environment fingerprint uses maatml's own checkout SHA and is
+  `None` for an installed package, so an unrelated repository's commits no
+  longer invalidate every step.
+- `export --format mlx` accepts seq2seq architectures (served as a direct-load
+  bundle); `gguf` stays gated to causal and preference architectures.
+- **Dependency floors raised past known advisories:** `torch>=2.6`
+  (GHSA-53q9-r3pm-6pq6 is an RCE in `torch.load` despite `weights_only=True`,
+  which is the call the SFT tokenized cache makes), `transformers>=5.5`,
+  `pillow>=12.3`, `onnx>=1.22`, `sentencepiece>=0.2.1`. The unused `evaluate`
+  dependency is dropped.
+- **Example corpora regenerated and gates re-derived from measured runs.** The
+  JCL corpus is real decks judged by the MVS 3.8j converter, with jobnames
+  decorrelated from the label (earlier corpora leaked it through the name), and
+  its gates are the Wilson 95% lower bound of the measured rate with the
+  structurally guaranteed layers at 1.0. Triage gates are set the same way, and
+  its splits, batch size, epochs, and warmup were retuned.
+- The spool `hostname_fqdn` sanitizer rule is anchored on a lowercase TLD. The
+  looser pattern also matched the shape of a z/OS dataset name, so it rewrote
+  every dataset name to `HOST.REDACTED` while the labels still named them. The
+  trade-off is that an all-uppercase FQDN is no longer redacted.
+- The sanitizer's length-preserving warning states what actually happens: the
+  original value is fully replaced and only the marker is clipped.
+- `ruff format` applied across the tree.
+
+### Fixed
+
+- **`ingest` no longer destroys the seed corpus.** A run that accepts nothing
+  (an empty input, or a validator that rejected everything) leaves an existing
+  corpus untouched and reports `protected_existing`, including under
+  `append=False`. The seed file is written atomically.
+- **`serve --capture` identifies rows by the (request, output) pair.** Hashing
+  the output alone collided across distinct requests, and `ingest` then dropped
+  the later ones as duplicates: exactly the reviewed rows the flywheel exists
+  to keep. Captured requests now pass through the model's declared
+  `dataset.sanitize` tags before being written.
+- **Content-level benchmark leakage is caught.** A benchmark drawn from the
+  same generator as the seeds was invisible to the group check once it carried
+  its own family namespace; the rendered request (or the row minus its identity
+  fields) is now compared against the seed corpus. The triage benchmark is
+  drawn disjoint from the seeds.
+- **Valid JSON that is not an object** (a bare list, string, or number) is
+  scored as a failed row instead of raising `AttributeError` and aborting the
+  whole evaluate or distill run before the report is written.
+- **A validator that raises during distill** is counted (`validator_errors`),
+  reported, and rejects the row, rather than ending the run.
+- **Model plugin modules are keyed on the resolved folder path**, so two model
+  folders sharing a directory name no longer collide in `sys.modules`.
+- **A plugin name claimed by two different sources warns**, naming both, so the
+  registration that silently loses is visible. Re-binding the same source (a
+  registry wipe, `discover_plugins(force=True)`) stays quiet.
+- `scripts/evaluate_all.py` and the CLI share one eval-key resolver instead of
+  two copies that had drifted.
+- The `distill` teacher cache flushes every 25 rows, so a crash in a long
+  local-teacher run does not lose hours of paid-for responses.
+- Docs: the validator example, the stale quickstart numbers, and the statement
+  that `serve` validates on `--enforce` or `?validate=1` rather than by
+  default. `tests/test_docs_truth.py` checks these against the code.
+
+### Security
+
+- Dependency floors raised past known advisories (see Changed).
+- Gitleaks runs in CI and pre-commit with its rule set enabled.
+- The teacher client has no implicit third-party endpoint (see Changed).
+
 ## [0.8.0] - 2026-07-24
 
 The fixed lifecycle runner, the reviewed data flywheel and serve contract, plus
