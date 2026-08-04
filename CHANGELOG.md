@@ -52,6 +52,10 @@ lint/type gate that actually runs.
 - **Docs:** the gate tables in every example README are generated from
   `model.yml` and checked in CI, so a gate change cannot leave the README
   stating the old threshold.
+- **`MANIFEST.in`**: the sdist file list is declared rather than left to
+  setuptools' defaults. It carries the license, README, changelog, and the
+  security, contributing, and conduct docs, and prunes `tests/`, which cannot
+  pass without the ~23 MB `examples/` tree that the sdist does not ship.
 
 ### Changed
 
