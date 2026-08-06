@@ -340,8 +340,8 @@ def build_serve_context(
         cfg = get_dataset_cfg(model_def)
         request_field = cfg.get("request_field") or cfg.get("raw_field") or "request"
         # Honour the model's declared sanitizers on the way in. Capture writes
-        # live client traffic to disk, and the shipped JCL and spool models
-        # target z/OS output carrying user IDs and dataset names.
+        # live client traffic to disk, so domain-specific PII must be removed
+        # before an unreviewed row reaches the corpus.
         sanitize_tags = [
             str(tag).strip() for tag in (cfg.get("sanitize") or []) if str(tag).strip()
         ]

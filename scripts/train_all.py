@@ -5,7 +5,7 @@ Uses the plugin registry, no hardcoded trainer imports.
 Usage:
     .venv/bin/python scripts/train_all.py
     .venv/bin/python scripts/train_all.py --smoke
-    .venv/bin/python scripts/train_all.py --only jcl spool
+    .venv/bin/python scripts/train_all.py --only triage vision
 """
 
 from __future__ import annotations
@@ -29,11 +29,10 @@ from maatml.scaffold import normalize_architecture  # noqa: E402
 console = Console()
 
 _NAME_ALIASES = {
-    "jcl": "jcl-validator",
-    "spool": "spool-interpreter",
     "tickets": "support-ticket-triage",
     "triage": "support-ticket-triage",
     "vision": "vision",
+    "vlm": "vision-vlm",
     "describer": "vision-describer",
     "vision-describer": "vision-describer",
 }
@@ -120,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--only",
         nargs="+",
-        help="Subset by folder name or alias (jcl, spool, triage, ...)",
+        help="Subset by folder name or alias (triage, vision, vlm, ...)",
     )
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("--skip-prepare", action="store_true")

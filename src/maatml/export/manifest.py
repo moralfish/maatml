@@ -171,6 +171,53 @@ def write_manifest(export_dir: Path, manifest: dict[str, Any]) -> Path:
     return write_json(Path(export_dir) / "manifest.json", manifest)
 
 
+def amend_manifest(
+    export_dir: str | Path,
+    files: list[Path],
+    *,
+    formats: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Add files (and optionally format names) to an existing manifest.
+
+    For artifacts produced outside the exporter, a quantized GGUF being the
+    canonical case: without an entry here they sit beside the bundle unverifiable,
+    and a catalog checksum can never be traced back to a gate-evidenced export.
+    Existing entries for the same path are replaced; ``gate_evidence`` and every
+    other field are left untouched, since amending adds artifacts to a bundle
+    rather than re-arguing what the bundle proved.
+    """
+    root, manifest = load_manifest(export_dir)
+    entries: list[dict[str, str]] = list(manifest.get("files", []))
+    by_path = {entry["path"]: index for index, entry in enumerate(entries)}
+    for file in files:
+        path = Path(file).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(f"cannot amend manifest with missing file: {path}")
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError as exc:
+            raise ValueError(
+                f"{path} is outside the export directory {root}; the manifest "
+                "only describes files the bundle actually ships"
+            ) from exc
+        entry = {"path": rel, "sha256": sha256_file(path)}
+        if rel in by_path:
+            entries[by_path[rel]] = entry
+        else:
+            by_path[rel] = len(entries)
+            entries.append(entry)
+    manifest["files"] = entries
+    if formats:
+        hints = manifest.setdefault("runtime_hints", {})
+        known = list(hints.get("formats", []))
+        for fmt in formats:
+            if fmt not in known:
+                known.append(fmt)
+        hints["formats"] = known
+    write_json(root / "manifest.json", manifest)
+    return manifest
+
+
 def load_manifest(path: str | Path) -> tuple[Path, dict[str, Any]]:
     """Load a manifest from a file path or an export directory."""
     path = Path(path).resolve()

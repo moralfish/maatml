@@ -8,6 +8,36 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+### Added
+
+- **Compiler and server registries.** `@register_compiler` / `@register_server`
+  plus `maatml compile <export-dir> --target NAME --out DIR [--option K=V]` and
+  `maatml serve … --server NAME [--server-option K=V]`. The built-in `http`
+  server remains the default; plugins own TensorRT, vLLM, llama.cpp, and other
+  native backends without forcing ONNX or an in-process predictor. Core writes
+  `target_manifest.json` and provides a shared lifecycle envelope
+  (verify → warmup → serve → close with SIGINT/SIGTERM drain).
+- **`maatml manifest amend <export-dir> <files...> [--format NAME]`**: adds
+  out-of-band artifacts to an existing manifest with sha256 entries, so
+  `maatml verify` covers them and a serving catalog's checksum traces back to
+  a gate-evidenced export. Gate evidence and every other field are untouched.
+- **GGUF quantization in the exporter.** `extensions.gguf.quantize_binary`
+  (or `MAATML_LLAMA_QUANTIZE`) names the llama.cpp `llama-quantize`
+  executable and `extensions.gguf.quant_levels` the levels (default
+  `Q4_K_M`); `export --format gguf` then emits `<name>-<level>.gguf` beside
+  the f16, all in the manifest's file list. Explicit-only like the convert
+  script: no PATH search.
+- **`maatml evaluate --baseline X --max-regression 0.03`**: fails the run
+  when a gated metric drops more than the allowance against the baseline
+  report. Repeatable; `metric=0.05` overrides one metric and may name an
+  ungated metric. The default allowance judges gated metrics only, since
+  ungated keys like `eval_loss` improve downward.
+
+### Removed
+
+- The JCL Validator and Spool Interpreter example model folders and their
+  task-specific plugins, datasets, tests, and documentation.
+
 ## [0.9.0] - 2026-08-04
 
 Serving-bundle export paths for MLX and ONNX, a distill/teacher path that fails

@@ -196,3 +196,32 @@ def test_only_one_default_eval_keys_implementation() -> None:
     script = pathlib.Path("scripts/evaluate_all.py").read_text()
     assert "def _default_eval_keys" not in script
     assert "default_eval_keys(md)" in script
+
+
+def test_regression_failures_judge_gated_metrics_by_the_default() -> None:
+    from maatml.evaluation.harness import regression_failures
+
+    delta = {"pass_rate": -0.05, "other_rate": -0.5, "eval_loss": -0.4}
+    failures = regression_failures(delta, {"pass_rate"}, 0.03, {})
+    # Only the gated metric is judged by the default; eval_loss improving
+    # downward and the ungated rate are both left alone.
+    assert failures == ["pass_rate: -0.0500 (allowed -0.03)"]
+
+
+def test_regression_failures_within_the_allowance_pass() -> None:
+    from maatml.evaluation.harness import regression_failures
+
+    delta = {"pass_rate": -0.02, "up_rate": +0.10}
+    assert regression_failures(delta, {"pass_rate", "up_rate"}, 0.03, {}) == []
+
+
+def test_regression_overrides_reach_ungated_metrics_and_loosen_gated_ones() -> None:
+    from maatml.evaluation.harness import regression_failures
+
+    delta = {"pass_rate": -0.04, "latency_score": -0.2}
+    failures = regression_failures(
+        delta, {"pass_rate"}, 0.03, {"pass_rate": 0.05, "latency_score": 0.1}
+    )
+    # The gated metric's override loosens it past the default; the ungated
+    # metric participates only because an override named it.
+    assert failures == ["latency_score: -0.2000 (allowed -0.1)"]

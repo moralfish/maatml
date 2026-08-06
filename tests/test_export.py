@@ -131,7 +131,7 @@ def _seq2seq_model_def(tmp_path: Path) -> ModelDefinition:
         version="0.1.0",
         architecture="seq2seq",
         base_model="toy/t5",
-        dataset={"source_prefix": "interpret spool: "},
+        dataset={"source_prefix": "summarize: "},
         training={"source_max_len": 1024, "generation": {"max_new_tokens": 512}},
         evaluation={"repair_braces": True},
     )
@@ -169,7 +169,7 @@ def test_export_mlx_seq2seq_bundle(tmp_path: Path) -> None:
         "max_new_tokens": 512,
         "decoder_start_token_id": 0,
         "eos_token_id": 1,
-        "input_prefix": "interpret spool: ",
+        "input_prefix": "summarize: ",
         "output_note": (
             "emits the JSON object body without outer braces; T5 vocab maps "
             "{ } to unk. Clients re-add the braces before parsing."

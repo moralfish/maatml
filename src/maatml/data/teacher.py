@@ -36,9 +36,8 @@ class TeacherClient:
         resolved = base_url or os.environ.get("MAATML_TEACHER_BASE_URL")
         if not resolved or not resolved.strip():
             # No implicit third-party default: datagen and distill send the
-            # prompt pool to whatever this points at, and for the shipped
-            # domains (JCL, spool output, support tickets) the prompt pool is
-            # the sensitive asset. The destination is always a stated choice.
+            # prompt pool to whatever this points at, and the prompt pool may
+            # be sensitive. The destination is always a stated choice.
             raise ValueError(
                 "teacher base URL is not set. Export MAATML_TEACHER_BASE_URL "
                 "(for example http://127.0.0.1:8000/v1 for a local server, or "

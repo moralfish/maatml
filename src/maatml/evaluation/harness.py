@@ -220,6 +220,32 @@ def baseline_delta(
     return delta
 
 
+def regression_failures(
+    delta: dict[str, float],
+    gate_keys: set[str],
+    default_max: Optional[float],
+    overrides: dict[str, float],
+) -> list[str]:
+    """Deltas that fall further than the caller allows, formatted for a report.
+
+    The default ceiling applies to gated metrics only: they are the rates the
+    model is accountable for, and they share a direction (higher is better).
+    Ungated keys like ``eval_loss`` improve downward, so judging them by the
+    same rule would flag improvements; they participate only when named in an
+    override.
+    """
+    failures: list[str] = []
+    for metric, change in sorted(delta.items()):
+        limit = overrides.get(metric)
+        if limit is None and metric in gate_keys:
+            limit = default_max
+        if limit is None:
+            continue
+        if change < -limit:
+            failures.append(f"{metric}: {change:+.4f} (allowed -{limit:g})")
+    return failures
+
+
 def default_eval_keys(
     model_def: ModelDefinition,
 ) -> tuple[Optional[str], Optional[str], Any]:
@@ -538,8 +564,7 @@ def run_evaluation(
 
     validate_fn: Callable[..., ValidationResult] = resolve_validator(validator)
     # A real validator (name or callable) needs a schema when declared; the
-    # noop path does not. contracts are optional (text models like JCL/spool
-    # declare them; vision may not).
+    # noop path does not. Contracts are optional and task-specific.
     if validator is not None and resolved_schema is None:
         raise FileNotFoundError(
             "Evaluator requires a schema file. Set data/dataset.schema in "

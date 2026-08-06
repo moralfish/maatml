@@ -4,7 +4,7 @@ Uses the evaluation harness + plugin registry, no hardcoded evaluate_* imports.
 
 Usage:
     .venv/bin/python scripts/evaluate_all.py
-    .venv/bin/python scripts/evaluate_all.py --only jcl spool
+    .venv/bin/python scripts/evaluate_all.py --only triage vision
     .venv/bin/python scripts/evaluate_all.py --split val
     .venv/bin/python scripts/evaluate_all.py --limit 20
 """
@@ -31,11 +31,10 @@ from maatml.registry import discover_plugins  # noqa: E402
 console = Console()
 
 _NAME_ALIASES = {
-    "jcl": "jcl-validator",
-    "spool": "spool-interpreter",
     "tickets": "support-ticket-triage",
     "triage": "support-ticket-triage",
     "vision": "vision",
+    "vlm": "vision-vlm",
     "describer": "vision-describer",
     "vision-describer": "vision-describer",
 }

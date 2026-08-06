@@ -15,7 +15,7 @@ scripts/evaluate_all.py.
 
 Usage:
     python scripts/check_examples.py
-    python scripts/check_examples.py --only vision jcl-validator
+    python scripts/check_examples.py --only vision support-ticket-triage
 """
 
 from __future__ import annotations

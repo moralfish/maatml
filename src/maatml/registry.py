@@ -42,7 +42,7 @@ def _comparable_source(source: str) -> str:
     loaded from two locations (a copy under tmp_path, or a folder loaded both
     directly and by path) has two source strings for identical code. Comparing
     raw sources reported those as collisions. What matters is the plugin module
-    itself: ``vision_plugin.export_onnx`` and ``jcl_plugin.export_onnx`` are two
+    itself: ``vision_plugin.export_onnx`` and ``vendor_plugin.export_onnx`` are two
     implementations claiming one name, and stay distinguishable here.
     """
     return _MODEL_PLUGIN_NS_RX.sub("", source)
@@ -124,6 +124,12 @@ SANITIZERS = _Registry("sanitizer")
 TRANSFORMS = _Registry("transform")
 EXPORTERS = _Registry("exporter")
 GENERATORS = _Registry("generator")
+# Target compilers turn a portable export (ONNX, GGUF, HF) into a device-
+# specific runtime artifact. Servers launch a long-lived inference process for
+# that artifact. Both are format-agnostic: plugins decide TensorRT / vLLM /
+# llama.cpp / HTTP, core only dispatches.
+COMPILERS = _Registry("compiler")
+SERVERS = _Registry("server")
 
 _ALL_REGISTRIES: dict[str, _Registry] = {
     "trainer": TRAINERS,
@@ -136,6 +142,8 @@ _ALL_REGISTRIES: dict[str, _Registry] = {
     "transform": TRANSFORMS,
     "exporter": EXPORTERS,
     "generator": GENERATORS,
+    "compiler": COMPILERS,
+    "server": SERVERS,
 }
 
 _discovered = False
@@ -206,6 +214,8 @@ register_sanitizer = _make_decorator(SANITIZERS)
 register_transform = _make_decorator(TRANSFORMS)
 register_exporter = _make_decorator(EXPORTERS)
 register_generator = _make_decorator(GENERATORS)
+register_compiler = _make_decorator(COMPILERS)
+register_server = _make_decorator(SERVERS)
 
 
 def get_registry(kind: str) -> _Registry:
@@ -312,7 +322,7 @@ def load_model_plugins(
     Each entry is either:
       - a dotted module path (``my_pkg.plugins.foo``),
       - a model-folder-relative ``.py`` file (``plugins/local_hook.py``), or
-      - a model-folder-relative package directory (``./jcl_plugin``) containing
+      - a model-folder-relative package directory (``./triage_plugin``) containing
         ``__init__.py``.
 
     Both ``load_model_def`` and the CLI ask for a model's plugins, so this is
@@ -380,6 +390,7 @@ _BUILTIN_PLUGIN_MODULES = (
     "maatml.export.bundle",
     "maatml.export.gguf",
     "maatml.export.mlx_export",
+    "maatml.servers",
 )
 
 

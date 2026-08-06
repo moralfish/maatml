@@ -36,7 +36,7 @@ dependencies = [
   "typer>=0.12",
   # Core imports no jsonschema itself, but it is the validator contract every
   # shipped validator is written against (`dataset.schema` is a JSON Schema
-  # document, and all six examples call jsonschema.validate). Keeping it core
+  # document, and all examples call jsonschema.validate). Keeping it core
   # means a plugin author can write the documented validator without a second
   # install step. See docs/plugins.md.
   "jsonschema>=4.0",
@@ -195,13 +195,5 @@ ignore = [
 # Scripts and example builders are console programs: printing is their output.
 "scripts/*" = ["T201"]
 "examples/*/scripts/*" = ["T201"]
-# The JCL and spool seed builders embed literal mainframe output as templates.
-# Those lines are column-sensitive (a wrapped IEF374I record is no longer the
-# record the model must learn), so they are exempt from the line cap rather
-# than reflowed. SIM113 likewise: the index feeds the emitted record, not just
-# the loop.
-"examples/spool-interpreter/scripts/build_seeds.py" = ["E501", "SIM113"]
-"examples/jcl-validator/scripts/build_seeds.py" = ["E501", "SIM113"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests", "examples"]

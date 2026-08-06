@@ -60,8 +60,8 @@ class ModelDefinition(BaseModel):
     # validators as load, instead of silently bypassing semver / gt=0 / types.
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
-    name: str = Field(..., description="Folder name; e.g. 'jcl-validator'")
-    model_id: str = Field(..., description="Stable model identifier; e.g. 'jcl-validator'")
+    name: str = Field(..., description="Folder name; e.g. 'my-model'")
+    model_id: str = Field(..., description="Stable model identifier; e.g. 'my-model'")
     # Free-form metadata; trainers dispatch primarily on ``architecture``.
     task: str = ""
     runtime: Optional[str] = None

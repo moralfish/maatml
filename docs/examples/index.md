@@ -1,6 +1,6 @@
 # Examples
 
-Six reference models share the identical folder layout and CLI, from a
+Four reference models share the identical folder layout and CLI, from a
 one-command support-ticket triage to a vLLM-servable vision-language model.
 Each is a standalone folder under `examples/` with its own `model.yml`: install `maatml` from PyPI, clone the repo for the seed data and plugins, and
 point the CLI at the folder.
@@ -11,8 +11,6 @@ point the CLI at the folder.
 | [Vision VLM](vision-vlm.md) | describe a scene image | `vlm_sft` (vLLM-servable) | SmolVLM-256M-Instruct |
 | [Vision](vision.md) | scene + detect + pose | `vision_multitask` | MobileNetV3-Large |
 | [Vision Describer](vision-describer.md) | caption from vision JSON | `seq2seq` | flan-t5-small |
-| [JCL Validator](jcl-validator.md) | `jcl_validation` | `classifier` (4-head) | ModernBERT-base |
-| [Spool Interpreter](spool-interpreter.md) | `spool_interpretation` | `seq2seq` | flan-t5-base |
 
 New to MaatML? [Support Ticket Triage](support-ticket-triage.md) is the
 shortest path end to end, see the [5-minute quickstart](../getting-started.md).

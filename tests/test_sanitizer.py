@@ -4,71 +4,55 @@ from pathlib import Path
 
 from maatml.data.sanitizer import make_tag_sanitizer
 
-REPO = Path(__file__).resolve().parents[1]
-JCL_RULES = REPO / "examples" / "jcl-validator" / "jcl_plugin" / "sanitization.yaml"
-SPOOL_RULES = REPO / "examples" / "spool-interpreter" / "spool_plugin" / "sanitization.yaml"
 
-sanitize_jcl = make_tag_sanitizer(JCL_RULES, tag="jcl", length_preserving_only=True)
-sanitize_spool = make_tag_sanitizer(SPOOL_RULES, tag="spool")
-
-
-def test_jcl_redacts_userid_assignment_length_preserving() -> None:
-    src = "//STEP1 EXEC PGM=PGM,USER=ALICE01\n"
-    out = sanitize_jcl(src)
-    assert "ALICE01" not in out
-    assert "USER=REDACT" in out
-    assert len(out) == len(src), "length-preserving JCL sanitizer must not change line length"
-
-
-def test_jcl_redacts_ipv4_length_preserving() -> None:
-    src = "//* host 10.20.30.40 reach\n"
-    out = sanitize_jcl(src)
-    assert "10.20.30.40" not in out
-    assert "0.0.0.0" in out
-    assert len(out) == len(src)
+def test_tag_sanitizer_applies_only_matching_rules(tmp_path: Path) -> None:
+    rules_path = tmp_path / "rules.yaml"
+    rules_path.write_text(
+        "rules:\n"
+        "  - name: email\n"
+        "    pattern: '[A-Za-z]+@[A-Za-z.]+'\n"
+        "    replacement: 'REDACTED'\n"
+        "    applies_to: [ticket]\n"
+        "    length_preserving: false\n"
+        "  - name: internal_id\n"
+        "    pattern: 'ID=[0-9]+'\n"
+        "    replacement: 'ID=REDACTED'\n"
+        "    applies_to: [audit]\n"
+        "    length_preserving: false\n",
+        encoding="utf-8",
+    )
+    sanitize_ticket = make_tag_sanitizer(rules_path, tag="ticket")
+    out = sanitize_ticket("Contact alice@example.com about ID=123")
+    assert out == "Contact REDACTED about ID=123"
 
 
-def test_jcl_leaves_dataset_names_untouched() -> None:
-    src = "//IN DD DSN=PROD.DAILY.LOAD,DISP=SHR\n"
-    assert sanitize_jcl(src) == src
-
-
-def test_spool_redacts_credentials() -> None:
-    src = "USER=BOB password=hunter2 ended\n"
-    out = sanitize_spool(src)
-    assert "hunter2" not in out
-    assert "password=REDACTED" in out
-    assert "BOB" not in out
-
-
-def test_spool_redacts_hostname_and_ip() -> None:
-    src = "connecting to mvs.prod.corp at 192.168.1.10\n"
-    out = sanitize_spool(src)
-    assert "mvs.prod.corp" not in out
-    assert "192.168.1.10" not in out
-
-
-def test_jcl_clean_input_unchanged() -> None:
-    src = "//J JOB (123),CLASS=A,MSGCLASS=H\n//STEP1 EXEC PGM=IEFBR14\n"
-    assert sanitize_jcl(src) == src
-
-
-def test_length_preserving_truncation_warns_once_per_rule() -> None:
+def test_length_preserving_truncation_warns_once_per_rule(tmp_path: Path) -> None:
     import warnings
 
     import pytest
 
     from maatml.data import sanitizer as sanitizer_mod
 
-    sanitizer_mod._warned_truncating_rules.discard("userid_assignment")
+    rules_path = tmp_path / "rules.yaml"
+    rules_path.write_text(
+        "rules:\n"
+        "  - name: token_assignment\n"
+        "    pattern: '(TOKEN=)[A-Z]{1,8}'\n"
+        "    replacement: '\\g<1>REDACTED'\n"
+        "    applies_to: [record]\n"
+        "    length_preserving: true\n",
+        encoding="utf-8",
+    )
+    sanitize_record = make_tag_sanitizer(rules_path, tag="record", length_preserving_only=True)
+    sanitizer_mod._warned_truncating_rules.discard("token_assignment")
     with pytest.warns(RuntimeWarning, match="marker is abbreviated"):
-        out = sanitize_jcl("//STEP1 EXEC PGM=P,TSO=BOB\n")
+        out = sanitize_record("TOKEN=BOB\n")
     # The warning is about legibility, not leakage: the original value is gone.
     assert "BOB" not in out
     # Second hit stays quiet so a large corpus does not emit one warning per row.
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        sanitize_jcl("//STEP2 EXEC PGM=P,TSO=AMY\n")
+        sanitize_record("TOKEN=AMY\n")
 
 
 def test_fixed_replacement_that_cannot_fit_is_rejected_at_load(tmp_path: Path) -> None:
@@ -105,21 +89,3 @@ def test_fixed_replacement_that_fits_loads(tmp_path: Path) -> None:
     )
     rules = load_rules(rules_path)
     assert apply_rules("ID=ABCD end", rules) == "ID=XXXX end"
-
-
-def test_spool_hostname_rule_preserves_mainframe_dataset_names() -> None:
-    """A z/OS dataset name has the same three-part dotted shape as an FQDN. The
-    looser rule rewrote every dataset name to HOST.REDACTED while the labels
-    still named them, training the model to invent names absent from its input."""
-    src = "IEF212I MYJOB STEP1 - DATA SET PROD.PAYROLL.MASTER NOT FOUND"
-    out = sanitize_spool(src)
-    assert "PROD.PAYROLL.MASTER" in out
-    assert "HOST.REDACTED" not in out
-
-    # Four-part names too.
-    assert "SYS1.PROD.LOAD.LIB" in sanitize_spool("ALLOC FAILED FOR SYS1.PROD.LOAD.LIB")
-
-    # Real FQDNs are still redacted.
-    redacted = sanitize_spool("connect failed to batch01.corp.example.com port 1414")
-    assert "batch01.corp.example.com" not in redacted
-    assert "HOST.REDACTED" in redacted

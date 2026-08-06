@@ -48,8 +48,6 @@ nav:
       - Vision (multitask): examples/vision.md
       - Vision VLM: examples/vision-vlm.md
       - Vision Describer: examples/vision-describer.md
-      - JCL Validator: examples/jcl-validator.md
-      - Spool Interpreter: examples/spool-interpreter.md
 markdown_extensions:
   - admonition
   - attr_list
