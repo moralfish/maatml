@@ -137,7 +137,7 @@ def _seed_row(architecture: str) -> dict[str, Any]:
             "source": "scaffold",
             "family": "example",
             "category": "basic",
-            "request": "//JOBNAME JOB CLASS=A\n//STEP1 EXEC PGM=IEFBR14\n",
+            "request": "The payment completed successfully.",
             "expected_output": {
                 "valid": True,
                 "errors": [],
@@ -150,17 +150,9 @@ def _seed_row(architecture: str) -> dict[str, Any]:
             "source": "scaffold",
             "family": "example",
             "category": "basic",
-            "request": "IEFC452I JOB JOBNAME - JOB NOT RUN - JCL ERROR",
+            "request": "Summarize: The deployment completed successfully.",
             "expected_output": {
-                "summary": "JCL error prevented job run",
-                "status": "failed",
-                "returnCode": None,
-                "rootCause": "JCL error",
-                "suggestedFix": "Fix JCL and resubmit",
-                "explanation": "IEFC452I indicates the job was not selected.",
-                "relatedDocs": [],
-                "failureCategory": "other",
-                "confidence": 0.8,
+                "summary": "The deployment completed successfully.",
             },
         }
     # causal_sft default

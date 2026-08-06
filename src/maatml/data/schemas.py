@@ -1,7 +1,6 @@
 """Shared data enums used by core + example plugins.
 
-Task-specific sample / result schemas live in example plugins
-(``jcl_plugin.schemas``, ``spool_plugin.schemas``).
+Task-specific sample / result schemas live in example plugins.
 """
 
 from __future__ import annotations

@@ -170,7 +170,7 @@ def run_datagen(
         if not raw_gen:
             raise KeyError(
                 "No dataset.generator in model.yml and --teacher not set. "
-                "Set dataset.generator to a registered name (e.g. jcl, spool) "
+                "Set dataset.generator to a registered name (e.g. synthetic_scenes) "
                 "or pass --teacher. Register custom generators with "
                 "@register_generator."
             )

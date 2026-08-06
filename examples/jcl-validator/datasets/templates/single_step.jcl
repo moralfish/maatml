@@ -1,6 +1,0 @@
-//{{JOBNAME}} JOB ({{ACCT}}),'{{OWNER}}',CLASS=A,MSGCLASS=H
-//STEP1    EXEC PGM={{PGM}}
-//SYSPRINT DD  SYSOUT=*
-//SYSIN    DD  *
-  RUN
-/*

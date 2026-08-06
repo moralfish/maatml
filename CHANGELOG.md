@@ -33,6 +33,11 @@ for the Python package and per-model versions under `examples/`.
   ungated metric. The default allowance judges gated metrics only, since
   ungated keys like `eval_loss` improve downward.
 
+### Removed
+
+- The JCL Validator and Spool Interpreter example model folders and their
+  task-specific plugins, datasets, tests, and documentation.
+
 ## [0.9.0] - 2026-08-04
 
 Serving-bundle export paths for MLX and ONNX, a distill/teacher path that fails

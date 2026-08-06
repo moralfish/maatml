@@ -838,7 +838,7 @@ def cmd_ingest(
         help="Map dest=src fields (repeatable), e.g. --map request=text",
     ),
     sanitize: Optional[str] = typer.Option(
-        None, "--sanitize", help="Sanitizer registry tag (e.g. jcl, spool)"
+        None, "--sanitize", help="Sanitizer registry tag (e.g. pii)"
     ),
     append: bool = typer.Option(True, "--append/--no-append"),
     out: Optional[Path] = typer.Option(None, "--out", help="Override seed JSONL path"),
@@ -1237,11 +1237,11 @@ def cmd_plugins() -> None:
     """List registered trainers, validators, metrics, formats, servers, compilers."""
     discover_plugins()
     # Import submodule directly so listing plugins does not require torch.
+    from . import servers as _servers  # noqa: F401
     from .evaluation import predictors as _predictors  # noqa: F401
     from .export import bundle as _bundle  # noqa: F401
     from .export import gguf as _gguf  # noqa: F401
     from .export import mlx_export as _mlx  # noqa: F401
-    from . import servers as _servers  # noqa: F401
 
     for kind, entries in list_all_plugins().items():
         console.print(f"[bold]{kind}[/] ({len(entries)})")

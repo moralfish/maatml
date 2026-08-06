@@ -564,8 +564,7 @@ def run_evaluation(
 
     validate_fn: Callable[..., ValidationResult] = resolve_validator(validator)
     # A real validator (name or callable) needs a schema when declared; the
-    # noop path does not. contracts are optional (text models like JCL/spool
-    # declare them; vision may not).
+    # noop path does not. Contracts are optional and task-specific.
     if validator is not None and resolved_schema is None:
         raise FileNotFoundError(
             "Evaluator requires a schema file. Set data/dataset.schema in "

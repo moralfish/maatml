@@ -32,7 +32,7 @@ pip install "maatml[docs]"     # this site: mkdocs serve
 - [The validator-gated lifecycle](lifecycle.md): the core idea, end to end
 - [Serving & deployment](serving.md): `maatml serve`, ONNX/edge, and vLLM (VLMs)
 - [Plugin author guide](plugins.md): register trainers, validators, metrics, exporters, generators
-- [Examples](examples/index.md): six reference models, from support-ticket triage to a vLLM-servable VLM
+- [Examples](examples/index.md): four reference models, from support-ticket triage to a vLLM-servable VLM
 
 Canonical references in the repo:
 

@@ -1,8 +1,7 @@
 """Generic regex-rule sanitization engine.
 
-Task-specific rule sets (JCL / Spool / …) live in example plugins and
-register themselves via ``@register_sanitizer``. Core only provides the
-rule loader + apply helpers.
+Task-specific rule sets live in model plugins and register themselves via
+``@register_sanitizer``. Core only provides the rule loader + apply helpers.
 """
 
 from __future__ import annotations

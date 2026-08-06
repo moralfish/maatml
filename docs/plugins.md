@@ -28,13 +28,11 @@ engine. Do not assume ONNX or an in-process predictor.
 In `model.yml`:
 
 ```yaml
-plugins: [./jcl_plugin]
-dataset:
-  generator: jcl
+plugins: [./triage_plugin]
 evaluation:
-  validator: jcl
-  metrics: jcl
-  predictor: jcl_classifier
+  validator: triage
+  metrics: triage
+  predictor: causal_sft
 ```
 
 `load_model_plugins` imports the package (or `.py` file); side-effect

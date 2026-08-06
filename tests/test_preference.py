@@ -133,7 +133,7 @@ version: 0.1.0
 dataset:
   format: preference_jsonl
   seed_samples: datasets/samples/seed_samples.jsonl
-  sanitize: [jcl]
+  sanitize: [pii]
 """,
         encoding="utf-8",
     )

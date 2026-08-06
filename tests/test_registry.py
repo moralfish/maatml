@@ -11,6 +11,7 @@ from maatml.config import load_model_def
 from maatml.registry import (
     EXPORTERS,
     FORMATS,
+    METRICS,
     PREDICTORS,
     TRAINERS,
     VALIDATORS,
@@ -88,20 +89,17 @@ def test_discover_plugins_registers_core() -> None:
 
     assert SERVERS.get("http") is not None
     # Task validators live in example plugins, not core discovery.
-    assert VALIDATORS.get("jcl") is None
-    assert VALIDATORS.get("spool") is None
+    assert VALIDATORS.get("triage") is None
+    assert VALIDATORS.get("vision_scene") is None
 
 
-def test_load_model_def_registers_jcl_plugin() -> None:
+def test_load_model_def_registers_triage_plugin() -> None:
     discover_plugins(force=True)
     repo = Path(__file__).resolve().parents[1]
-    md = load_model_def(repo / "examples" / "jcl-validator")
-    assert "jcl" in (md.evaluation or {}).get("validator", "")
-    assert VALIDATORS.get("jcl") is not None
-    assert PREDICTORS.get("jcl_classifier") is not None
-    from maatml.registry import GENERATORS
-
-    assert GENERATORS.get("jcl") is not None
+    md = load_model_def(repo / "examples" / "support-ticket-triage")
+    assert (md.evaluation or {}).get("validator") == "triage"
+    assert VALIDATORS.get("triage") is not None
+    assert METRICS.get("triage") is not None
 
 
 def test_model_plugins_execute_once_per_process(tmp_path: Path) -> None:
@@ -288,17 +286,9 @@ def test_colliding_plugin_names_warn_but_reloads_stay_silent() -> None:
     assert caught == [], [str(w.message) for w in caught]
 
 
-def test_both_example_onnx_exporters_stay_reachable() -> None:
-    """`onnx` resolves to whichever example loaded last, so each also registers
-    a namespaced alias that survives loading both in one process."""
-    from pathlib import Path
-
+def test_example_onnx_exporter_registers_namespaced_alias() -> None:
     from maatml.registry import EXPORTERS, discover_plugins, load_model_plugins
 
     discover_plugins()
     load_model_plugins(Path("examples/vision"), ["vision_plugin"])
-    load_model_plugins(Path("examples/jcl-validator"), ["jcl_plugin"])
-
-    names = EXPORTERS.names()
-    assert "vision_onnx" in names and "jcl_onnx" in names
-    assert EXPORTERS.get("vision_onnx") is not EXPORTERS.get("jcl_onnx")
+    assert EXPORTERS.get("vision_onnx") is EXPORTERS.get("onnx")

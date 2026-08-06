@@ -115,7 +115,7 @@ version: 0.1.0
 dataset:
   format: alpaca
   seed_samples: datasets/samples/seed_samples.jsonl
-  sanitize: [jcl]
+  sanitize: [pii]
 """,
         encoding="utf-8",
     )

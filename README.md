@@ -57,7 +57,7 @@ For contributing to this repository (editable install), see
 
 ## Example models
 
-Six reference models share the identical folder layout and CLI, from a
+Four reference models share the identical folder layout and CLI, from a
 one-command support-ticket triage to a vLLM-servable vision-language model:
 
 | Model | Task | Architecture | Base |
@@ -66,8 +66,6 @@ one-command support-ticket triage to a vLLM-servable vision-language model:
 | [Vision VLM](examples/vision-vlm/) | describe a scene image | `vlm_sft` (vLLM-servable) | SmolVLM-256M-Instruct |
 | [Vision](examples/vision/) | scene + detect + pose | `vision_multitask` | MobileNetV3-Large |
 | [Vision Describer](examples/vision-describer/) | caption from vision JSON | `seq2seq` | flan-t5-small |
-| [JCL Validator](examples/jcl-validator/) | `jcl_validation` | `classifier` (4-head) | ModernBERT-base |
-| [Spool Interpreter](examples/spool-interpreter/) | `spool_interpretation` | `seq2seq` | flan-t5-base |
 
 Any directory with a valid `model.yml` works the same way: install maatml from
 PyPI and point the CLI at the folder. Scaffold a new model folder with
@@ -163,22 +161,16 @@ maatml serve    examples/support-ticket-triage/           # JSON inference API
 ```
 
 For a **multimodal** walkthrough (image → description, servable by vLLM) see
-[examples/vision-vlm/](examples/vision-vlm/). For an **advanced** model with a
-custom column-aware tokenizer, see [examples/jcl-validator/](examples/jcl-validator/).
-Its tokenizer is built once up front:
-
-```bash
-python examples/jcl-validator/scripts/build_seeds.py --target 10000 \
-  --out examples/jcl-validator/datasets/samples/tokenizer_corpus.jsonl
-python examples/jcl-validator/scripts/build_tokenizer.py
-```
+[examples/vision-vlm/](examples/vision-vlm/).
 
 ## Batch scripts
 
 ```bash
 # Deterministic seed corpora (no API calls)
-python examples/jcl-validator/scripts/build_seeds.py
-python examples/spool-interpreter/scripts/build_seeds.py
+python examples/support-ticket-triage/scripts/build_seeds.py
+python examples/vision/scripts/build_seeds.py
+python examples/vision-vlm/scripts/build_seeds.py
+python examples/vision-describer/scripts/build_seeds.py
 
 # Train / evaluate example models
 python scripts/train_all.py --smoke
@@ -199,14 +191,10 @@ python scripts/evaluate_all.py
 
 ```
 examples/                   # reference task models (plugins + data)
-  jcl-validator/
-    model.yml               # single source of truth
-    jcl_plugin/             # validator, metrics, predictor, tokenizer, …
-    datasets/               # schemas, prompt specs, seed samples
-    scripts/                # seed + tokenizer builders
-    output/                 # gitignored prepared / checkpoints / eval
-  spool-interpreter/        # same layout (uses core seq2seq)
-  support-ticket-triage/
+  support-ticket-triage/    # causal LoRA SFT
+  vision/                   # multitask vision
+  vision-vlm/               # vision-language LoRA SFT
+  vision-describer/         # seq2seq captioning
 
 src/maatml/                 # core framework (architectures, CLI, harnesses)
 scripts/                    # batch train/eval/validate
@@ -236,8 +224,7 @@ Community: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) · Security:
 
 - **maatml** is licensed under the [Apache License 2.0](LICENSE).
 - This repository **does not redistribute base-model weights**, only Hugging
-  Face Hub IDs. The reference bases (ModernBERT, flan-t5, and related Apache-2.0
-  models such as Qwen3 when used) are Apache-2.0; **your fine-tuned checkpoints
-  inherit the base model's license terms**.
+  Face Hub IDs. **Your fine-tuned checkpoints inherit the base model's license
+  terms**.
 - Seed corpora are **fully synthetic**, produced by deterministic builders under
-  `examples/*/scripts/`, with no proprietary mainframe dumps shipped.
+  `examples/*/scripts/`, with no proprietary source data shipped.
