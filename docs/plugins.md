@@ -16,8 +16,12 @@ task semantics** and register them via decorators.
 | transform | `@register_transform` | Text pre-tokenization |
 | generator | `@register_generator` | `maatml datagen` candidate factories |
 | exporter | `@register_exporter` | `maatml export --format …` |
+| compiler | `@register_compiler` | `maatml compile --target …` (TensorRT, vLLM package, GGUF quantize, …) |
+| server | `@register_server` | `maatml serve --server …` (HTTP, DeepStream, vLLM, llama.cpp, …) |
 
-List everything with `maatml plugins`.
+List everything with `maatml plugins`. Compilers and servers are **format-agnostic**:
+core dispatches and writes a thin `target_manifest.json`; the plugin owns the
+engine. Do not assume ONNX or an in-process predictor.
 
 ## Folder-local plugins
 

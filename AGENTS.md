@@ -40,8 +40,9 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml sweep    examples/<name>/ --param training.learning_rate=1e-4,3e-4 --param training.lora.r=8,16 [--metric eval_loss] [--smoke] [--max-trials N]
 .venv/bin/maatml evaluate examples/<name>/ [--checkpoint X] [--split test|val] [--gate]
 .venv/bin/maatml export   examples/<name>/ [--checkpoint X] [--format safetensors|gguf|mlx|onnx] [--out PATH] [--parity]
+.venv/bin/maatml compile  <export-dir> --target NAME --out DIR [--option K=V]
 .venv/bin/maatml verify   examples/<name>/output/export/<run_id>
-.venv/bin/maatml serve    examples/<name>/ [--enforce] [--max-retries N] [--auth-token T] [--capture PATH]
+.venv/bin/maatml serve    examples/<name>/ [--server http|NAME] [--server-option K=V] [--enforce] [--max-retries N] [--auth-token T] [--capture PATH]
 .venv/bin/maatml datagen  examples/<name>/ [--target N] [--seed S] [--teacher] [--out PATH]
 .venv/bin/maatml distill  examples/<name>/ [--prompts PATH] [--replay] [--offline]
 .venv/bin/maatml mint     examples/<name>/ --input candidates.jsonl   # dpo/orpo pairs
@@ -109,6 +110,8 @@ dataset.format → format registry (jsonl_seed / alpaca / sharegpt / preference_
 dataset.generator → generator registry (jcl / spool / custom → datagen)
 evaluation.validator / metrics / predictor → plugin registries
 export --format → exporter registry (safetensors / gguf / mlx / onnx)
+compile --target → compiler registry (device-specific plans / packages)
+serve --server → server registry (http default; DeepStream / vLLM / … plugins)
 ```
 
 `model.yml` may also list `plugins: [./jcl_plugin]` for folder-local packages.

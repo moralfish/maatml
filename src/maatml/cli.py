@@ -9,9 +9,10 @@ Outputs land under ``<model-dir>/output/`` (gitignored).
   maatml sweep     <model-dir> --param K=a,b [--metric NAME] [--smoke]
   maatml evaluate  <model-dir> [--checkpoint X] [--split test] [--gate]
   maatml export    <model-dir> [--checkpoint X] [--format gguf|mlx|safetensors|onnx]
+  maatml compile   <export-dir> --target NAME --out DIR [--option K=V]
   maatml verify    <export-dir-or-manifest>
   maatml manifest  amend <export-dir> <files...> [--format NAME]
-  maatml serve     <model-dir> [--checkpoint X] [--host HOST] [--port N]
+  maatml serve     <model-dir> [--server NAME] [--server-option K=V] …
   maatml datagen   <model-dir> [--target N] [--teacher]
   maatml ingest    <model-dir> --input PATH [--map field=col] [--sanitize tag]
   maatml runs      <model-dir>
@@ -536,6 +537,48 @@ def cmd_manifest_amend(
     )
 
 
+@app.command("compile")
+def cmd_compile(
+    export_dir: Path = typer.Argument(
+        ...,
+        exists=True,
+        help="Portable export directory (must contain manifest.json)",
+    ),
+    target: str = typer.Option(
+        ...,
+        "--target",
+        "-t",
+        help="Registered compiler (e.g. sip_tensorrt, fake_vllm). See `maatml plugins`.",
+    ),
+    out: Path = typer.Option(
+        ...,
+        "--out",
+        "-o",
+        help="Directory for the target-specific deployment bundle",
+    ),
+    option: Optional[list[str]] = typer.Option(
+        None,
+        "--option",
+        help="Compiler option KEY=VALUE (repeatable). Format-agnostic.",
+    ),
+) -> None:
+    """Compile a portable export into a device-specific runtime artifact.
+
+    Compilers are plugins: TensorRT plans, vLLM packages, GGUF quantize, etc.
+    Core writes ``target_manifest.json`` recording the source identity.
+    """
+    from .compile import compile_export, parse_options
+
+    discover_plugins()
+    try:
+        opts = parse_options(option)
+        result = compile_export(export_dir, target=target, out_dir=out, options=opts)
+    except (FileNotFoundError, KeyError, ValueError, RuntimeError, ImportError) as exc:
+        console.print(f"[red]compile failed[/] {exc}")
+        raise typer.Exit(code=1) from exc
+    console.print(f"[green]compiled[/] target={target} → {result}")
+
+
 @app.command("serve")
 def cmd_serve(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
@@ -543,6 +586,16 @@ def cmd_serve(
         None,
         "--checkpoint",
         help="run_id, checkpoint dir, or export dir; defaults to latest completed run",
+    ),
+    server: str = typer.Option(
+        "http",
+        "--server",
+        help="Registered server backend (default: http). See `maatml plugins`.",
+    ),
+    server_option: Optional[list[str]] = typer.Option(
+        None,
+        "--server-option",
+        help="Server option KEY=VALUE (repeatable). Format-agnostic.",
     ),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
     port: int = typer.Option(8080, "--port", help="Bind port"),
@@ -599,21 +652,26 @@ def cmd_serve(
         "Off by default so internals never leak to clients.",
     ),
 ) -> None:
-    """Serve a checkpoint or export bundle as a JSON inference API.
+    """Serve a model via a registered backend (default: JSON HTTP API).
 
-    Endpoints: GET /health, GET /info, POST /predict (?validate=1, ?capture=1).
-    Works for any architecture with a registered predictor (text + vision).
+    ``--server http`` (default) exposes GET /health, GET /info, POST /predict.
+    Other backends (DeepStream, vLLM, llama.cpp, …) are plugins that ignore the
+    HTTP-specific flags and read ``--server-option KEY=VALUE`` instead.
     """
     md = load_model_def(model_dir)
     _boot_plugins(md)
-    from .serve import run_server
+    from .compile import parse_options
+    from .servers import dispatch_server
 
     cors_origin = cors if cors is not None else os.environ.get("MAATML_SERVE_CORS")
     token = auth_token if auth_token is not None else os.environ.get("MAATML_SERVE_TOKEN")
     try:
-        run_server(
+        opts = parse_options(server_option)
+        dispatch_server(
+            server,
             md,
             checkpoint=checkpoint,
+            options=opts,
             host=host,
             port=port,
             device=device,
@@ -1176,13 +1234,14 @@ def cmd_doctor(
 
 @app.command("plugins")
 def cmd_plugins() -> None:
-    """List registered trainers, validators, metrics, formats, and predictors."""
+    """List registered trainers, validators, metrics, formats, servers, compilers."""
     discover_plugins()
     # Import submodule directly so listing plugins does not require torch.
     from .evaluation import predictors as _predictors  # noqa: F401
     from .export import bundle as _bundle  # noqa: F401
     from .export import gguf as _gguf  # noqa: F401
     from .export import mlx_export as _mlx  # noqa: F401
+    from . import servers as _servers  # noqa: F401
 
     for kind, entries in list_all_plugins().items():
         console.print(f"[bold]{kind}[/] ({len(entries)})")

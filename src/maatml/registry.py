@@ -124,6 +124,12 @@ SANITIZERS = _Registry("sanitizer")
 TRANSFORMS = _Registry("transform")
 EXPORTERS = _Registry("exporter")
 GENERATORS = _Registry("generator")
+# Target compilers turn a portable export (ONNX, GGUF, HF) into a device-
+# specific runtime artifact. Servers launch a long-lived inference process for
+# that artifact. Both are format-agnostic: plugins decide TensorRT / vLLM /
+# llama.cpp / HTTP, core only dispatches.
+COMPILERS = _Registry("compiler")
+SERVERS = _Registry("server")
 
 _ALL_REGISTRIES: dict[str, _Registry] = {
     "trainer": TRAINERS,
@@ -136,6 +142,8 @@ _ALL_REGISTRIES: dict[str, _Registry] = {
     "transform": TRANSFORMS,
     "exporter": EXPORTERS,
     "generator": GENERATORS,
+    "compiler": COMPILERS,
+    "server": SERVERS,
 }
 
 _discovered = False
@@ -206,6 +214,8 @@ register_sanitizer = _make_decorator(SANITIZERS)
 register_transform = _make_decorator(TRANSFORMS)
 register_exporter = _make_decorator(EXPORTERS)
 register_generator = _make_decorator(GENERATORS)
+register_compiler = _make_decorator(COMPILERS)
+register_server = _make_decorator(SERVERS)
 
 
 def get_registry(kind: str) -> _Registry:
@@ -380,6 +390,7 @@ _BUILTIN_PLUGIN_MODULES = (
     "maatml.export.bundle",
     "maatml.export.gguf",
     "maatml.export.mlx_export",
+    "maatml.servers",
 )
 
 

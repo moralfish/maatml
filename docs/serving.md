@@ -4,7 +4,31 @@ A trained MaatML model has three deployment paths, from lightweight-local to
 production throughput. All of them serve the *same* exported checkpoint, and all
 can re-apply the model's [validator](lifecycle.md).
 
+Serving and target compilation are pluggable: `maatml serve --server NAME` and
+`maatml compile --target NAME` dispatch through the `server` / `compiler`
+registries. The built-in `http` server stays the default for development; native
+backends (DeepStream/TensorRT, vLLM, llama.cpp, …) register as plugins and keep
+their hot path in the native engine.
+
+## 0. Target compilation
+
+```bash
+maatml compile <export-dir> --target sip_tensorrt --out /opt/sip/models/person \
+    --option precision=fp16 --option profile=4cam
+```
+
+Compilers receive the portable export (ONNX, GGUF, HF, …) and write a
+device-specific bundle plus `target_manifest.json` (source identity, options,
+gate evidence pointer). Core never assumes ONNX.
+
 ## 1. `maatml serve`, built-in HTTP API
+
+```bash
+maatml serve <model-dir> --server http          # default
+maatml serve <model-dir> --server sip_deepstream \
+    --server-option socket=/run/sip/perception.sock \
+    --server-option deployment=/opt/sip/models/person
+```
 
 A dependency-light server (Python stdlib, no FastAPI/uvicorn) that loads the
 predictor once and exposes:

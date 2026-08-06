@@ -10,6 +10,13 @@ for the Python package and per-model versions under `examples/`.
 
 ### Added
 
+- **Compiler and server registries.** `@register_compiler` / `@register_server`
+  plus `maatml compile <export-dir> --target NAME --out DIR [--option K=V]` and
+  `maatml serve … --server NAME [--server-option K=V]`. The built-in `http`
+  server remains the default; plugins own TensorRT, vLLM, llama.cpp, and other
+  native backends without forcing ONNX or an in-process predictor. Core writes
+  `target_manifest.json` and provides a shared lifecycle envelope
+  (verify → warmup → serve → close with SIGINT/SIGTERM drain).
 - **`maatml manifest amend <export-dir> <files...> [--format NAME]`**: adds
   out-of-band artifacts to an existing manifest with sha256 entries, so
   `maatml verify` covers them and a serving catalog's checksum traces back to

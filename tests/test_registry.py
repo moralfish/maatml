@@ -84,6 +84,9 @@ def test_discover_plugins_registers_core() -> None:
     assert EXPORTERS.get("safetensors") is not None
     assert EXPORTERS.get("gguf") is not None
     assert EXPORTERS.get("mlx") is not None
+    from maatml.registry import SERVERS
+
+    assert SERVERS.get("http") is not None
     # Task validators live in example plugins, not core discovery.
     assert VALIDATORS.get("jcl") is None
     assert VALIDATORS.get("spool") is None
