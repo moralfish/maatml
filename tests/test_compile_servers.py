@@ -165,9 +165,10 @@ def test_server_dispatch_fake_backends() -> None:
     class _MD:
         identity = "toy@1"
 
-    assert dispatch_server(
-        "fake_deepstream", _MD(), options={"socket": "/run/sip/perception.sock"}
-    ) == "ds-ok"
+    assert (
+        dispatch_server("fake_deepstream", _MD(), options={"socket": "/run/sip/perception.sock"})
+        == "ds-ok"
+    )
     assert seen["deepstream"]["socket"] == "/run/sip/perception.sock"
     assert dispatch_server("fake_vllm", _MD(), options={"tp": "1"}) == "vllm-ok"
     assert seen["vllm"] == {"tp": "1"}
