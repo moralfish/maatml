@@ -166,7 +166,7 @@ def restore_load_errors(entries: Iterable[tuple[str, str]] = ()) -> None:
     """Replace the recorded load errors (``()`` clears them).
 
     Public because the list is process-global: a test that provokes a plugin
-    failure would otherwise leave it visible to every later `maatml doctor` /
+    failure would otherwise leave it visible to every later `maatml audit` /
     `Unknown … plugin` message in the same process.
     """
     _load_errors.clear()

@@ -1190,8 +1190,8 @@ def cmd_plan(
     console.print("[dim]run it with: maatml run " + str(md.model_dir) + "[/]")
 
 
-@app.command("doctor")
-def cmd_doctor(
+@app.command("audit")
+def cmd_audit(
     model_dir: Optional[Path] = typer.Argument(
         None,
         exists=True,
@@ -1205,7 +1205,7 @@ def cmd_doctor(
     """Report environment, plugin, and model-folder health. Exits 1 on errors."""
     import json as _json
 
-    from .doctor import ERROR, OK, WARN, collect_diagnostics
+    from .audit import ERROR, OK, WARN, collect_diagnostics
 
     diag = collect_diagnostics(model_dir)
 

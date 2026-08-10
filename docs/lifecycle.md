@@ -100,6 +100,7 @@ maatml evaluate  <model-dir>   # validator + metrics + gates
 maatml export    <model-dir>   # safetensors/gguf/mlx/onnx + manifest.json
 maatml verify    <export-dir>  # sha256 check vs manifest
 maatml serve     <model-dir>   # JSON inference API (validator inline)
+maatml audit     [model-dir]   # environment + model-folder health check
 ```
 
 ## One command for the whole lifecycle
@@ -155,6 +156,13 @@ reloaded, and produced output, without claiming the output was any good.
 
 ## What each stage refuses to do quietly
 
+- `audit` is the read-only pre-flight: optional extras, the device the CLI
+  would pick, registry contents, and (given a model folder) whether declared
+  paths, registered plugins (`validator` / `metrics` / `predictor` /
+  `generator`), seed corpora, gate keys vs the latest eval report, a
+  quarantined `runs.jsonl.corrupt`, and QLoRA-on-non-CUDA conflicts are in
+  place. Warnings stay exit 0; anything broken exits 1. `--json` is for
+  machines.
 - `prepare` splits by group key (`dataset.group_by`, else `family` → `source` →
   `sample_id`). A key covering nearly the whole corpus cannot be split, so
   those rows are split individually with a warning: group-level leakage

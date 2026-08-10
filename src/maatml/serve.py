@@ -387,6 +387,7 @@ def _validation_payload(result: ValidationResult) -> dict[str, Any]:
                 "code": e.code,
                 "message": e.message,
                 "location": e.location,
+                "hint": e.hint,
             }
             for e in result.errors
         ],
@@ -422,7 +423,13 @@ def _feedback_row(
     appends it as a user turn); a predictor that ignores the key simply re-runs
     unchanged, which is a harmless no-op rather than an error.
     """
-    errors = "; ".join(f"{e.code}: {e.message}" for e in result.errors) or "invalid output"
+    parts: list[str] = []
+    for e in result.errors:
+        part = f"{e.code}: {e.message}"
+        if e.hint:
+            part = f"{part} ({e.hint})"
+        parts.append(part)
+    errors = "; ".join(parts) or "invalid output"
     retry = dict(row)
     retry["_validation_feedback"] = (
         f"The previous response failed validation ({errors}). "

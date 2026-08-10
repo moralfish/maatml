@@ -48,7 +48,7 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml mint     examples/<name>/ --input candidates.jsonl   # dpo/orpo pairs
 .venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
 .venv/bin/maatml runs     examples/<name>/ [--compare] [--metric K] [--limit N]
-.venv/bin/maatml doctor   [examples/<name>/] [--json]
+.venv/bin/maatml audit    [examples/<name>/] [--json]
 .venv/bin/maatml plugins
 # Global: maatml --debug <command> prints tracebacks for user errors
 # (missing file, unparseable model.yml, unknown plugin), which otherwise

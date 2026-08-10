@@ -10,6 +10,20 @@ for the Python package and per-model versions under `examples/`.
 
 ### Added
 
+- **`ValidationError.hint`** and actionable `vision_scene` errors (#6). Every
+  validator failure can carry a short "how to fix it" string; eval
+  `sample_failures`, the eval markdown summary, serve 422 payloads / retry
+  feedback, and datagen reject rows (`_validation_errors`) all surface it.
+  `vision_scene` now names what failed, where (`location`), and the allowed
+  values; it reports every bad detection (capped) instead of stopping at the
+  first. The vision example README documents the four layers, error codes, and
+  how they map to `evaluation.gates`.
+- **`maatml audit` pre-flight checks** (renamed from `doctor`; see Changed):
+  configured `evaluation.metrics` / `evaluation.predictor` /
+  `dataset.generator` must resolve in the registries; seed / benchmark corpus
+  row counts; gate keys compared against the latest `output/eval/*.json`; a
+  quarantined `runs.jsonl.corrupt`; QLoRA configured on a non-CUDA auto device;
+  optional Hub cache probe for `base_model`.
 - **Compiler and server registries.** `@register_compiler` / `@register_server`
   plus `maatml compile <export-dir> --target NAME --out DIR [--option K=V]` and
   `maatml serve … --server NAME [--server-option K=V]`. The built-in `http`
@@ -32,6 +46,12 @@ for the Python package and per-model versions under `examples/`.
   report. Repeatable; `metric=0.05` overrides one metric and may name an
   ungated metric. The default allowance judges gated metrics only, since
   ungated keys like `eval_loss` improve downward.
+
+### Changed
+
+- **`maatml doctor` → `maatml audit`** (breaking, no alias). Same exit-code
+  contract (errors → 1, warnings → 0) and `--json` shape; call sites and docs
+  updated.
 
 ### Removed
 
