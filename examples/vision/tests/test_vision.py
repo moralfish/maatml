@@ -96,10 +96,25 @@ def test_validator_schema_error_names_location(plugin) -> None:
     payload = {
         "scene": {"label": 1},
         "detections": [],
-        "pose": {"keypoints": [{"name": n, "x": 0.0, "y": 0.0} for n in [
-            "head", "neck", "l_shoulder", "r_shoulder", "l_elbow", "r_elbow",
-            "l_wrist", "r_wrist", "hip", "l_knee", "r_knee", "feet",
-        ]]},
+        "pose": {
+            "keypoints": [
+                {"name": n, "x": 0.0, "y": 0.0}
+                for n in [
+                    "head",
+                    "neck",
+                    "l_shoulder",
+                    "r_shoulder",
+                    "l_elbow",
+                    "r_elbow",
+                    "l_wrist",
+                    "r_wrist",
+                    "hip",
+                    "l_knee",
+                    "r_knee",
+                    "feet",
+                ]
+            ]
+        },
     }
     result = validate_vision_scene(
         json.dumps(payload),

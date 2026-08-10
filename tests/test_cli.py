@@ -409,10 +409,7 @@ def test_audit_warns_when_gate_key_missing_from_eval_report(tmp_path: Path) -> N
         tmp_path,
         name="audit-gate-mismatch",
         evaluation=(
-            "evaluation:\n"
-            "  gates:\n"
-            "    all_layers_pass_rate: 0.9\n"
-            "    made_up_metric: 0.5\n"
+            "evaluation:\n  gates:\n    all_layers_pass_rate: 0.9\n    made_up_metric: 0.5\n"
         ),
     )
     eval_dir = mdir / "output" / "eval"
@@ -451,11 +448,7 @@ def test_audit_flags_qlora_on_non_cuda_when_torch_present(tmp_path: Path) -> Non
     mdir = _write_model(
         tmp_path,
         name="audit-qlora",
-        extra=(
-            "training:\n"
-            "  quantization:\n"
-            "    load_in_4bit: true\n"
-        ),
+        extra=("training:\n  quantization:\n    load_in_4bit: true\n"),
     )
     result = runner.invoke(app, ["audit", str(mdir), "--json"])
     assert result.exit_code == 1

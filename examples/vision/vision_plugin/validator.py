@@ -188,7 +188,9 @@ def validate_vision_scene(
                 shape = (
                     f"list[{len(box)}]"
                     if isinstance(box, list)
-                    else type(box).__name__ if box is not None else "missing"
+                    else type(box).__name__
+                    if box is not None
+                    else "missing"
                 )
                 result.errors.append(
                     ValidationError(
