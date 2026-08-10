@@ -8,6 +8,11 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-08-10
+
+Pluggable compile/serve runtimes, actionable `vision_scene` validator feedback,
+`maatml audit` (renamed from `doctor`), and a slimmer example set.
+
 ### Added
 
 - **`ValidationError.hint`** and actionable `vision_scene` errors (#6). Every
