@@ -96,8 +96,12 @@ at your own task instead of support-ticket triage.
 
 ## Next steps
 
-- Browse the [other five examples](examples/index.md): vision, a
-  vLLM-servable vision-language model, and two mainframe-log models share this
+- When a command misbehaves, start with
+  `maatml audit examples/support-ticket-triage/` (add `--json` for machines).
+  It reports missing extras, device/profile mismatches, unregistered plugins,
+  empty seeds, and gate-key typos without running training.
+- Browse the [other examples](examples/index.md): vision, a
+  vLLM-servable vision-language model, and a seq2seq describer share this
   same folder layout.
 - Scaffold your own task:
   `maatml scaffold ~/models/my-task --architecture causal_sft --name my-task`.

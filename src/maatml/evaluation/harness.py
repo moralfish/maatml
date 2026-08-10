@@ -641,6 +641,7 @@ def run_evaluation(
                             "code": e.code,
                             "message": e.message,
                             "location": e.location,
+                            "hint": e.hint,
                         }
                         for e in result.errors
                     ],

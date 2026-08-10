@@ -221,6 +221,23 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
         lines.extend(["", "## Extras", ""])
         for k, v in sorted(report.extras.items()):
             lines.append(f"- {k}: {v}")
+    if report.sample_failures:
+        lines.extend(["", "## Sample failures", ""])
+        # Cap the markdown list so a long eval stays readable; the JSON report
+        # already keeps the full failures_to_keep budget.
+        for failure in report.sample_failures[:20]:
+            sample_id = failure.get("sample_id") or "(no sample_id)"
+            lines.append(f"- `{sample_id}`")
+            for err in failure.get("errors") or []:
+                layer = err.get("layer")
+                code = err.get("code")
+                location = err.get("location")
+                message = err.get("message") or ""
+                hint = err.get("hint")
+                where = f" at `{location}`" if location else ""
+                lines.append(f"  - L{layer}/{code}{where}: {message}")
+                if hint:
+                    lines.append(f"    - fix: {hint}")
     out = Path(path)
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return out

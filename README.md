@@ -122,7 +122,7 @@ line; `maatml --debug <command>` prints the traceback.
 | `runs` | List recorded training runs (`--compare` tabulates their metrics) |
 | `plan` | Show which lifecycle steps are stale (alias for `run --dry-run`) |
 | `plugins` | List discovered trainers, validators, and metrics |
-| `doctor` | Check the environment, plugins, and a model folder; exits 1 on problems |
+| `audit` | Check the environment, plugins, and a model folder; exits 1 on problems |
 | `scaffold` | Create a new model folder (`--architecture`, `--plugin`, `--force`) |
 | `validate` | Check `model.yml` and paths (`--no-plugins` skips plugin code) |
 
