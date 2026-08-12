@@ -145,3 +145,55 @@ def http_server(
         capture_path=capture_path,
         allow_unauthenticated=allow_unauthenticated,
     )
+
+
+@register_server("anthropic")
+def anthropic_server(
+    model_def: Any,
+    *,
+    checkpoint: str | Path | None = None,
+    options: Optional[dict[str, str]] = None,
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    max_body_bytes: int = 8 * 1024 * 1024,
+    auth_token: Optional[str] = None,
+    **_ignored: Any,
+) -> None:
+    """Anthropic's Messages API in front of an OpenAI-compatible upstream.
+
+    A translating proxy, not a runtime: llama.cpp holds the weights and renders
+    the chat template, and this supplies only the protocol.
+
+        llama-server --jinja -m model.gguf --port 8081 &
+        maatml serve <model-dir> --server anthropic \\
+            --server-option upstream=http://127.0.0.1:8081
+
+    Options: ``upstream`` (default http://127.0.0.1:8081), ``model`` (the name
+    echoed back, default the folder's model_id), ``timeout`` in seconds, and
+    ``tool_style`` — ``native`` to declare tools upstream, ``inline`` to carry
+    them in message text.
+    """
+    del checkpoint  # the upstream holds the weights; nothing is loaded here
+    from .wire.anthropic import DEFAULT_UPSTREAM, build
+
+    opts = dict(options or {})
+    named = getattr(model_def, "model_id", None) or getattr(model_def, "name", None)
+    server = build(
+        upstream=opts.get("upstream", DEFAULT_UPSTREAM),
+        model=opts.get("model") or named or "maatml-local",
+        host=host,
+        port=port,
+        max_body_bytes=max_body_bytes,
+        timeout=float(opts.get("timeout", 600)),
+        auth_token=auth_token,
+        tool_style=opts.get("tool_style", "native"),
+    )
+    print(f"maatml anthropic wire on http://{host}:{port}/v1/messages "
+          f"-> {opts.get('upstream', DEFAULT_UPSTREAM)} "
+          f"(tools: {opts.get('tool_style', 'native')})", flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
