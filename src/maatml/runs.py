@@ -197,7 +197,71 @@ def get_run(model_def: ModelDefinition, run_id: str) -> Optional[RunRecord]:
     for rec in list_runs(model_def):
         if rec.run_id == run_id:
             return rec
-    return None
+    return adopt_run(model_def, run_id)
+
+
+def adopt_run(model_def: ModelDefinition, run_id: str) -> Optional[RunRecord]:
+    """Rebuild a lost registry line from what the run left beside its weights.
+
+    A run trained on one machine and exported on another arrives as a
+    checkpoint directory and nothing else: ``runs.jsonl`` is written where the
+    training happened, and does not travel with the weights. The registry is
+    the only thing missing, and everything it holds was already written twice -
+    ``run_metadata.json`` carries the identity, architecture and spec hash, and
+    an eval report carries the metrics and the gate result. Without this, a
+    checkpoint that trained and passed its gates exports a manifest saying
+    ``gated: false``, which reads as a run that was never gated rather than as
+    a record that did not survive the trip.
+
+    Returns ``None`` when the checkpoint or its metadata is absent, so a
+    genuinely unknown run id stays unknown.
+    """
+    out_dir = model_def.checkpoints_dir / run_id
+    meta_path = out_dir / "run_metadata.json"
+    if not meta_path.is_file():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    extra = meta.get("extra") or {}
+    created = meta.get("created_at") or _utc_now()
+    record = RunRecord(
+        run_id=extra.get("run_id") or run_id,
+        identity=meta.get("identity") or model_def.identity,
+        architecture=meta.get("architecture") or model_def.architecture,
+        status="completed",
+        started_at=created,
+        finished_at=created,
+        smoke=bool(extra.get("smoke")),
+        device=extra.get("device"),
+        profile=extra.get("profile"),
+        out_dir=str(out_dir),
+        spec_hash=meta.get("spec_hash"),
+    )
+
+    report_path = model_def.eval_dir / f"{run_id}.json"
+    if report_path.is_file():
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            report = {}
+        gates = report.get("gates")
+        if isinstance(gates, dict):
+            record.gates = gates
+            record.smoke_gated = bool(gates.get("smoke"))
+        metrics = report.get("metrics")
+        if isinstance(metrics, dict):
+            record.metrics = {
+                k: float(v) for k, v in metrics.items() if isinstance(v, (int, float))
+            }
+
+    # Appended rather than returned alone: the next reader gets it from the
+    # registry like any other run, and `maatml runs` stops hiding a run whose
+    # weights are on disk.
+    _append_record(model_def, record)
+    return record
 
 
 def start_run(
@@ -402,7 +466,19 @@ def resolve_checkpoint(
             return cand.resolve()
         rec = get_run(model_def, raw)
         if rec is not None:
-            return Path(rec.out_dir)
+            out = Path(rec.out_dir)
+            if out.exists():
+                return out.resolve()
+            # A run trained elsewhere records that machine's absolute path. The
+            # weights travel home; the path does not. `output/checkpoints/
+            # <run_id>` is where they land, so looking there lets a relocated
+            # run export under its own id - and a bundle exported from an
+            # anonymous directory carries no gate evidence, because the
+            # manifest looks the run up by exactly this id.
+            moved = model_def.checkpoints_dir / raw
+            if moved.exists():
+                return moved.resolve()
+            return out
         cand = model_def.checkpoints_dir / raw
         if cand.exists():
             return cand.resolve()

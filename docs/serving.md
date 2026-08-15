@@ -109,6 +109,50 @@ maatml run <model>                              # the new seeds make prepare sta
 true` (dropping the flag does not sneak it through), so a raw model prediction
 can never become training data without a human or teacher approving it.
 
+### `--server anthropic`, the Messages API in front of llama.cpp
+
+A translating proxy rather than a runtime: llama.cpp holds the weights and
+renders the chat template, and this supplies only the protocol, so any Anthropic
+client reaches a fine-tuned local model without knowing it is one.
+
+```bash
+llama-server --jinja -m model.gguf --port 8081 &
+maatml serve <model-dir> --server anthropic \
+    --server-option upstream=http://127.0.0.1:8081 --port 8100
+```
+
+| option | default | meaning |
+|---|---|---|
+| `upstream` | `http://127.0.0.1:8081` | the OpenAI-compatible server holding the weights |
+| `model` | the folder's `model_id` | the name echoed back in the response |
+| `timeout` | `600` | seconds to wait on the upstream |
+| `tool_style` | `native` | `native` declares tools upstream; `inline` carries them in message text |
+| `call_retries` | unset | how many times a turn owing a tool call is re-asked |
+
+`tool_style=inline` serves a model fine-tuned on the text protocol in
+`maatml.wire.inline_tools` rather than on a chat template's tool syntax: the
+catalogue travels as one line per tool in the last user turn, a call is a JSON
+object ending the assistant turn, and a result returns as
+`<tool_response>…</tool_response>`. The upstream then never sees a tool at all,
+so `--jinja` buys nothing under it. Because one module renders both the corpus
+and the wire, the string trained on is the string served.
+
+`call_retries=N` makes a turn that follows a user message owe a call: a reply
+carrying none is re-asked up to N times and then says plainly that nothing ran.
+It never applies to a turn answering a tool result, because summarising one is
+how a loop ends, and unset leaves prose allowed.
+
+`--enforce` and `--max-retries` gate this backend the way they gate `http`.
+Every reply is collected before any of it is sent, for the same reason
+`call_retries` collects one: whether a reply is valid is only known once it
+ends. The model folder's validator judges the collected text; a rejection goes
+back to the model as the failed reply plus the validator's own message, re-asked
+up to `--max-retries` times, and a reply that never passes is replaced under
+`--enforce` by a plain statement of what was refused and that nothing ran.
+Without `--enforce` the retries still run and the last reply stands. Requires
+`tool_style=inline`, because the text the validator was trained against is the
+inline transcript. `--capture` remains `http`-only.
+
 ## 2. ONNX / edge (vision)
 
 `vision_multitask` exports to **ONNX** for `onnxruntime` (CPU on Mac) or the

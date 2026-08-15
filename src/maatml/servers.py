@@ -147,6 +147,59 @@ def http_server(
     )
 
 
+def _wire_validator(model_def: Any) -> Callable[[str, Optional[str]], Any]:
+    """The model folder's validator, closed over its declared assets.
+
+    Resolved the same way the ``http`` backend resolves it — plugins loaded,
+    ``evaluation.validator`` required, declared-and-missing assets a config
+    error — so the two backends cannot disagree about what gates. Assets come
+    from ``model.yml`` alone: this backend loads no checkpoint, so there is no
+    checkpoint directory to fall back to.
+    """
+    from .config import get_dataset_cfg
+    from .registry import VALIDATORS, discover_plugins, load_model_plugins
+    from .serve import _resolve_validator_params
+
+    discover_plugins()
+    if getattr(model_def, "plugins", None):
+        load_model_plugins(model_def.model_dir, model_def.plugins)
+
+    ev = getattr(model_def, "evaluation", None) or {}
+    name = ev.get("validator")
+    if not (isinstance(name, str) and name):
+        raise ValueError(
+            "serve --enforce requires evaluation.validator in model.yml so live "
+            "inference can be gated; none is configured."
+        )
+    validator = VALIDATORS.require(name)
+
+    assets: dict[str, Path] = {}
+    cfg = get_dataset_cfg(model_def)
+    for key in ("schema", "contracts"):
+        rel = cfg.get(key)
+        if isinstance(rel, str):
+            path = model_def.resolve(rel)
+            if not path.is_file():
+                # Declared and missing is a config error: starting anyway would
+                # gate on less than the folder declares.
+                raise ValueError(
+                    f"model.yml declares {key}={rel!r} but the file is missing: {path}"
+                )
+            assets[f"{key}_path"] = path
+    params = _resolve_validator_params(validator)
+
+    def validate(raw: str, user_prompt: Optional[str]) -> Any:
+        available: dict[str, Any] = {"user_prompt": user_prompt, **assets}
+        kwargs = (
+            available
+            if params is None
+            else {k: v for k, v in available.items() if k in params}
+        )
+        return validator(raw, **kwargs)
+
+    return validate
+
+
 @register_server("anthropic")
 def anthropic_server(
     model_def: Any,
@@ -157,6 +210,8 @@ def anthropic_server(
     port: int = 8080,
     max_body_bytes: int = 8 * 1024 * 1024,
     auth_token: Optional[str] = None,
+    enforce: bool = False,
+    max_retries: int = 0,
     **_ignored: Any,
 ) -> None:
     """Anthropic's Messages API in front of an OpenAI-compatible upstream.
@@ -169,14 +224,30 @@ def anthropic_server(
             --server-option upstream=http://127.0.0.1:8081
 
     Options: ``upstream`` (default http://127.0.0.1:8081), ``model`` (the name
-    echoed back, default the folder's model_id), ``timeout`` in seconds, and
+    echoed back, default the folder's model_id), ``timeout`` in seconds,
     ``tool_style`` — ``native`` to declare tools upstream, ``inline`` to carry
-    them in message text.
+    them in message text — and ``call_retries``.
+
+    ``call_retries`` makes a turn that follows a user message owe a tool call:
+    the reply is re-asked up to that many times if it carries none, and then
+    says so. Only under ``inline``, and never for a turn answering a tool
+    result — summarising one is how a loop ends. Unset leaves prose allowed.
+
+    ``--enforce`` and ``--max-retries`` gate this backend the way they gate
+    ``http``: every reply is collected, the model folder's validator judges it,
+    and a rejection is fed back and re-asked. The validator is the same one
+    that gated the corpus and the evaluation, so what this serves is what was
+    measured. Requires ``tool_style=inline``, because the raw text the
+    validator was trained against is the inline transcript.
     """
     del checkpoint  # the upstream holds the weights; nothing is loaded here
     from .wire.anthropic import DEFAULT_UPSTREAM, build
 
     opts = dict(options or {})
+    validate = None
+    if enforce or max_retries:
+        validate = _wire_validator(model_def)
+
     named = getattr(model_def, "model_id", None) or getattr(model_def, "name", None)
     server = build(
         upstream=opts.get("upstream", DEFAULT_UPSTREAM),
@@ -187,10 +258,18 @@ def anthropic_server(
         timeout=float(opts.get("timeout", 600)),
         auth_token=auth_token,
         tool_style=opts.get("tool_style", "native"),
+        call_retries=(int(opts["call_retries"]) if "call_retries" in opts else None),
+        validate=validate,
+        validate_retries=max_retries,
+        strict=enforce,
     )
+    insists = (f", calls required (+{int(opts['call_retries'])} retries)"
+               if "call_retries" in opts else "")
+    gated = (f", validator gating (+{max_retries} retries"
+             f"{', enforced' if enforce else ''})" if validate is not None else "")
     print(f"maatml anthropic wire on http://{host}:{port}/v1/messages "
           f"-> {opts.get('upstream', DEFAULT_UPSTREAM)} "
-          f"(tools: {opts.get('tool_style', 'native')})", flush=True)
+          f"(tools: {opts.get('tool_style', 'native')}{insists}{gated})", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -170,8 +170,14 @@ def to_openai(body: dict, model: str, tool_style: str = "native") -> dict:
         # Without this a streaming reply carries no token counts, and the
         # client's context gauge reads zero.
         "stream_options": {"include_usage": True},
-        # These fine-tunes are trained with thinking stripped.
+        # These fine-tunes are trained with thinking stripped, so a thinking
+        # model is not the model that was measured. Said twice because no one
+        # key reaches every upstream: llama.cpp reads the template kwarg, and
+        # LM Studio ignores it and honours `reasoning_effort`. Both are dropped
+        # where unrecognised, so sending both costs nothing and leaving either
+        # out serves a model nobody gated.
         "chat_template_kwargs": {"enable_thinking": False},
+        "reasoning_effort": "none",
     }
     if isinstance(body.get("max_tokens"), int):
         out["max_tokens"] = body["max_tokens"]
@@ -223,6 +229,7 @@ class Translator:
         self.stop: Optional[str] = None
         self.counts: dict = {}
         self.buffer: list[str] = []
+        self.thought = False
 
     def start(self) -> bytes:
         return _frame("message_start", {
@@ -263,6 +270,14 @@ class Translator:
                 self.stop = STOP.get(done, "end_turn")
 
             delta = choice.get("delta") or {}
+
+            # Thinking is never forwarded — a thinking block needs a signature
+            # this wire has none of — but it is counted, because a reply that
+            # is *only* thinking means the upstream ignored every key that
+            # switches it off, and that is worth saying rather than serving as
+            # an empty turn.
+            if delta.get("reasoning_content"):
+                self.thought = True
 
             said = delta.get("content")
             if said and self.inline:
@@ -335,6 +350,25 @@ class Translator:
     def finish(self) -> Iterator[bytes]:
         if self.inline:
             yield from self._inline_blocks()
+        if not self.opened:
+            # An empty turn is the one outcome a client cannot act on: NOON
+            # drops an answer with no text, so the ask reads as never asked.
+            # Say which of the two it was.
+            why = (
+                "The upstream replied with reasoning only and no content, so "
+                "thinking is still on there; these adapters were gated with it "
+                "off. Nothing was run and nothing was written."
+                if self.thought
+                else "The upstream replied with nothing at all. Nothing was run "
+                "and nothing was written."
+            )
+            self.opened[0] = "text"
+            self.next_index = max(self.next_index, 1)
+            yield self._open(0, {"type": "text", "text": ""})
+            yield _frame("content_block_delta", {
+                "type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": why},
+            })
         for index in sorted(self.opened):
             yield _frame("content_block_stop", {"type": "content_block_stop", "index": index})
         # A reply with no stop_reason reads as truncation on the client.
@@ -347,17 +381,207 @@ class Translator:
         yield _frame("message_stop", {"type": "message_stop"})
 
 
+NUDGE = (
+    "That reply carried no call object. Answer again, and end with a single "
+    '{"calls":[{"name":"<tool>","input":{...}}]} object on its own line.'
+)
+
+
+def needs_call(body: dict) -> bool:
+    """Whether this turn has to act rather than speak.
+
+    A turn answering a tool result may summarise it: that is how an agent loop
+    ends, and forbidding it would leave the loop unable to stop. A turn
+    answering the user has no result to summarise, so prose there is the model
+    speaking where it was asked to act — and prose raises no tool call, so a
+    client that gates writes behind approval never sees it. Work never done
+    reads as work done.
+
+    A request offering no tools owes nothing either: there is no call to make,
+    so insisting on one asks the model for something the request did not make
+    available.
+    """
+    if not (body.get("tools") or []):
+        return False
+    for message in reversed(body.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if isinstance(content, list):
+            return not any(isinstance(block, dict) and block.get("type") == "tool_result"
+                           for block in content)
+        return True
+    return True
+
+
+def _nudged(body: dict) -> dict:
+    """The same ask with the rule restated as a trailing user turn."""
+    asked = dict(body)
+    asked["messages"] = list(body.get("messages") or []) + [
+        {"role": "user", "content": NUDGE}
+    ]
+    return asked
+
+
+REPAIR = (
+    "The validator rejected that reply: {errors}. Answer again and correct "
+    "exactly what it names; the contract has not changed."
+)
+
+
+def _last_user_text(body: dict) -> Optional[str]:
+    """The request the validator judges the reply against, if any."""
+    for message in reversed(body.get("messages") or []):
+        if message.get("role") != "user":
+            continue
+        said = _text_of(message.get("content"))
+        return said or None
+    return None
+
+
+def _corrected(body: dict, raw: str, errors: list) -> dict:
+    """The same ask, the failed reply on the record, and the verdict after it.
+
+    The reply goes back as the assistant turn it was, because a correction only
+    reads as a correction next to what it corrects — an error message alone
+    asks the model to fix something it can no longer see.
+    """
+    listed = "; ".join(
+        f"{getattr(e, 'code', 'invalid')}: {getattr(e, 'message', e)}" for e in errors
+    ) or "invalid output"
+    asked = dict(body)
+    asked["messages"] = list(body.get("messages") or []) + [
+        {"role": "assistant", "content": raw},
+        {"role": "user", "content": REPAIR.format(errors=listed)},
+    ]
+    return asked
+
+
+def _repairing(upstream: str, body: dict, model: str, timeout: float, tool_style: str,
+               retries: int, validate: Any, strict: bool) -> Iterator[bytes]:
+    """Ask until the validator accepts, then say plainly that it never did.
+
+    Buffered like ``_insisting`` and for the same reason: whether a reply is
+    valid is only known once it ends, and a reply already on the wire cannot be
+    taken back. The feedback loop is the decline-with-note flow a person runs
+    by hand — quote the fault, ask again — with the validator writing the note.
+    """
+    prompt = _last_user_text(body)
+    asked = body
+    verdict = None
+    collected: list[bytes] = []
+    for _ in range(max(retries, 0) + 1):
+        talk = Translator(model, tool_style)
+        collected = list(_once(upstream, asked, model, timeout, tool_style, talk))
+        raw = "".join(talk.buffer)
+        verdict = validate(raw, prompt)
+        if verdict.ok:
+            yield from collected
+            return
+        asked = _corrected(asked, raw, verdict.errors)
+
+    if not strict:
+        # Annotate-only mode has nowhere to put an annotation on this wire, so
+        # the last reply stands: the retries were still worth their asks.
+        yield from collected
+        return
+
+    # Said rather than passed through: under --enforce an invalid reply must
+    # not reach a client that would act on it, and an empty answer would read
+    # as one that quietly succeeded.
+    first = verdict.errors[0] if verdict is not None and verdict.errors else None
+    named = f"{first.code}: {first.message}" if first is not None else "invalid output"
+    talk = Translator(model, tool_style)
+    yield talk.start()
+    yield talk._open(0, {"type": "text", "text": ""})
+    yield _frame("content_block_delta", {
+        "type": "content_block_delta", "index": 0,
+        "delta": {"type": "text_delta",
+                  "text": f"The validator refused every reply after "
+                          f"{max(retries, 0) + 1} attempts ({named}); "
+                          f"nothing was run and nothing was written."},
+    })
+    yield _frame("content_block_stop", {"type": "content_block_stop", "index": 0})
+    yield _frame("message_delta", {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": _usage({}),
+    })
+    yield _frame("message_stop", {"type": "message_stop"})
+
+
 def relay(
-    upstream: str, body: dict, model: str, timeout: float, tool_style: str = "native"
+    upstream: str, body: dict, model: str, timeout: float, tool_style: str = "native",
+    call_retries: Optional[int] = None,
+    validate: Any = None,
+    validate_retries: int = 0,
+    strict: bool = False,
 ) -> Iterator[bytes]:
-    """Ask the upstream and translate its stream."""
+    """Ask the upstream and translate its stream.
+
+    With ``call_retries`` set and this turn owing a call, the reply is collected
+    before any of it is sent: whether a call arrived is only known once the text
+    ends, and a reply already on the wire cannot be taken back. With ``validate``
+    set the same collection happens on every turn, the validator judges the
+    reply, and a rejection is fed back and re-asked — which covers the owed-call
+    case too, so ``call_retries`` is not consulted while a validator gates.
+    """
+    # Only a turn that owes a call is judged. The validators gate corpus rows
+    # where an action was expected, so on a turn answering a tool result they
+    # report the summary as a missing call — and refusing that is refusing the
+    # loop its ending. Same rule `call_retries` follows, and for the same
+    # reason: prose is wrong where an action was asked for, and right where a
+    # result is being reported.
+    if validate is not None and tool_style == "inline" and needs_call(body):
+        yield from _repairing(upstream, body, model, timeout, tool_style,
+                              validate_retries, validate, strict)
+        return
+    if call_retries is not None and tool_style == "inline" and needs_call(body):
+        yield from _insisting(upstream, body, model, timeout, tool_style, call_retries)
+        return
+    yield from _once(upstream, body, model, timeout, tool_style, Translator(model, tool_style))
+
+
+def _insisting(upstream: str, body: dict, model: str, timeout: float,
+               tool_style: str, retries: int) -> Iterator[bytes]:
+    """Ask until a call comes back, then say plainly that none did."""
+    asked = body
+    for _ in range(max(retries, 0) + 1):
+        talk = Translator(model, tool_style)
+        frames = list(_once(upstream, asked, model, timeout, tool_style, talk))
+        if talk.tool_at:
+            yield from frames
+            return
+        asked = _nudged(asked)
+
+    # Said rather than silently passed through: the caller asked for an action,
+    # and an empty reply would read as one that quietly succeeded.
+    talk = Translator(model, tool_style)
+    yield talk.start()
+    yield talk._open(0, {"type": "text", "text": ""})
+    yield _frame("content_block_delta", {
+        "type": "content_block_delta", "index": 0,
+        "delta": {"type": "text_delta",
+                  "text": f"No tool call after {max(retries, 0) + 1} attempts; "
+                          f"nothing was run and nothing was written."},
+    })
+    yield _frame("content_block_stop", {"type": "content_block_stop", "index": 0})
+    yield _frame("message_delta", {
+        "type": "message_delta",
+        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+        "usage": _usage({}),
+    })
+    yield _frame("message_stop", {"type": "message_stop"})
+
+
+def _once(upstream: str, body: dict, model: str, timeout: float, tool_style: str,
+          talk: "Translator") -> Iterator[bytes]:
     request = urllib.request.Request(
         f"{upstream.rstrip('/')}/v1/chat/completions",
         data=json.dumps(to_openai(body, model, tool_style)).encode(),
         headers={"content-type": "application/json"},
         method="POST",
     )
-    talk = Translator(model, tool_style)
     yield talk.start()
     with urllib.request.urlopen(request, timeout=timeout) as reply:
         for raw in reply:
@@ -379,7 +603,11 @@ def relay(
 
 
 def _handler(upstream: str, model: str, max_body: int, timeout: float,
-             token: Optional[str], tool_style: str):
+             token: Optional[str], tool_style: str,
+             call_retries: Optional[int] = None,
+             validate: Any = None,
+             validate_retries: int = 0,
+             strict: bool = False):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "maatml-anthropic/1"
@@ -432,7 +660,8 @@ def _handler(upstream: str, model: str, max_body: int, timeout: float,
             self.send_header("connection", "close")
             self.end_headers()
             try:
-                stream = relay(upstream, body, model, timeout, tool_style)
+                stream = relay(upstream, body, model, timeout, tool_style,
+                               call_retries, validate, validate_retries, strict)
                 for frame in stream:
                     self.wfile.write(frame)
                     self.wfile.flush()
@@ -459,11 +688,27 @@ def build(
     timeout: float = 600.0,
     auth_token: Optional[str] = None,
     tool_style: str = "native",
+    call_retries: Optional[int] = None,
+    validate: Any = None,
+    validate_retries: int = 0,
+    strict: bool = False,
 ) -> ThreadingHTTPServer:
-    """A ready server. The caller runs it, so a test can use an ephemeral port."""
+    """A ready server. The caller runs it, so a test can use an ephemeral port.
+
+    ``validate`` is a ``(raw_text, user_prompt) -> ValidationResult`` callable;
+    with it set every reply is collected, judged, and re-asked on rejection up
+    to ``validate_retries`` times. ``strict`` decides what an exhausted retry
+    budget serves: a plain statement that nothing passed, or the last reply.
+    """
     if tool_style not in TOOL_STYLES:
         raise ValueError(f"tool_style must be one of {TOOL_STYLES}; got {tool_style!r}")
+    if validate is not None and tool_style != "inline":
+        # The raw text the validator judges is the inline transcript; under
+        # native tools the call never exists as text, so there is nothing to
+        # hand a corpus-trained validator.
+        raise ValueError("validate requires tool_style=inline")
     return ThreadingHTTPServer(
         (host, port),
-        _handler(upstream, model, max_body_bytes, timeout, auth_token, tool_style),
+        _handler(upstream, model, max_body_bytes, timeout, auth_token, tool_style,
+                 call_retries, validate, validate_retries, strict),
     )
