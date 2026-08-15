@@ -265,6 +265,10 @@ _DATASET_KNOWN_KEYS = frozenset(
         "template_dir",
         "sources",
         "base_model_name_or_path",
+        # image_caption_folder (diffusion corpora)
+        "source_dir",
+        "val_fraction",
+        "test_fraction",
     }
 )
 _EVALUATION_KNOWN_KEYS = frozenset({"predictor", "validator", "metrics", "gates", "repair_braces"})
