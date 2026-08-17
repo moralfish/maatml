@@ -8,6 +8,12 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-17
+
+Gated device compiles, a shared capture path for custom servers, video-frame
+ingest, an Anthropic Messages serve wire, and `diffusion_lora` through kohya
+sd-scripts (#33).
+
 ### Added
 
 - **`maatml compile --require-gated`**. Refuses before the compiler plugin
@@ -24,6 +30,25 @@ for the Python package and per-model versions under `examples/`.
   `t` plus gold) plus a video file becomes validator-gated image rows;
   ffmpeg extracts PNGs under `datasets/samples/images/`. Annotation dialects
   stay in the sidecar.
+- **`maatml serve --server anthropic`**. A translating proxy that speaks
+  Anthropic's Messages API in front of an OpenAI-compatible upstream
+  (llama.cpp). Options cover `upstream`, `model`, `timeout`, `tool_style`
+  (`native` / `inline`), and `call_retries`. `--enforce` / `--max-retries`
+  gate replies with the model folder's validator the same way they gate
+  `http`.
+- **`architecture: diffusion_lora`**. Image LoRA training driven through a
+  kohya sd-scripts checkout. `format: image_caption_folder` prepares a
+  flat image+caption folder into the usual splits; the trainer materializes
+  kohya's repeats layout, records the run, and stops the child on SIGTERM
+  so an abort does not leave an orphan holding the GPU.
+- **`distill.target_format: text`**. Hands the teacher's reply to the
+  validator as it stands instead of requiring JSON. A string gold target is
+  the assistant text itself — `render_assistant_target` no longer wraps it
+  in quotes.
+- **Eval progress**. The shared eval loop prints `eval N/total` with a
+  remaining-time estimate while it generates, so a long split is not a
+  silent hang.
+- **Agent skill docs** under `docs/skill/` (model.yml, plugins, flywheel).
 
 ## [0.9.1] - 2026-08-10
 
