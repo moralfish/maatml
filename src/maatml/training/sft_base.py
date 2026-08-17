@@ -30,7 +30,6 @@ Public surface:
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional, Type
@@ -55,7 +54,12 @@ from ..device import (
 )
 from ..runs import begin_training_run, finish_run, normalize_report_to
 from ..utils.io import iter_jsonl, read_json, sha256_file, stable_hash
-from .guards import ensure_tokenizer_model_contract, make_nan_guard_callback, write_run_metadata
+from .guards import (
+    ensure_tokenizer_model_contract,
+    make_cache_release_callback,
+    make_nan_guard_callback,
+    write_run_metadata,
+)
 from .load import from_pretrained_kwargs, maybe_prepare_kbit
 from .schedule import precision_flags, total_training_steps
 from .schedule import warmup_steps as resolve_warmup_steps
@@ -64,6 +68,7 @@ from .sft_config import (  # noqa: F401  re-export public config surface
     QuantizationSettings,
     SFTTrainConfig,
     SFTTrainResult,
+    render_assistant_target,
 )
 
 console = Console()
@@ -132,15 +137,6 @@ def _render_then_tokenize(
         return []
     encoded = tokenizer(text, add_special_tokens=False, return_tensors=None)
     return _flatten_token_list(encoded)
-
-
-def render_assistant_target(sample: dict, target_field: str) -> str:
-    """Render the gold assistant content: the per-task expected JSON,
-    serialised compactly. Compact (no indent) keeps token count down; the
-    runtime parses either pretty or compact equally well.
-    """
-    payload = sample[target_field]
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _messages_from_sample(
@@ -512,6 +508,10 @@ def train_sft(
             attn_implementation=cfg.attn_implementation,
             quantization=quant,
             revision=cfg.model_revision,
+            # A LoRA never updates the base, so it does not need fp32 master
+            # weights. On MPS carrying them anyway is the difference between
+            # fitting in unified memory and swapping.
+            frozen_base=bool(cfg.lora and cfg.lora.enabled),
         )
         model = AutoModelForCausalLM.from_pretrained(cfg.model_id, **load_kwargs)
         model = maybe_prepare_kbit(model, quant)
@@ -634,7 +634,11 @@ def train_sft(
             eval_dataset=val_ds if run_eval_during_training else None,
             data_collator=collator,
             processing_class=tokenizer,
-            callbacks=[make_nan_guard_callback()],
+            callbacks=[
+                make_nan_guard_callback(),
+                # The allocator is released during the run, not only after it.
+                make_cache_release_callback(profile),
+            ],
         )
 
         train_output = trainer.train(

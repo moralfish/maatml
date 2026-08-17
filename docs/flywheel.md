@@ -46,7 +46,22 @@ distill:
   teacher_model: gpt-4o-mini
   teacher_revision: "2026-07"
   cache: datasets/distill/cache.jsonl
+  system_prompt_file: datasets/distill/brief.txt   # instead of an inline system_prompt
+  target_format: text                              # json (default) parses; text does not
 ```
+
+The teacher is any OpenAI-compatible endpoint, named by
+`MAATML_TEACHER_BASE_URL` and `MAATML_TEACHER_API_KEY`, so serving one locally
+is a base URL rather than a code path.
+
+`target_format` decides what a reply must be *before* the validator sees it. The
+default `json` parses the response and drops what will not parse, which is right
+when the target is a document. Set `text` when it is not, such as a sentence and
+then a call object, or a rendered patch: the raw reply is handed to the
+validator to judge instead. Left at `json`, such a label is refused as unparseable and the
+gate that decides never sees it. `system_prompt_file` is for a briefing too long
+to sit inline in `model.yml`, such as one carrying a real system prompt and tool
+catalogue.
 
 The [triage example](examples/support-ticket-triage.md) ships a prompt pool and
 a recorded cache, so `maatml distill examples/support-ticket-triage --replay`
@@ -58,6 +73,16 @@ routing contract rejects it, so it never reaches the seeds.
 Maps external columns into the seed shape, optionally sanitizes, and validates
 gold targets when a validator is configured. It also guards the capture loop
 below: a `serve_capture` row is refused unless a reviewer approved it.
+
+`--video PATH` turns a sidecar JSONL plus a video file into image rows: each
+sidecar object names a frame (`frame`, `timestamp_ms`, or `t`) and the gold
+target; ffmpeg writes PNGs under `datasets/samples/images/` and the request
+field becomes that relative path. Annotation dialects (MEVA KPF, COCO VID)
+stay in the sidecar a plugin writes — core does not parse them.
+
+```bash
+maatml ingest <model> --input boxes.jsonl --video clip.mp4 --map expected=boxes
+```
 
 ## `maatml mint`: preference pairs for DPO / ORPO
 

@@ -589,7 +589,16 @@ def run_evaluation(
 
     predict = pred_obj.predict if hasattr(pred_obj, "predict") else pred_obj
 
-    for row in rows:
+    # Evaluation generates once per row and writes its report at the end, so
+    # without this it is a silent half hour that looks identical to a hang -
+    # and the only honest answer to "how much longer" is to wait and see.
+    # Printed on its own line rather than redrawn in place: this output is read
+    # through a pipe as often as at a terminal, and a carriage-return bar
+    # arrives there as one unbroken line that says nothing until it ends.
+    total = len(rows)
+    every = max(1, total // 20)
+
+    for index, row in enumerate(rows, start=1):
         t0 = time.perf_counter()
         gen_text = predict(row)
         if target_device.type == "mps":
@@ -602,6 +611,18 @@ def run_evaluation(
             torch.cuda.synchronize()
         elapsed = (time.perf_counter() - t0) * 1000.0
         timings.append(elapsed)
+
+        if index % every == 0 or index == total:
+            # Remaining time from the rows this run has actually generated, not
+            # from a rate measured elsewhere: the same split takes minutes on
+            # one machine and an hour on another, and a figure carried over
+            # from the faster one is worse than no figure at all.
+            mean_s = sum(timings) / len(timings) / 1000.0
+            left_s = mean_s * (total - index)
+            console.print(
+                f"[cyan]eval[/] {index}/{total}  {elapsed / 1000.0:.1f}s "
+                f"(mean {mean_s:.1f}s)  ~{left_s / 60.0:.0f}m left"
+            )
 
         user_prompt = row.get(request_field)
         if not isinstance(user_prompt, str):

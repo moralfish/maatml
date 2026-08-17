@@ -1,0 +1,284 @@
+# `model.yml`: the whole configuration surface
+
+Every stage reads this file and nothing else. A knob passed on a command line,
+set in a launch script, or defaulted inside a plugin is a knob the run record
+cannot report — and a run that cannot say what trained it is not a measurement.
+
+Start from `maatml scaffold <dir> --architecture causal_sft --name my-task`
+rather than a blank file; it writes the sections below with defaults that
+already agree with each other.
+
+## Contents
+
+- [Identity](#identity)
+- [Dataset](#dataset)
+- [Evaluation and gates](#evaluation-and-gates)
+- [Training](#training)
+- [Packaging and extensions](#packaging-and-extensions)
+- [Distillation](#distillation)
+- [The smoke tier](#the-smoke-tier)
+- [Overrides that still get recorded](#overrides-that-still-get-recorded)
+
+## Identity
+
+```yaml
+name: ticket-triage
+model_id: ticket-triage
+task: support_ticket_routing
+architecture: causal_sft          # decides the trainer, the predictor, the scaffold
+version: 0.1.0
+description: "One line. It reaches the export manifest."
+base_model: Qwen/Qwen3-4B
+plugins: [./triage_plugin]        # folder-local registrations, loaded before any stage
+```
+
+`version` is not decoration: the export manifest carries it, and a release
+decision reads it.
+
+## Dataset
+
+```yaml
+dataset:
+  format: jsonl_seed            # a registered format adapter
+  seed: 7                       # the split is deterministic; changing this reshuffles it
+  seed_samples: datasets/samples/seed_samples.jsonl
+  benchmark_samples: datasets/samples/benchmark_samples.jsonl
+  schema: datasets/schema.json        # handed to the validator
+  prompt_spec: datasets/prompt_spec.json
+  request_field: request
+  target_field: expected
+  user_placeholder: "<<USER_REQUEST>>"
+  group_by: scenario            # see below
+  split_ratios: [0.85, 0.075, 0.075]
+  sanitize: []                  # registered sanitizers, run before training
+```
+
+**`group_by` is leakage protection, and choosing it wrongly is the classic
+mistake.** All rows sharing the key land in the same split, so paraphrases of
+one situation cannot straddle train and test. Group by the *situation*
+(`scenario`), not by the *contract* (`family`) — a family key sends every row of
+a family into one split, which is both useless as a split and confusing later,
+because `family` usually also names the contract a row is graded under.
+
+Without `group_by`, prepare falls back to `family` -> `source` -> `sample_id`.
+A key covering nearly the whole corpus cannot be split, so those rows are split
+individually **with a warning**: group-level leakage protection does not apply
+to them. Read that warning rather than scrolling past it.
+
+A `benchmark_samples` row sharing a group key with the training splits is an
+error, not a warning. A benchmark is pinned to test on purpose: it is the
+population release decisions are made against, and it should be able to grow
+without retraining.
+
+## Evaluation and gates
+
+```yaml
+evaluation:
+  predictor: ticket_triage   # registered; defaults to the architecture's own
+  validator: ticket_triage   # the contract, reused by datagen/distill/ingest and serve
+  metrics: ticket_triage
+  gates:
+    routing_json_parse_rate:  0.85  # 117/128 = 0.914, w95 0.853
+    routing_team_known_rate:  0.85  # 117/128 = 0.914, w95 0.853
+    all_layers_pass_rate:     0.94  # 401/414 = 0.969, w95 0.947
+```
+
+Each floor is the **Wilson 95% lower bound of the observed rate at that
+metric's own denominator**, floored to two places, with the measurement written
+beside it so the number can be audited without rerunning anything. Regenerate
+after every accepted run; a folder should carry a `scripts/derive_gates.py
+--write` rather than have floors typed by hand.
+
+### Why Wilson
+
+You cannot gate at the rate you measured. Gate `all_layers_pass` at its observed
+0.969 and an identical model fails about half the time, because that gate is
+reading noise. So the floor has to sit below the observation, and the only
+question is how far below, decided by something other than taste.
+
+A round number cannot answer it: 0.90 is trivially clearable for a metric
+measured on 414 rows and unreachable in practice for one measured on 16.
+
+Wald — the normal approximation, `p̂ ± z·sqrt(p̂(1-p̂)/n)` — answers it wrongly at
+exactly the rates a good model produces. At a perfect rate `p̂(1-p̂)` is zero, so
+the interval collapses and the "lower bound" is 1.000. These are real
+measurements from one multi-family model, chosen because the denominators span
+16 to 414:
+
+| | observed | Wald floor | Wilson floor |
+|---|---|---|---|
+| `all_layers_pass` | 401/414 | 0.952 | 0.947 |
+| `routing_refusal_recall` | 66/71 | 0.870 | 0.846 |
+| `grounded_injection_resistance` | 26/27 | 0.892 | 0.817 |
+| `conversation_honesty` | 16/16 | **1.000** | 0.806 |
+| `state_refusal_recall` | 21/21 | **1.000** | 0.845 |
+
+A floor of 1.000 claims sixteen successes prove a hundred-percent rate, and it
+makes the first single failure a red gate forever. Wald also wanders outside
+[0,1] and has poor coverage at small n, which is where four of these families
+live.
+
+Wilson inverts the score test instead, so it stays inside [0,1], behaves at 0
+and 1, and keeps coverage near nominal at small n. It is also closed-form
+arithmetic — a floor can be checked in a spreadsheet, which matters for a number
+committed to a file as an auditable claim.
+
+```python
+def wilson(k, n, z=1.96):
+    p = k / n
+    d = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / d
+    half = z / d * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return centre - half
+```
+
+The property that earns it: the slack is set by the evidence. `n` perfect rows
+give a floor of 0.722 at n=10, 0.886 at n=30, 0.963 at n=100 and 0.990 at
+n=400 — so the gate tightens as the benchmark grows, with nobody editing it.
+That is also the arithmetic reason an aggregate is treacherous: pooled over
+everything it has a huge denominator, so its floor sits tight against its
+observation while the small families it averages over carry floors twenty points
+loose.
+
+Clopper-Pearson, the exact binomial, guarantees *at least* 95% coverage and is
+therefore systematically wider — floors lower than the evidence warrants, which
+lets real regressions through. Wilson trades that guarantee for calibration.
+
+### The caveat these floors carry
+
+Wilson assumes independent Bernoulli trials. Test rows are grouped by scenario,
+so paraphrases of one situation are not independent: the effective sample size
+is below the row count, and these floors are correspondingly **slightly
+optimistic**. Twenty-seven rows drawn from nine scenarios is weaker evidence
+than twenty-seven unrelated ones.
+
+This does not change the choice — every alternative assumes the same thing — but
+it does mean a floor derived from a small, heavily grouped family should be read
+as approximate, and that widening the *variety* of a benchmark buys more than
+adding paraphrases to it.
+
+`evaluate` uses `packaging.max_input_tokens` as its token budget — the same
+budget `serve` and `export --parity` enforce — and records how many inputs it
+truncated. If that count is not zero, the measurement is of a truncated
+population.
+
+## Training
+
+```yaml
+training:
+  model_id: Qwen/Qwen3-4B
+  max_input_tokens: 8192
+  batch_size: 1
+  grad_accum: 16
+  learning_rate: 1.0e-4
+  epochs: 6
+  eval_steps: 20
+  save_steps: 100
+  logging_steps: 5
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  precision: bf16
+  grad_checkpointing: true
+  seed: 7
+  generation:
+    max_new_tokens: 4096      # the ceiling evaluation generates under
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    save_mode: adapter        # adapter | merged
+    target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+```
+
+`generation.max_new_tokens` is a frequent silent cause of bad scores: a ceiling
+below what the contract needs truncates every long answer, and the validator
+correctly reports the truncation as a contract failure. If a metric collapses
+while spot-checked outputs look right up to the point they stop, check this
+first.
+
+`save_mode: adapter` keeps the checkpoint small enough to carry between
+machines; merge locally before exporting GGUF.
+
+## Packaging and extensions
+
+```yaml
+packaging:
+  max_input_tokens: 8192      # the budget eval, serve and export --parity share
+  expected_latency_ms: 8000
+  weights_dtype: f16
+  confidence_thresholds: { low: 0.6, high: 0.9 }
+
+extensions:
+  gguf:
+    quant_levels: [Q5_K_M]
+    llama_cpp_tag: b9829
+    convert_script: null      # or a path; never searched on PATH
+    quantize_binary: null
+```
+
+maatml never searches `PATH` for the llama.cpp convert script or quantize
+binary — that would execute whatever `convert.py` happened to be found first.
+Name them explicitly here or via `MAATML_LLAMA_CONVERT` /
+`MAATML_LLAMA_QUANTIZE`, otherwise `--format gguf` produces no GGUF.
+
+Prefer **Q5_K_M over Q4_K_M** for anything citation-shaped: quantization costs
+citation fidelity specifically, and an aggregate pass rate hides it.
+
+## Distillation
+
+```yaml
+distill:
+  prompt_source: datasets/distill/prompts.jsonl
+  teacher_model: qwen/qwen3.6-35b-a3b       # any OpenAI-compatible endpoint
+  teacher_revision: "2026-08-b"             # part of the cache key
+  cache: datasets/distill/cache.jsonl
+  system_prompt_file: datasets/distill/brief.txt
+  target_format: text                        # json (default) parses; text does not
+  family: routing
+  request_params:
+    max_tokens: 8192
+    reasoning_effort: none
+    timeout: 600
+```
+
+`target_format` decides what a reply must be *before* the validator sees it.
+Default `json` parses and drops what will not parse — right when the target is a
+document. Set `text` when the target is not JSON (a sentence then a call object,
+a rendered patch): the raw reply goes to the validator instead. Left at `json`,
+such a label is refused as unparseable and the gate that decides never sees it.
+
+`teacher_revision` is part of the cache key, so a different teacher never
+silently reuses another's labels and `--replay` reproduces the accepted corpus
+offline.
+
+## The smoke tier
+
+```yaml
+smoke:
+  max_steps: 2
+  epochs: 1
+  gates:
+    output_nonempty_rate: 0.5
+```
+
+A rehearsal cannot meet production thresholds, and holding it to them only
+teaches people to ignore a red gate. `--smoke` enforces these instead, and the
+pass is recorded as smoke-gated in the run record and in the export manifest's
+`gate_evidence` — so a rehearsal never reads later as a production gate pass.
+
+`output_nonempty_rate` is always reported and is the honest thing for a smoke
+tier to gate on: it says the checkpoint saved, reloaded and produced output,
+without claiming the output was any good.
+
+## Overrides that still get recorded
+
+```bash
+maatml run <dir> --set training.epochs=9
+```
+
+`--set` feeds the pipeline fingerprint, so an override makes the right steps
+stale and is visible in `maatml plan`. An invalid one exits non-zero **before**
+any step runs and leaves `output/pipeline.json` untouched. This is the only
+sanctioned way to deviate for one run; anything you want to keep belongs in the
+file.

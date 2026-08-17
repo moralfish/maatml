@@ -46,12 +46,27 @@ class DistillConfig(BaseModel):
     teacher_model: str = "gpt-4o-mini"
     teacher_revision: str = "unpinned"
     system_prompt: Optional[str] = None
+    # Read from a file instead, resolved against the model folder. A briefing
+    # that carries a real system prompt and a tool catalogue runs to thousands
+    # of tokens; inlined in model.yml it would dwarf the config and drift from
+    # whatever generated it. Wins over ``system_prompt`` when both are set.
+    system_prompt_file: Optional[str] = None
     # Merged into the chat-completions payload. Reasoning teachers need a
     # max_tokens above the 1024 default (hidden reasoning spends it before any
     # content) and template switches like chat_template_kwargs.
     request_params: dict[str, Any] = Field(default_factory=dict)
     max_prompts: Optional[int] = Field(default=None, gt=0)
     family: str = "distill"
+    # What the teacher's reply is. ``json`` parses it and rejects what will not
+    # parse; ``text`` hands the reply to the validator as it stands.
+    #
+    # Not every task's target is JSON. A tool-calling model trained on an inline
+    # protocol answers with a sentence and then a call object, which is not a
+    # JSON document and never will be — under ``json`` every such label is
+    # refused as unparseable before the validator is asked, so the gate that is
+    # supposed to decide never sees them. The validator still decides; this only
+    # says what to hand it.
+    target_format: str = "json"
     cache: str = "output/distill/cache.jsonl"
     output: Optional[str] = None
 
@@ -121,24 +136,42 @@ def _prompt_hash(prompt: str) -> str:
     return sha256_bytes(prompt.encode("utf-8"))[:16]
 
 
-def load_prompts(path: Path, request_field: str) -> list[str]:
-    """Read a prompt pool from JSONL (request field) or plain text lines."""
+# Distill defines these itself, so a pool declaring one does not win. `family`
+# above all: distill's is one per prompt, and a pool-wide family would put every
+# accepted row into a single split group.
+_RESERVED_ROW_FIELDS = frozenset({"sample_id", "source", "family", "provenance"})
+
+
+def load_prompt_rows(path: Path, request_field: str) -> list[tuple[str, dict[str, Any]]]:
+    """Read a prompt pool as each prompt paired with the rest of its row.
+
+    A JSONL pool usually declares more than the ask — a scenario key, a project,
+    a subject. Those travel onto the accepted row, because a pool that groups
+    its prompts is saying which of them are the same situation, and a split that
+    cannot see the grouping puts paraphrases of one ask on both sides of it.
+    """
     path = Path(path)
     if not path.is_file():
         raise DistillConfigError(f"prompt_source not found: {path}")
-    prompts: list[str] = []
+    rows: list[tuple[str, dict[str, Any]]] = []
     if path.suffix.lower() == ".jsonl":
+        asked = (request_field, "prompt", "request")
         for row in iter_jsonl(path):
             value = row.get(request_field) or row.get("prompt") or row.get("request")
             if isinstance(value, str) and value.strip():
-                prompts.append(value)
+                rows.append((value, {k: v for k, v in row.items() if k not in asked}))
     else:
         for line in path.read_text(encoding="utf-8").splitlines():
             if line.strip():
-                prompts.append(line.rstrip("\n"))
-    if not prompts:
+                rows.append((line.rstrip("\n"), {}))
+    if not rows:
         raise DistillConfigError(f"no usable prompts in {path}")
-    return prompts
+    return rows
+
+
+def load_prompts(path: Path, request_field: str) -> list[str]:
+    """Read a prompt pool from JSONL (request field) or plain text lines."""
+    return [prompt for prompt, _ in load_prompt_rows(path, request_field)]
 
 
 def _build_validate_fn(model_def: ModelDefinition):
@@ -212,15 +245,18 @@ def run_distill(
     target_field = str(ds_cfg.get("target_field") or "target")
 
     validate_fn = _build_validate_fn(model_def)
-    prompts = load_prompts(model_def.resolve(cfg.prompt_source), request_field)
+    prompt_rows = load_prompt_rows(model_def.resolve(cfg.prompt_source), request_field)
     cap = limit if limit is not None else cfg.max_prompts
     if cap is not None:
-        prompts = prompts[:cap]
+        prompt_rows = prompt_rows[:cap]
 
     cache = TeacherCache(model_def.resolve(cfg.cache))
     offline = offline or replay
     teacher: Optional[TeacherClient] = None
-    system = cfg.system_prompt or (
+    briefing = cfg.system_prompt
+    if cfg.system_prompt_file:
+        briefing = model_def.resolve(cfg.system_prompt_file).read_text(encoding="utf-8")
+    system = briefing or (
         f"You label training samples for the MaatML model {model_def.identity}. "
         f"Given a user request, return only a JSON object for the "
         f"'{target_field}' field. No markdown fences, no commentary."
@@ -232,6 +268,9 @@ def run_distill(
         "cache_hits": 0,
         "teacher_calls": 0,
         "teacher_failures": 0,
+        # Answered with nothing at all: not cached, so raising the token budget
+        # and re-running is enough to recover the prompt.
+        "teacher_blank": 0,
         "cache_misses": 0,
         "validator_errors": 0,
     }
@@ -242,7 +281,7 @@ def run_distill(
     consecutive_failures = 0
     aborted_reason: Optional[str] = None
 
-    for prompt in prompts:
+    for prompt, declared in prompt_rows:
         phash = _prompt_hash(prompt)
         key = TeacherCache.key(phash, cfg.teacher_model, cfg.teacher_revision)
         response = cache.get(key)
@@ -285,9 +324,18 @@ def run_distill(
                 continue
             stats["teacher_calls"] += 1
             consecutive_failures = 0
-            cache.put(key, response)
+            # An empty reply is not a label, and caching one is permanent: the
+            # prompt would return blank on every later run, including
+            # `--replay`, with no way back short of editing the cache by hand.
+            # A reasoning teacher that spends its whole token budget thinking
+            # returns exactly this, so it is a budget away from being a good
+            # label rather than an answer worth recording.
+            if response.strip():
+                cache.put(key, response)
+            else:
+                stats["teacher_blank"] += 1
 
-        target = _parse_target(response)
+        target = _parse_target(response, cfg.target_format)
         ok = False
         reason = "unparseable"
         if target is not None:
@@ -312,6 +360,14 @@ def run_distill(
             continue
 
         row = {
+            # What the pool declared and distill does not define itself: the
+            # group key `dataset.group_by` names, and anything else the pool
+            # carries. Written first so a reserved field cannot be shadowed.
+            **{
+                k: v
+                for k, v in declared.items()
+                if k not in _RESERVED_ROW_FIELDS and k != target_field
+            },
             "sample_id": f"distill-{cfg.teacher_model}-{phash}",
             "source": "distill",
             "family": f"{cfg.family}:{phash}",
@@ -356,7 +412,7 @@ def run_distill(
         reject_path.unlink(missing_ok=True)
 
     summary = {
-        "prompts": len(prompts),
+        "prompts": len(prompt_rows),
         "accepted": len(accepted),
         "rejected": len(rejected),
         "duplicates": duplicates,
@@ -373,15 +429,21 @@ def run_distill(
     return summary
 
 
-def _parse_target(response: str) -> Optional[Any]:
-    """Parse the teacher's JSON target.
+def _parse_target(response: str, target_format: str = "json") -> Optional[Any]:
+    """The teacher's target, ready for the validator.
 
     Uses the canonical ``strip_fences`` so a reasoning teacher that emits a
     ``<think>`` block in the message content parses instead of being rejected
     as unparseable; a local copy here previously handled fences only.
+
+    Under ``text`` the reply is the target. An empty reply is still nothing,
+    so it is refused here rather than passed on as a label.
     """
+    stripped = strip_fences(response)
+    if target_format == "text":
+        return stripped if stripped.strip() else None
     try:
-        return json.loads(strip_fences(response))
+        return json.loads(stripped)
     except (json.JSONDecodeError, ValueError):
         return None
 

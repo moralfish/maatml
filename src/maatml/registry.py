@@ -385,6 +385,7 @@ _BUILTIN_PLUGIN_MODULES = (
     "maatml.training.builtins",
     "maatml.data.pipeline",
     "maatml.data.formats",
+    "maatml.data.image_folder",
     "maatml.data.preference",
     "maatml.evaluation.predictors",
     "maatml.export.bundle",
