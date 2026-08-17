@@ -12,7 +12,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
+from rich.console import Console
+
 from .registry import SERVERS, register_server
+
+console = Console()
 
 
 class ServerHandle(Protocol):
@@ -207,9 +211,7 @@ def _wire_validator(model_def: Any) -> Callable[[str, Optional[str]], Any]:
     def validate(raw: str, user_prompt: Optional[str]) -> Any:
         available: dict[str, Any] = {"user_prompt": user_prompt, **assets}
         kwargs = (
-            available
-            if params is None
-            else {k: v for k, v in available.items() if k in params}
+            available if params is None else {k: v for k, v in available.items() if k in params}
         )
         return validator(raw, **kwargs)
 
@@ -279,13 +281,19 @@ def anthropic_server(
         validate_retries=max_retries,
         strict=enforce,
     )
-    insists = (f", calls required (+{int(opts['call_retries'])} retries)"
-               if "call_retries" in opts else "")
-    gated = (f", validator gating (+{max_retries} retries"
-             f"{', enforced' if enforce else ''})" if validate is not None else "")
-    print(f"maatml anthropic wire on http://{host}:{port}/v1/messages "
-          f"-> {opts.get('upstream', DEFAULT_UPSTREAM)} "
-          f"(tools: {opts.get('tool_style', 'native')}{insists}{gated})", flush=True)
+    insists = (
+        f", calls required (+{int(opts['call_retries'])} retries)" if "call_retries" in opts else ""
+    )
+    gated = (
+        f", validator gating (+{max_retries} retries{', enforced' if enforce else ''})"
+        if validate is not None
+        else ""
+    )
+    console.print(
+        f"maatml anthropic wire on http://{host}:{port}/v1/messages "
+        f"-> {opts.get('upstream', DEFAULT_UPSTREAM)} "
+        f"(tools: {opts.get('tool_style', 'native')}{insists}{gated})"
+    )
     try:
         server.serve_forever()
     except KeyboardInterrupt:

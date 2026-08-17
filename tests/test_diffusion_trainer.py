@@ -210,7 +210,6 @@ def test_a_step_budget_replaces_the_epoch_count(tmp_path: Path) -> None:
 def test_a_signal_stops_the_child_and_records_the_abort(tmp_path: Path, monkeypatch) -> None:
     """Killing maatml must not leave kohya holding the GPU under a run record
     that still says `running`."""
-    import os
     import signal
 
     from maatml.training import diffusion

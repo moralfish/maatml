@@ -151,13 +151,9 @@ def open_capture(
         )
     cfg = get_dataset_cfg(model_def)
     request_field = str(cfg.get("request_field") or cfg.get("raw_field") or "request")
-    sanitize_tags = [
-        str(tag).strip() for tag in (cfg.get("sanitize") or []) if str(tag).strip()
-    ]
+    sanitize_tags = [str(tag).strip() for tag in (cfg.get("sanitize") or []) if str(tag).strip()]
     sanitizers = [SANITIZERS.require(tag) for tag in sanitize_tags]
-    return CaptureWriter(
-        Path(capture_path), request_field=request_field, sanitizers=sanitizers
-    )
+    return CaptureWriter(Path(capture_path), request_field=request_field, sanitizers=sanitizers)
 
 
 def _reject_empty_token(auth_token: Optional[str]) -> None:

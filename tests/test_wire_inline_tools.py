@@ -107,9 +107,12 @@ def test_inline_prepends_a_catalogue_block_to_a_tool_result_turn() -> None:
     body = {
         "tools": TOOLS,
         "messages": [
-            {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
-            ]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+                ],
+            },
         ],
     }
     blocks = inline_tools.inline_request(body)["messages"][0]["content"]
@@ -137,13 +140,24 @@ def test_inline_history_writes_past_calls_and_results_as_text() -> None:
         "tools": TOOLS,
         "messages": [
             {"role": "user", "content": "what is next?"},
-            {"role": "assistant", "content": [
-                {"type": "text", "text": "Reading the project."},
-                {"type": "tool_use", "id": "t1", "name": "get_state", "input": {"project": "bdb"}},
-            ]},
-            {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "t1", "content": "shot 3 is blocked"},
-            ]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "Reading the project."},
+                    {
+                        "type": "tool_use",
+                        "id": "t1",
+                        "name": "get_state",
+                        "input": {"project": "bdb"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "shot 3 is blocked"},
+                ],
+            },
         ],
     }
     turns = to_openai(body, "m", "inline")["messages"]
@@ -159,12 +173,18 @@ def test_native_history_still_uses_openai_tool_turns() -> None:
     body = {
         "tools": TOOLS,
         "messages": [
-            {"role": "assistant", "content": [
-                {"type": "tool_use", "id": "t1", "name": "get_state", "input": {}},
-            ]},
-            {"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
-            ]},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "get_state", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "t1", "content": "ok"},
+                ],
+            },
         ],
     }
     turns = to_openai(body, "m", "native")["messages"]
@@ -175,9 +195,19 @@ def test_native_history_still_uses_openai_tool_turns() -> None:
 def test_a_failed_result_is_marked_in_the_history() -> None:
     body = {
         "tools": TOOLS,
-        "messages": [{"role": "user", "content": [
-            {"type": "tool_result", "tool_use_id": "t1", "content": "boom", "is_error": True},
-        ]}],
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": "boom",
+                        "is_error": True,
+                    },
+                ],
+            }
+        ],
     }
     assert "<tool_response> (error)" in to_openai(body, "m", "inline")["messages"][-1]["content"]
 
@@ -192,28 +222,29 @@ def _frames(chunks: list[dict], tool_style: str) -> list[dict]:
 
 
 def _stream(text: str) -> list[dict]:
-    return [
-        {"choices": [{"delta": {"content": piece}}]} for piece in text
-    ] + [{"choices": [{"delta": {}, "finish_reason": "stop"}]}]
+    return [{"choices": [{"delta": {"content": piece}}]} for piece in text] + [
+        {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+    ]
 
 
 def test_a_buffered_call_object_becomes_a_tool_use_block() -> None:
     said = 'Setting the cell.\n{"calls":[{"name":"get_state","input":{"project":"bdb"}}]}'
     frames = _frames(_stream(said), "inline")
     kinds = [
-        f.get("content_block", {}).get("type")
-        for f in frames if f["type"] == "content_block_start"
+        f.get("content_block", {}).get("type") for f in frames if f["type"] == "content_block_start"
     ]
     assert kinds == ["text", "tool_use"]
 
     text = "".join(
-        f["delta"]["text"] for f in frames
+        f["delta"]["text"]
+        for f in frames
         if f["type"] == "content_block_delta" and f["delta"]["type"] == "text_delta"
     )
     assert text == "Setting the cell."
 
     args = [
-        f["delta"]["partial_json"] for f in frames
+        f["delta"]["partial_json"]
+        for f in frames
         if f["type"] == "content_block_delta" and f["delta"]["type"] == "input_json_delta"
     ]
     assert json.loads(args[0]) == {"project": "bdb"}
@@ -235,7 +266,8 @@ def test_a_truncated_inline_reply_keeps_max_tokens_over_tool_use() -> None:
 def test_native_streaming_is_unchanged_by_the_option() -> None:
     frames = _frames(_stream("hello"), "native")
     text = "".join(
-        f["delta"]["text"] for f in frames
+        f["delta"]["text"]
+        for f in frames
         if f["type"] == "content_block_delta" and f["delta"]["type"] == "text_delta"
     )
     assert text == "hello"

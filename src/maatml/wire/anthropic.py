@@ -61,8 +61,7 @@ def _text_of(content: Any) -> str:
     if not isinstance(content, list):
         return ""
     return "\n".join(
-        b.get("text") or "" for b in content
-        if isinstance(b, dict) and b.get("type") == "text"
+        b.get("text") or "" for b in content if isinstance(b, dict) and b.get("type") == "text"
     ).strip()
 
 
@@ -90,15 +89,14 @@ def to_openai_messages(body: dict, tool_style: str = "native") -> list[dict]:
         blocks = _blocks(message.get("content"))
 
         results = [b for b in blocks if b.get("type") == "tool_result"]
-        said = "\n".join(
-            b.get("text") or "" for b in blocks if b.get("type") == "text"
-        ).strip()
+        said = "\n".join(b.get("text") or "" for b in blocks if b.get("type") == "text").strip()
         calls = [b for b in blocks if b.get("type") == "tool_use"]
 
         if results and inline:
             rendered = [
                 inline_tools.render_result(
-                    _text_of(b.get("content")) if not isinstance(b.get("content"), str)
+                    _text_of(b.get("content"))
+                    if not isinstance(b.get("content"), str)
                     else b["content"],
                     failed=bool(b.get("is_error")),
                 )
@@ -110,31 +108,35 @@ def to_openai_messages(body: dict, tool_style: str = "native") -> list[dict]:
             # result — OpenAI has no block array, and pairing is by id.
             for block in results:
                 payload = block.get("content")
-                out.append({
-                    "role": "tool",
-                    "tool_call_id": block.get("tool_use_id"),
-                    "content": _text_of(payload) if not isinstance(payload, str) else payload,
-                })
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": block.get("tool_use_id"),
+                        "content": _text_of(payload) if not isinstance(payload, str) else payload,
+                    }
+                )
 
         if role == "assistant" and calls and inline:
             body_text = "\n".join([p for p in [said, inline_tools.render_calls(calls)] if p])
             out.append({"role": "assistant", "content": body_text})
         elif role == "assistant" and calls:
-            out.append({
-                "role": "assistant",
-                "content": said or None,
-                "tool_calls": [
-                    {
-                        "id": c.get("id"),
-                        "type": "function",
-                        "function": {
-                            "name": c.get("name"),
-                            "arguments": json.dumps(c.get("input") or {}, ensure_ascii=False),
-                        },
-                    }
-                    for c in calls
-                ],
-            })
+            out.append(
+                {
+                    "role": "assistant",
+                    "content": said or None,
+                    "tool_calls": [
+                        {
+                            "id": c.get("id"),
+                            "type": "function",
+                            "function": {
+                                "name": c.get("name"),
+                                "arguments": json.dumps(c.get("input") or {}, ensure_ascii=False),
+                            },
+                        }
+                        for c in calls
+                    ],
+                }
+            )
         elif said:
             out.append({"role": role or "user", "content": said})
 
@@ -223,8 +225,8 @@ class Translator:
     def __init__(self, model: str, tool_style: str = "native") -> None:
         self.model = model
         self.inline = tool_style == "inline"
-        self.opened: dict[int, str] = {}      # anthropic index -> kind
-        self.tool_at: dict[int, int] = {}     # openai tool index -> anthropic index
+        self.opened: dict[int, str] = {}  # anthropic index -> kind
+        self.tool_at: dict[int, int] = {}  # openai tool index -> anthropic index
         self.next_index = 0
         self.stop: Optional[str] = None
         self.counts: dict = {}
@@ -232,24 +234,32 @@ class Translator:
         self.thought = False
 
     def start(self) -> bytes:
-        return _frame("message_start", {
-            "type": "message_start",
-            "message": {
-                "id": "msg_local",
-                "type": "message",
-                "role": "assistant",
-                "model": self.model,
-                "content": [],
-                "stop_reason": None,
-                "stop_sequence": None,
-                "usage": _usage({}),
+        return _frame(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_local",
+                    "type": "message",
+                    "role": "assistant",
+                    "model": self.model,
+                    "content": [],
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": _usage({}),
+                },
             },
-        })
+        )
 
     def _open(self, index: int, block: dict) -> bytes:
-        return _frame("content_block_start", {
-            "type": "content_block_start", "index": index, "content_block": block,
-        })
+        return _frame(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": block,
+            },
+        )
 
     def delta(self, chunk: dict) -> Iterator[bytes]:
         if isinstance(chunk.get("usage"), dict):
@@ -287,10 +297,14 @@ class Translator:
                     self.opened[0] = "text"
                     self.next_index = max(self.next_index, 1)
                     yield self._open(0, {"type": "text", "text": ""})
-                yield _frame("content_block_delta", {
-                    "type": "content_block_delta", "index": 0,
-                    "delta": {"type": "text_delta", "text": said},
-                })
+                yield _frame(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": said},
+                    },
+                )
 
             for call in delta.get("tool_calls") or []:
                 at = call.get("index", 0)
@@ -300,18 +314,25 @@ class Translator:
                     self.tool_at[at] = index
                     self.opened[index] = "tool_use"
                     fn = call.get("function") or {}
-                    yield self._open(index, {
-                        "type": "tool_use",
-                        "id": call.get("id") or f"toolu_local_{index}",
-                        "name": fn.get("name") or "",
-                        "input": {},
-                    })
+                    yield self._open(
+                        index,
+                        {
+                            "type": "tool_use",
+                            "id": call.get("id") or f"toolu_local_{index}",
+                            "name": fn.get("name") or "",
+                            "input": {},
+                        },
+                    )
                 fragment = (call.get("function") or {}).get("arguments")
                 if fragment:
-                    yield _frame("content_block_delta", {
-                        "type": "content_block_delta", "index": self.tool_at[at],
-                        "delta": {"type": "input_json_delta", "partial_json": fragment},
-                    })
+                    yield _frame(
+                        "content_block_delta",
+                        {
+                            "type": "content_block_delta",
+                            "index": self.tool_at[at],
+                            "delta": {"type": "input_json_delta", "partial_json": fragment},
+                        },
+                    )
 
     def _inline_blocks(self) -> Iterator[bytes]:
         said, calls = inline_tools.split_calls("".join(self.buffer))
@@ -320,27 +341,38 @@ class Translator:
             self.next_index += 1
             self.opened[index] = "text"
             yield self._open(index, {"type": "text", "text": ""})
-            yield _frame("content_block_delta", {
-                "type": "content_block_delta", "index": index,
-                "delta": {"type": "text_delta", "text": said},
-            })
+            yield _frame(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "text_delta", "text": said},
+                },
+            )
         for at, call in enumerate(calls or []):
             index = self.next_index
             self.next_index += 1
             self.opened[index] = "tool_use"
-            yield self._open(index, {
-                "type": "tool_use",
-                "id": f"toolu_local_{index}",
-                "name": call["name"],
-                "input": {},
-            })
-            yield _frame("content_block_delta", {
-                "type": "content_block_delta", "index": index,
-                "delta": {
-                    "type": "input_json_delta",
-                    "partial_json": json.dumps(call["input"], ensure_ascii=False),
+            yield self._open(
+                index,
+                {
+                    "type": "tool_use",
+                    "id": f"toolu_local_{index}",
+                    "name": call["name"],
+                    "input": {},
                 },
-            })
+            )
+            yield _frame(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": json.dumps(call["input"], ensure_ascii=False),
+                    },
+                },
+            )
             self.tool_at[at] = index
         # A truncated reply keeps its own reason; the calls it carries are the
         # ones that survived, not a complete turn.
@@ -365,19 +397,26 @@ class Translator:
             self.opened[0] = "text"
             self.next_index = max(self.next_index, 1)
             yield self._open(0, {"type": "text", "text": ""})
-            yield _frame("content_block_delta", {
-                "type": "content_block_delta", "index": 0,
-                "delta": {"type": "text_delta", "text": why},
-            })
+            yield _frame(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": why},
+                },
+            )
         for index in sorted(self.opened):
             yield _frame("content_block_stop", {"type": "content_block_stop", "index": index})
         # A reply with no stop_reason reads as truncation on the client.
         stop = self.stop or ("tool_use" if self.tool_at else "end_turn")
-        yield _frame("message_delta", {
-            "type": "message_delta",
-            "delta": {"stop_reason": stop, "stop_sequence": None},
-            "usage": _usage(self.counts),
-        })
+        yield _frame(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": stop, "stop_sequence": None},
+                "usage": _usage(self.counts),
+            },
+        )
         yield _frame("message_stop", {"type": "message_stop"})
 
 
@@ -408,8 +447,9 @@ def needs_call(body: dict) -> bool:
             continue
         content = message.get("content")
         if isinstance(content, list):
-            return not any(isinstance(block, dict) and block.get("type") == "tool_result"
-                           for block in content)
+            return not any(
+                isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+            )
         return True
     return True
 
@@ -417,9 +457,7 @@ def needs_call(body: dict) -> bool:
 def _nudged(body: dict) -> dict:
     """The same ask with the rule restated as a trailing user turn."""
     asked = dict(body)
-    asked["messages"] = list(body.get("messages") or []) + [
-        {"role": "user", "content": NUDGE}
-    ]
+    asked["messages"] = list(body.get("messages") or []) + [{"role": "user", "content": NUDGE}]
     return asked
 
 
@@ -446,9 +484,10 @@ def _corrected(body: dict, raw: str, errors: list) -> dict:
     reads as a correction next to what it corrects — an error message alone
     asks the model to fix something it can no longer see.
     """
-    listed = "; ".join(
-        f"{getattr(e, 'code', 'invalid')}: {getattr(e, 'message', e)}" for e in errors
-    ) or "invalid output"
+    listed = (
+        "; ".join(f"{getattr(e, 'code', 'invalid')}: {getattr(e, 'message', e)}" for e in errors)
+        or "invalid output"
+    )
     asked = dict(body)
     asked["messages"] = list(body.get("messages") or []) + [
         {"role": "assistant", "content": raw},
@@ -457,8 +496,16 @@ def _corrected(body: dict, raw: str, errors: list) -> dict:
     return asked
 
 
-def _repairing(upstream: str, body: dict, model: str, timeout: float, tool_style: str,
-               retries: int, validate: Any, strict: bool) -> Iterator[bytes]:
+def _repairing(
+    upstream: str,
+    body: dict,
+    model: str,
+    timeout: float,
+    tool_style: str,
+    retries: int,
+    validate: Any,
+    strict: bool,
+) -> Iterator[bytes]:
     """Ask until the validator accepts, then say plainly that it never did.
 
     Buffered like ``_insisting`` and for the same reason: whether a reply is
@@ -494,24 +541,37 @@ def _repairing(upstream: str, body: dict, model: str, timeout: float, tool_style
     talk = Translator(model, tool_style)
     yield talk.start()
     yield talk._open(0, {"type": "text", "text": ""})
-    yield _frame("content_block_delta", {
-        "type": "content_block_delta", "index": 0,
-        "delta": {"type": "text_delta",
-                  "text": f"The validator refused every reply after "
-                          f"{max(retries, 0) + 1} attempts ({named}); "
-                          f"nothing was run and nothing was written."},
-    })
+    yield _frame(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "text_delta",
+                "text": f"The validator refused every reply after "
+                f"{max(retries, 0) + 1} attempts ({named}); "
+                f"nothing was run and nothing was written.",
+            },
+        },
+    )
     yield _frame("content_block_stop", {"type": "content_block_stop", "index": 0})
-    yield _frame("message_delta", {
-        "type": "message_delta",
-        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-        "usage": _usage({}),
-    })
+    yield _frame(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": _usage({}),
+        },
+    )
     yield _frame("message_stop", {"type": "message_stop"})
 
 
 def relay(
-    upstream: str, body: dict, model: str, timeout: float, tool_style: str = "native",
+    upstream: str,
+    body: dict,
+    model: str,
+    timeout: float,
+    tool_style: str = "native",
     call_retries: Optional[int] = None,
     validate: Any = None,
     validate_retries: int = 0,
@@ -533,8 +593,9 @@ def relay(
     # reason: prose is wrong where an action was asked for, and right where a
     # result is being reported.
     if validate is not None and tool_style == "inline" and needs_call(body):
-        yield from _repairing(upstream, body, model, timeout, tool_style,
-                              validate_retries, validate, strict)
+        yield from _repairing(
+            upstream, body, model, timeout, tool_style, validate_retries, validate, strict
+        )
         return
     if call_retries is not None and tool_style == "inline" and needs_call(body):
         yield from _insisting(upstream, body, model, timeout, tool_style, call_retries)
@@ -542,8 +603,9 @@ def relay(
     yield from _once(upstream, body, model, timeout, tool_style, Translator(model, tool_style))
 
 
-def _insisting(upstream: str, body: dict, model: str, timeout: float,
-               tool_style: str, retries: int) -> Iterator[bytes]:
+def _insisting(
+    upstream: str, body: dict, model: str, timeout: float, tool_style: str, retries: int
+) -> Iterator[bytes]:
     """Ask until a call comes back, then say plainly that none did."""
     asked = body
     for _ in range(max(retries, 0) + 1):
@@ -559,23 +621,33 @@ def _insisting(upstream: str, body: dict, model: str, timeout: float,
     talk = Translator(model, tool_style)
     yield talk.start()
     yield talk._open(0, {"type": "text", "text": ""})
-    yield _frame("content_block_delta", {
-        "type": "content_block_delta", "index": 0,
-        "delta": {"type": "text_delta",
-                  "text": f"No tool call after {max(retries, 0) + 1} attempts; "
-                          f"nothing was run and nothing was written."},
-    })
+    yield _frame(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "text_delta",
+                "text": f"No tool call after {max(retries, 0) + 1} attempts; "
+                f"nothing was run and nothing was written.",
+            },
+        },
+    )
     yield _frame("content_block_stop", {"type": "content_block_stop", "index": 0})
-    yield _frame("message_delta", {
-        "type": "message_delta",
-        "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-        "usage": _usage({}),
-    })
+    yield _frame(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": _usage({}),
+        },
+    )
     yield _frame("message_stop", {"type": "message_stop"})
 
 
-def _once(upstream: str, body: dict, model: str, timeout: float, tool_style: str,
-          talk: "Translator") -> Iterator[bytes]:
+def _once(
+    upstream: str, body: dict, model: str, timeout: float, tool_style: str, talk: "Translator"
+) -> Iterator[bytes]:
     request = urllib.request.Request(
         f"{upstream.rstrip('/')}/v1/chat/completions",
         data=json.dumps(to_openai(body, model, tool_style)).encode(),
@@ -602,12 +674,18 @@ def _once(upstream: str, body: dict, model: str, timeout: float, tool_style: str
 # -------------------------------------------------------------------- server
 
 
-def _handler(upstream: str, model: str, max_body: int, timeout: float,
-             token: Optional[str], tool_style: str,
-             call_retries: Optional[int] = None,
-             validate: Any = None,
-             validate_retries: int = 0,
-             strict: bool = False):
+def _handler(
+    upstream: str,
+    model: str,
+    max_body: int,
+    timeout: float,
+    token: Optional[str],
+    tool_style: str,
+    call_retries: Optional[int] = None,
+    validate: Any = None,
+    validate_retries: int = 0,
+    strict: bool = False,
+):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
         server_version = "maatml-anthropic/1"
@@ -660,8 +738,17 @@ def _handler(upstream: str, model: str, max_body: int, timeout: float,
             self.send_header("connection", "close")
             self.end_headers()
             try:
-                stream = relay(upstream, body, model, timeout, tool_style,
-                               call_retries, validate, validate_retries, strict)
+                stream = relay(
+                    upstream,
+                    body,
+                    model,
+                    timeout,
+                    tool_style,
+                    call_retries,
+                    validate,
+                    validate_retries,
+                    strict,
+                )
                 for frame in stream:
                     self.wfile.write(frame)
                     self.wfile.flush()
@@ -669,10 +756,18 @@ def _handler(upstream: str, model: str, max_body: int, timeout: float,
                 # Mid-stream, the status line is long gone; Anthropic's own
                 # answer to that is an `error` frame inside the 200, which the
                 # client surfaces rather than treating as a broken reply.
-                self.wfile.write(_frame("error", {
-                    "type": "error",
-                    "error": {"type": "api_error", "message": f"upstream {upstream}: {exc}"},
-                }))
+                self.wfile.write(
+                    _frame(
+                        "error",
+                        {
+                            "type": "error",
+                            "error": {
+                                "type": "api_error",
+                                "message": f"upstream {upstream}: {exc}",
+                            },
+                        },
+                    )
+                )
                 self.wfile.flush()
 
     return Handler
@@ -709,6 +804,16 @@ def build(
         raise ValueError("validate requires tool_style=inline")
     return ThreadingHTTPServer(
         (host, port),
-        _handler(upstream, model, max_body_bytes, timeout, auth_token, tool_style,
-                 call_retries, validate, validate_retries, strict),
+        _handler(
+            upstream,
+            model,
+            max_body_bytes,
+            timeout,
+            auth_token,
+            tool_style,
+            call_retries,
+            validate,
+            validate_retries,
+            strict,
+        ),
     )

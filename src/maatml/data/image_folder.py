@@ -14,7 +14,6 @@ split it was in, which is what keeps eval comparable across corpus growth.
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import Any
 
 from rich.console import Console

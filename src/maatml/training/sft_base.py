@@ -30,7 +30,6 @@ Public surface:
 
 from __future__ import annotations
 
-import json
 import shutil
 from pathlib import Path
 from typing import Any, Optional, Type
@@ -69,6 +68,7 @@ from .sft_config import (  # noqa: F401  re-export public config surface
     QuantizationSettings,
     SFTTrainConfig,
     SFTTrainResult,
+    render_assistant_target,
 )
 
 console = Console()
@@ -137,25 +137,6 @@ def _render_then_tokenize(
         return []
     encoded = tokenizer(text, add_special_tokens=False, return_tensors=None)
     return _flatten_token_list(encoded)
-
-
-def render_assistant_target(sample: dict, target_field: str) -> str:
-    """Render the gold assistant content.
-
-    A structured target is serialised compactly: no indent, to keep the token
-    count down, and the runtime parses pretty or compact equally well.
-
-    A target that is already a string **is** the assistant's text, and is used
-    as it stands. Passing it through ``json.dumps`` would wrap it in quotes and
-    escape every quote inside it, and the model learns to answer that way -
-    correct content inside a string literal, which no validator downstream
-    accepts. ``distill.target_format: text`` writes string targets, so this is
-    the difference between a model that answers and one that answers in quotes.
-    """
-    payload = sample[target_field]
-    if isinstance(payload, str):
-        return payload
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
 def _messages_from_sample(

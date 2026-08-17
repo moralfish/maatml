@@ -448,6 +448,7 @@ def test_a_blank_teacher_reply_is_not_cached(tmp_path, monkeypatch) -> None:
     Caching that would be permanent: the prompt returns blank on every later
     run, `--replay` included, and no token budget can recover it.
     """
+
     class _Mute:
         def __init__(self, *a, **k) -> None:
             pass
@@ -473,7 +474,7 @@ def test_a_string_target_is_not_wrapped_in_quotes() -> None:
     Serialising it would train the model to answer inside a string literal:
     correct content, every quote escaped, and nothing downstream accepts it.
     """
-    from maatml.training.sft_base import render_assistant_target
+    from maatml.training.sft_config import render_assistant_target
 
     said = 'Reading the file.\n{"calls":[{"name":"read_file","input":{"path":"a"}}]}'
     assert render_assistant_target({"expected": said}, "expected") == said
@@ -497,12 +498,15 @@ def test_a_relocated_run_resolves_to_the_canonical_checkpoint_dir(tmp_path) -> N
     landed.mkdir(parents=True, exist_ok=True)
     (landed / "model.safetensors").write_bytes(b"weights")
 
-    _append_record(md, RunRecord(
-        run_id=run_id,
-        identity="distill-test@0.1.0",
-        architecture="causal_sft",
-        status="completed",
-        started_at="2026-08-13T02:47:00Z",
-        out_dir="/content/gone/output/checkpoints/" + run_id,
-    ))
+    _append_record(
+        md,
+        RunRecord(
+            run_id=run_id,
+            identity="distill-test@0.1.0",
+            architecture="causal_sft",
+            status="completed",
+            started_at="2026-08-13T02:47:00Z",
+            out_dir="/content/gone/output/checkpoints/" + run_id,
+        ),
+    )
     assert resolve_checkpoint(md, run_id) == landed.resolve()

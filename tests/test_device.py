@@ -56,7 +56,6 @@ def test_get_profile_from_device_like_object() -> None:
 
 
 def test_resolve_device_cpu() -> None:
-    pytest.importorskip("torch")
     assert resolve_device("cpu").type == "cpu"
 
 

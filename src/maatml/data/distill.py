@@ -363,8 +363,11 @@ def run_distill(
             # What the pool declared and distill does not define itself: the
             # group key `dataset.group_by` names, and anything else the pool
             # carries. Written first so a reserved field cannot be shadowed.
-            **{k: v for k, v in declared.items()
-               if k not in _RESERVED_ROW_FIELDS and k != target_field},
+            **{
+                k: v
+                for k, v in declared.items()
+                if k not in _RESERVED_ROW_FIELDS and k != target_field
+            },
             "sample_id": f"distill-{cfg.teacher_model}-{phash}",
             "source": "distill",
             "family": f"{cfg.family}:{phash}",

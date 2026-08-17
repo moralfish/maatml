@@ -172,9 +172,7 @@ def test_require_gated_refuses_before_the_plugin_runs(tmp_path: Path) -> None:
     raw["gate_evidence"] = {"passed": True, "smoke_gated": True}
     manifest_path.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="require-gated"):
-        compile_export(
-            export, target="gated_only", out_dir=tmp_path / "nope", require_gated=True
-        )
+        compile_export(export, target="gated_only", out_dir=tmp_path / "nope", require_gated=True)
     assert called["n"] == 0
 
 

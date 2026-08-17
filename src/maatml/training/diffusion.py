@@ -176,9 +176,9 @@ def _stopping(proc: "subprocess.Popen[str]") -> Any:
     try:
         yield
     finally:
-        for sig, handler in previous.items():
+        for saved, handler in previous.items():
             with contextlib.suppress(ValueError):
-                signal.signal(sig, handler)
+                signal.signal(saved, handler)
         if proc.poll() is None:
             with contextlib.suppress(ProcessLookupError, OSError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -355,7 +355,7 @@ def train_diffusion_lora(
             with _stopping(proc):
                 assert proc.stdout is not None
                 for line in proc.stdout:
-                    print(line, end="")
+                    print(line, end="")  # noqa: T201  training progress goes to stdout
                     match = _PROGRESS_RX.search(line)
                     if match:
                         last_step, total_steps = int(match.group(1)), int(match.group(2))

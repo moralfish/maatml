@@ -192,8 +192,10 @@ def test_an_adopted_run_carries_the_gate_result_its_report_recorded(tmp_path: Pa
     md = _orphan(
         tmp_path,
         "20260813-082031-83f868",
-        report={"gates": {"passed": True, "smoke": False, "results": {}},
-                "metrics": {"all_layers_pass_rate": 0.9216, "note": "text"}},
+        report={
+            "gates": {"passed": True, "smoke": False, "results": {}},
+            "metrics": {"all_layers_pass_rate": 0.9216, "note": "text"},
+        },
     )
     rec = get_run(md, "20260813-082031-83f868")
     assert rec is not None

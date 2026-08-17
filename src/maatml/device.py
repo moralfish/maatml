@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import os
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Optional, Union
 
 
@@ -117,10 +118,17 @@ def is_main_process() -> bool:
 
 
 def resolve_device(device: str) -> Any:
-    """Map ``auto|mps|cpu|cuda|<torch device str>`` to a ``torch.device``."""
-    torch = _torch()
+    """Map ``auto|mps|cpu|cuda|<torch device str>`` to a ``torch.device``.
+
+    ``cpu`` is resolved without torch so a callable predictor can still run
+    the eval loop on a torch-free install.
+    """
     if device == "cpu":
-        return torch.device("cpu")
+        try:
+            return _torch().device("cpu")
+        except ImportError:
+            return SimpleNamespace(type="cpu")
+    torch = _torch()
     if device == "mps":
         return torch.device("mps")
     if device == "cuda":

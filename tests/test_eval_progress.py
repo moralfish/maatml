@@ -50,9 +50,7 @@ def test_a_short_split_still_reports_every_row(tmp_path: Path, capsys) -> None:
     assert len(_progress(capsys.readouterr().out)) == 3
 
 
-def test_the_last_row_reports_even_when_it_is_not_on_the_interval(
-    tmp_path: Path, capsys
-) -> None:
+def test_the_last_row_reports_even_when_it_is_not_on_the_interval(tmp_path: Path, capsys) -> None:
     # 41 rows at an interval of 2: without the explicit final line the run ends
     # at 40/41 and looks stalled one row from the end.
     _run(tmp_path, 41)
