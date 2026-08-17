@@ -14,12 +14,17 @@ their hot path in the native engine.
 
 ```bash
 maatml compile <export-dir> --target sip_tensorrt --out /opt/sip/models/person \
-    --option precision=fp16 --option profile=4cam
+    --option precision=fp16 --option profile=4cam --require-gated
 ```
 
 Compilers receive the portable export (ONNX, GGUF, HF, …) and write a
 device-specific bundle plus `target_manifest.json` (source identity, options,
-gate evidence pointer). Core never assumes ONNX.
+`promotion_eligible` / `promotion_reason` from `manifest.gate_evidence`). Core
+never assumes ONNX.
+
+`--require-gated` refuses before the plugin runs when `gate_evidence` is
+missing, `passed` is not true, or `smoke_gated` is true, so a rehearsal cannot
+become a device artifact.
 
 ## 1. `maatml serve`, built-in HTTP API
 
@@ -90,6 +95,11 @@ captured row is **not** gold: it carries `approved: false` / `needs_review:
 true`, and the file is row/byte capped so an unattended server cannot fill the
 disk. Capture requires `--auth-token`.
 
+Custom servers (`--server sip_deepstream`, …) use the same writer:
+`maatml.serve.open_capture(model_def, capture_path, auth_token=…)` then
+`LifecycleServer.record_capture(row, output, raw)` (or `writer.record`). The
+CLI still passes `--capture` and `--auth-token` through `dispatch_server`.
+
 The request is written through the model's declared `dataset.sanitize` tags, so
 a model that sanitizes its corpus sanitizes its captures by the same rules. A
 model that declares no tags captures the request verbatim, which is worth
@@ -151,7 +161,8 @@ up to `--max-retries` times, and a reply that never passes is replaced under
 `--enforce` by a plain statement of what was refused and that nothing ran.
 Without `--enforce` the retries still run and the last reply stands. Requires
 `tool_style=inline`, because the text the validator was trained against is the
-inline transcript. `--capture` remains `http`-only.
+inline transcript. The Anthropic proxy does not write capture rows; attach
+`open_capture` in a custom backend if that flywheel is needed there.
 
 ## 2. ONNX / edge (vision)
 

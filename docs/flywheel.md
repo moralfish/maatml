@@ -74,6 +74,16 @@ Maps external columns into the seed shape, optionally sanitizes, and validates
 gold targets when a validator is configured. It also guards the capture loop
 below: a `serve_capture` row is refused unless a reviewer approved it.
 
+`--video PATH` turns a sidecar JSONL plus a video file into image rows: each
+sidecar object names a frame (`frame`, `timestamp_ms`, or `t`) and the gold
+target; ffmpeg writes PNGs under `datasets/samples/images/` and the request
+field becomes that relative path. Annotation dialects (MEVA KPF, COCO VID)
+stay in the sidecar a plugin writes — core does not parse them.
+
+```bash
+maatml ingest <model> --input boxes.jsonl --video clip.mp4 --map expected=boxes
+```
+
 ## `maatml mint`: preference pairs for DPO / ORPO
 
 Turns candidate completions into `{prompt, chosen, rejected}` pairs. For each

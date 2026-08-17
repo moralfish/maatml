@@ -178,6 +178,44 @@ def test_verify_fails_on_a_tampered_file(tmp_path: Path) -> None:
     assert "verify failed" in result.output
 
 
+def test_compile_require_gated_refuses_an_ungated_export(tmp_path: Path) -> None:
+    from maatml.registry import register_compiler
+    from maatml.utils.io import write_json
+
+    export = tmp_path / "export"
+    export.mkdir()
+    (export / "model.onnx").write_bytes(b"onnx")
+    write_json(
+        export / "manifest.json",
+        {
+            "name": "toy",
+            "version": "1",
+            "identity": "toy@1",
+            "files": [{"path": "model.onnx", "sha256": "abc"}],
+        },
+    )
+
+    @register_compiler("cli_gated")
+    def _cmp(export_dir, out_dir, *, manifest, options):
+        del export_dir, manifest, options
+        return out_dir
+
+    result = runner.invoke(
+        app,
+        [
+            "compile",
+            str(export),
+            "--target",
+            "cli_gated",
+            "--out",
+            str(tmp_path / "out"),
+            "--require-gated",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "require-gated" in plain(result.output)
+
+
 def test_verify_fails_when_a_listed_file_is_missing(tmp_path: Path) -> None:
     export = _export_dir(tmp_path)
     (export / "config.json").unlink()

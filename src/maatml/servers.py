@@ -44,8 +44,24 @@ class LifecycleServer:
     serve_fn: Callable[[], None]
     close_fn: Callable[[], None]
     capabilities_fn: Callable[[], dict[str, Any]] = dict
+    capture: Any = None
     _draining: bool = False
     _closed: bool = field(default=False, init=False)
+
+    def record_capture(self, row: dict[str, Any], output: Any, raw: str) -> bool:
+        """Append one reviewed-flywheel row when a capture writer is attached.
+
+        Custom servers (DeepStream/UDS, …) call this with the same
+        ``(row, output, raw)`` the HTTP backend writes. Returns False when
+        capture is off or the file is capped. ``open_capture`` builds the writer.
+        """
+        writer = self.capture
+        if writer is None:
+            return False
+        record = getattr(writer, "record", None)
+        if not callable(record):
+            return False
+        return bool(record(row, output, raw))
 
     def verify(self) -> None:
         self.verify_fn()

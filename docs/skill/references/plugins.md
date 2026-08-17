@@ -199,7 +199,10 @@ than leaving it unlisted.
 A backend that accepts `**kwargs` it does not honour will silently swallow flags
 like `--enforce`. If a flag is meant to apply to your backend, consume it
 explicitly and say so in the startup banner, so an operator can see the mode
-they asked for.
+they asked for. `--capture` is one of those flags: call
+`maatml.serve.open_capture` and `LifecycleServer.record_capture` rather than
+ignoring `capture_path`. `maatml compile --require-gated` is the matching
+compiler claim: refuse an ungated or smoke-gated export before the plugin runs.
 
 ## Testing a plugin
 

@@ -8,6 +8,23 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+### Added
+
+- **`maatml compile --require-gated`**. Refuses before the compiler plugin
+  runs when `manifest.gate_evidence` is missing, `passed` is not true, or
+  `smoke_gated` is true. `target_manifest.json` now records
+  `promotion_eligible` and `promotion_reason` on every compile so a serving
+  host can refuse an ungated device artifact without reading SIP-specific
+  sidecars.
+- **`open_capture` / `LifecycleServer.record_capture`**. Custom servers
+  (DeepStream/UDS, …) can append the same `source: serve_capture` /
+  `approved: false` rows the HTTP backend writes. `--capture` still requires
+  `--auth-token`.
+- **`maatml ingest --video`**. A sidecar JSONL (`frame` / `timestamp_ms` /
+  `t` plus gold) plus a video file becomes validator-gated image rows;
+  ffmpeg extracts PNGs under `datasets/samples/images/`. Annotation dialects
+  stay in the sidecar.
+
 ## [0.9.1] - 2026-08-10
 
 Pluggable compile/serve runtimes, actionable `vision_scene` validator feedback,

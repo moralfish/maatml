@@ -126,6 +126,19 @@ def export_my_fmt(model_def, checkpoint_dir, out_dir, *, run_id=None):
 
 Always write / update `manifest.json` via `maatml.export.manifest`.
 
+## Compilers and servers
+
+`maatml compile --require-gated` refuses an export whose `gate_evidence` is
+missing, failed, or `smoke_gated`. Every compile writes `promotion_eligible`
+and `promotion_reason` on `target_manifest.json`.
+
+A long-lived backend should use `LifecycleServer`. To join the reviewed
+flywheel, call `maatml.serve.open_capture` with the `capture_path` /
+`auth_token` kwargs `dispatch_server` already forwards, attach the writer as
+`LifecycleServer.capture`, and `record_capture(row, output, raw)` on each
+prediction. Ingest then sees the same `source: serve_capture` rows the HTTP
+server writes.
+
 ## Testing plugins
 
 Registries are process-global. Snapshot and restore them around a test through

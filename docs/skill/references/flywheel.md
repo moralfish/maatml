@@ -77,6 +77,10 @@ Maps external columns into the seed shape, optionally sanitizes, and validates
 gold targets when a validator is configured. It also guards the capture loop: a
 `serve_capture` row is refused unless a reviewer approved it.
 
+`--video PATH` extracts sidecar-named frames (`frame` / `timestamp_ms` / `t`)
+with ffmpeg into `datasets/samples/images/` and sets the request field to each
+PNG. Core does not parse MEVA KPF or COCO VID; a plugin writes the sidecar.
+
 ## `mint`: preference pairs
 
 Turns candidate completions into `{prompt, chosen, rejected}` pairs for DPO or

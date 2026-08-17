@@ -40,13 +40,13 @@ mypy src/maatml --ignore-missing-imports
 .venv/bin/maatml sweep    examples/<name>/ --param training.learning_rate=1e-4,3e-4 --param training.lora.r=8,16 [--metric eval_loss] [--smoke] [--max-trials N]
 .venv/bin/maatml evaluate examples/<name>/ [--checkpoint X] [--split test|val] [--gate]
 .venv/bin/maatml export   examples/<name>/ [--checkpoint X] [--format safetensors|gguf|mlx|onnx] [--out PATH] [--parity]
-.venv/bin/maatml compile  <export-dir> --target NAME --out DIR [--option K=V]
+.venv/bin/maatml compile  <export-dir> --target NAME --out DIR [--option K=V] [--require-gated]
 .venv/bin/maatml verify   examples/<name>/output/export/<run_id>
 .venv/bin/maatml serve    examples/<name>/ [--server http|NAME] [--server-option K=V] [--enforce] [--max-retries N] [--auth-token T] [--capture PATH]
 .venv/bin/maatml datagen  examples/<name>/ [--target N] [--seed S] [--teacher] [--out PATH]
 .venv/bin/maatml distill  examples/<name>/ [--prompts PATH] [--replay] [--offline]
 .venv/bin/maatml mint     examples/<name>/ --input candidates.jsonl   # dpo/orpo pairs
-.venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append]
+.venv/bin/maatml ingest   examples/<name>/ --input PATH [--map field=col] [--sanitize tag] [--append] [--video FILE]
 .venv/bin/maatml runs     examples/<name>/ [--compare] [--metric K] [--limit N]
 .venv/bin/maatml audit    [examples/<name>/] [--json]
 .venv/bin/maatml plugins

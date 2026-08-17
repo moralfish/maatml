@@ -561,18 +561,32 @@ def cmd_compile(
         "--option",
         help="Compiler option KEY=VALUE (repeatable). Format-agnostic.",
     ),
+    require_gated: bool = typer.Option(
+        False,
+        "--require-gated",
+        help="Refuse unless manifest.gate_evidence is a non-smoke production "
+        "pass (passed=true, smoke_gated=false). Promotion compiles should "
+        "set this so a rehearsal cannot become a device artifact.",
+    ),
 ) -> None:
     """Compile a portable export into a device-specific runtime artifact.
 
     Compilers are plugins: TensorRT plans, vLLM packages, GGUF quantize, etc.
-    Core writes ``target_manifest.json`` recording the source identity.
+    Core writes ``target_manifest.json`` recording the source identity and
+    ``promotion_eligible``.
     """
     from .compile import compile_export, parse_options
 
     discover_plugins()
     try:
         opts = parse_options(option)
-        result = compile_export(export_dir, target=target, out_dir=out, options=opts)
+        result = compile_export(
+            export_dir,
+            target=target,
+            out_dir=out,
+            options=opts,
+            require_gated=require_gated,
+        )
     except (FileNotFoundError, KeyError, ValueError, RuntimeError, ImportError) as exc:
         console.print(f"[red]compile failed[/] {exc}")
         raise typer.Exit(code=1) from exc
@@ -830,7 +844,21 @@ def cmd_ingest(
         ...,
         "--input",
         exists=True,
-        help="JSON or JSONL file to ingest",
+        help="JSON or JSONL file to ingest (annotation sidecar when --video is set)",
+    ),
+    video: Optional[Path] = typer.Option(
+        None,
+        "--video",
+        exists=True,
+        help="Extract frames named by the sidecar (frame / timestamp_ms / t) "
+        "into datasets/samples/images and set the request field to each PNG. "
+        "Needs ffmpeg. Annotation dialects stay in the sidecar, not in core.",
+    ),
+    fps: Optional[float] = typer.Option(
+        None,
+        "--fps",
+        help="Frames per second used when the sidecar has timestamp_ms or t "
+        "instead of frame (default 30).",
     ),
     field_map: Optional[list[str]] = typer.Option(
         None,
@@ -856,8 +884,10 @@ def cmd_ingest(
             sanitize_tag=sanitize,
             append=append,
             out_path=out,
+            video=video,
+            fps=fps,
         )
-    except (KeyError, ValueError, FileNotFoundError) as exc:
+    except (KeyError, ValueError, FileNotFoundError, RuntimeError) as exc:
         console.print(f"[red]ingest failed[/] {exc}")
         raise typer.Exit(code=1) from exc
     console.print(
