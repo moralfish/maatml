@@ -152,6 +152,21 @@ def _materialize_dataset(
     return written
 
 
+def _kill_process_group(pid: int) -> None:
+    """Stop the training child and anything it spawned.
+
+    POSIX: kill the process group created by ``start_new_session``. Windows
+    has no ``getpgid`` / ``killpg``; SIGTERM on the child is what we can
+    actually deliver there.
+    """
+    killpg = getattr(os, "killpg", None)
+    getpgid = getattr(os, "getpgid", None)
+    if killpg is not None and getpgid is not None:
+        killpg(getpgid(pid), signal.SIGTERM)
+        return
+    os.kill(pid, signal.SIGTERM)
+
+
 @contextmanager
 def _stopping(proc: "subprocess.Popen[str]") -> Any:
     """Pass SIGTERM/SIGINT on to the training subprocess, then re-raise.
@@ -167,7 +182,7 @@ def _stopping(proc: "subprocess.Popen[str]") -> Any:
 
     def stop(signum: int, _frame: Any) -> None:
         with contextlib.suppress(ProcessLookupError, OSError):
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            _kill_process_group(proc.pid)
         raise KeyboardInterrupt(f"stopped by signal {signum}")
 
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -181,7 +196,7 @@ def _stopping(proc: "subprocess.Popen[str]") -> Any:
                 signal.signal(saved, handler)
         if proc.poll() is None:
             with contextlib.suppress(ProcessLookupError, OSError):
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                _kill_process_group(proc.pid)
 
 
 def build_command(

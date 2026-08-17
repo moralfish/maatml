@@ -7,6 +7,7 @@ this module owns is the contract around the subprocess, not the optimizer.
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
 
 import pytest
@@ -210,8 +211,6 @@ def test_a_step_budget_replaces_the_epoch_count(tmp_path: Path) -> None:
 def test_a_signal_stops_the_child_and_records_the_abort(tmp_path: Path, monkeypatch) -> None:
     """Killing maatml must not leave kohya holding the GPU under a run record
     that still says `running`."""
-    import signal
-
     from maatml.training import diffusion
 
     md = _md(tmp_path, training=_training(tmp_path))
@@ -231,8 +230,7 @@ def test_a_signal_stops_the_child_and_records_the_abort(tmp_path: Path, monkeypa
             return 0
 
     monkeypatch.setattr(diffusion.subprocess, "Popen", lambda *a, **k: FakeProc())
-    monkeypatch.setattr(diffusion.os, "getpgid", lambda pid: pid)
-    monkeypatch.setattr(diffusion.os, "killpg", lambda pgid, sig: killed.append(pgid))
+    monkeypatch.setattr(diffusion, "_kill_process_group", lambda pid: killed.append(pid))
 
     # The handler is what a `kill <maatml pid>` reaches; call it as the OS would.
     def fire(*_args, **_kwargs):
@@ -248,3 +246,15 @@ def test_a_signal_stops_the_child_and_records_the_abort(tmp_path: Path, monkeypa
     runs = list_runs(md)
     assert runs[-1].status == "aborted"
     assert "signal" in (runs[-1].error or "")
+
+
+def test_kill_process_group_falls_back_to_os_kill_without_killpg(monkeypatch) -> None:
+    """Windows has no getpgid/killpg; the child itself is what we can stop."""
+    from maatml.training import diffusion
+
+    sent: list[tuple[int, int]] = []
+    monkeypatch.setattr(diffusion.os, "killpg", None, raising=False)
+    monkeypatch.setattr(diffusion.os, "getpgid", None, raising=False)
+    monkeypatch.setattr(diffusion.os, "kill", lambda pid, sig: sent.append((pid, sig)))
+    diffusion._kill_process_group(4242)
+    assert sent == [(4242, signal.SIGTERM)]
