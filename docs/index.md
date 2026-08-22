@@ -30,6 +30,7 @@ pip install "maatml[docs]"     # this site: mkdocs serve
 
 - [Get started](getting-started.md): install and serve your first model in 5 minutes
 - [The validator-gated lifecycle](lifecycle.md): the core idea, end to end
+- [Evidence](evidence.md): derived floors, the ship decision, operating points, named populations, licences, portable runs
 - [Serving & deployment](serving.md): `maatml serve`, ONNX/edge, and vLLM (VLMs)
 - [Plugin author guide](plugins.md): register trainers, validators, metrics, exporters, generators
 - [Examples](examples/index.md): four reference models, from support-ticket triage to a vLLM-servable VLM
@@ -46,7 +47,9 @@ Canonical references in the repo:
 |---------|---------|
 | `maatml prepare` | Build train/val/test splits |
 | `maatml train` | Fine-tune (LoRA / QLoRA / full / DPO / ORPO / vision / VLM) |
-| `maatml evaluate` | Validator + metrics + eval gates (`--gate` fails CI) |
+| `maatml evaluate` | Validator + metrics + eval gates (`--gate` fails CI; `--cache`, `--blind`) |
+| `maatml gates derive` / `ship-check` / `operating-point derive` | Floors from reports, the release verdict, the val-derived threshold ([evidence](evidence.md)) |
+| `maatml runs` / `report` | The run registry (`--pack` / `--adopt` to move a run); the evidence document from the records alone |
 | `maatml export` | Bundle checkpoint (safetensors / gguf / mlx / onnx) + `manifest.json` |
 | `maatml verify` | Recompute sha256 of manifest files |
 | `maatml serve` | JSON inference API, validator inline (`/predict?validate=1`) |

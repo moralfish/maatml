@@ -83,8 +83,9 @@ resisting the urge to train early:
 6. `maatml run <dir> --smoke` to prove the lifecycle walks end to end on real
    hardware, gated at the smoke tier. Expect it to fail its production gates;
    that run exists to prove plumbing, not quality.
-7. Only then a full run, and derive the gates **from its report** rather than
-   guessing them up front.
+7. Only then a full run, and derive the gates **from its report** with
+   `maatml gates derive <dir> --run RUN --write` rather than guessing them up
+   front.
 
 Steps 1 and 3 are the ones people skip, and skipping them is what turns a
 fine-tune into an unfalsifiable claim.
@@ -111,11 +112,18 @@ conversation_honesty_rate:   0.80  # 16/16 = 1.000, w95 0.806
 all_layers_pass_rate:        0.94  # 401/414 = 0.969, w95 0.947
 ```
 
-Derive them from the accepted release's own report after any run; a folder
-should carry a `scripts/derive_gates.py --write` rather than have floors typed
-by hand. Denominators differ by an order of magnitude in a multi-family model,
-so one shared floor is either unreachable for the small families or vacuous for
-the large ones.
+`maatml gates derive <dir> --run RUN --write` derives them from the accepted
+release's own report and writes the derivation beside each floor; a folder
+never carries its own floor script and floors are never typed by hand. The
+denominators come from the report's `counts`; a metric under `--min-n` rows is
+refused, and a run with a prediction cache (`evaluate --cache`) gets a
+cluster bootstrap over its group key instead of the row-level bound.
+Denominators differ by an order of magnitude in a multi-family model, so one
+shared floor is either unreachable for the small families or vacuous for the
+large ones — which is what `"slice:<field>=<value>"` gates and
+`evaluation.slices` are for. `--write` stamps `evaluation.gates_benchmark`
+with the split's hash; `evaluate --gate --strict-population` refuses to
+enforce floors derived on a different split.
 
 Wilson because the floor's distance from the observation should be set by how
 much evidence stands behind it: 401/414 yields 0.947, two points of slack, while
@@ -136,19 +144,39 @@ checkpoint saved, reloaded and produced output, not that the output was good.
 
 ## Whether a run ships
 
-Three parts, in order. Skipping the third makes release decisions wrong.
+`maatml ship-check <dir> CANDIDATE BASELINE` — three parts, in order. Skipping
+the third makes release decisions wrong.
 
 1. **Absolute** — every gated metric at or above its floor, at production tier.
 2. **Delta** — no gated metric regresses against the accepted release. Exempt
    moves smaller than one row at n>=30; one row is not evidence of decay.
-3. **Controlled replay** — when the benchmark changed, replay *both* checkpoints
-   over identical rows. A raw delta across a changed benchmark reads benchmark
-   hardening as model decay and rejects candidates that are actually better.
+3. **Controlled replay** — when the benchmark changed, `--replay` evaluates
+   *both* checkpoints over identical rows. A raw delta across a changed
+   benchmark reads benchmark hardening as model decay and rejects candidates
+   that are actually better.
 
 A gate is a regression test, so it is silent on any defect the candidate and the
 baseline **share**. Only a growing benchmark finds those — which also means
 floors must be re-derived from the benchmark in use, or they describe a
 population that no longer exists.
+
+## Populations are named, not implied
+
+`group_by` keeps correlated rows on one side of a split; it cannot say which
+side a camera lands on. `dataset.isolation` (the row hierarchy and the level
+each held-out population is disjoint at) and `dataset.pins` (whole groups,
+`field:value`) say it, and `prepare` refuses splits that violate the policy.
+Every prepare records a **benchmark version**; an in-place edit of
+`benchmark_samples` is refused — a new file is a new version. A
+`dataset.blind_samples` manifest is spent by `evaluate --blind` **once per
+frozen candidate**, after a production gate pass, never before. Thresholds
+come from val (`maatml operating-point derive`); a `--confirm-on-test` is a
+recorded **test spend**, and a second one on the same benchmark warns.
+
+Every source a row carries must be signed in the `dataset.attribution` table
+(licence, commercial-use, sign-off); a `no` / `unknown` commercial-use enters
+only under an `accepted-risk — name date` sign-off, and the corpus lock
+carries the acceptance into the export manifest.
 
 ## The contract is extracted, not authored
 

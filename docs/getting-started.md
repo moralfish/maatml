@@ -69,7 +69,9 @@ checkpoint has not earned the threshold yet. Train longer, grow the corpus
 (`maatml datagen` or `maatml ingest`), or decide the threshold was wrong and
 change it deliberately. The thresholds shipped with this example are marked
 pending re-measurement in `model.yml`, so treat them as a starting point rather
-than a target to tune against.
+than a target to tune against — and when you have a run you trust, let
+`maatml gates derive <model-dir> --run RUN --write` set them from its report
+instead of typing numbers (see [Evidence](evidence.md)).
 
 ## 6. Serve it
 
