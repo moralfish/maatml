@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for the Python package and per-model versions under `examples/`.
 
+## [0.12.0] - 2026-08-23
+
+### Added
+
+- **Batched evaluate.** A predictor may implement
+  `predict_batch(rows) -> list[str]` (one output per row, in order);
+  `evaluation.batch_size: N` or `maatml evaluate --batch-size N` then feeds
+  the split through it in chunks of N with one device sync per chunk, so a
+  GPU predictor stops idling between rows. Outputs, validation, slices, the
+  prediction cache and every metric are per row as before. The report
+  records `extras.batch_size`, and at N > 1 the per-row latency is the
+  chunk's wall time divided by its rows, flagged `extras.latency_amortized`.
+  `--batch-size` is a device knob, not an override: it combines with
+  `--gate`. A predictor without `predict_batch` runs one row at a time with a
+  warning; a chunk returning the wrong number of outputs is an error.
+  `training.select_by` and every other caller of the harness inherit the
+  file's `batch_size`.
+
 ## [0.11.2] - 2026-08-23
 
 ### Fixed

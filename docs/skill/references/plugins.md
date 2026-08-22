@@ -160,6 +160,10 @@ class MyPredictor:
     def predict(self, row):
         """Return the raw string the validator will judge."""
 
+    def predict_batch(self, rows):
+        """Optional. One string per row, same order; evaluation.batch_size > 1
+        feeds chunks through this instead of predict, one device sync per chunk."""
+
     def report_extras(self):
         """Optional. Counts the report should carry, e.g. truncated_inputs."""
         return {}
@@ -172,6 +176,16 @@ the metrics that hold when predictions below `threshold` are dropped, with
 `__counts__` for the rates. `maatml operating-point derive` sweeps it over a
 val cache without running inference, so it must be callable on a freshly
 instantiated predictor that never saw `setup()`.
+
+`predict_batch(rows) -> list[str]` is how a GPU predictor stops idling during
+`evaluate`: decode the chunk's inputs, run one forward, return one output per
+row in order. With `evaluation.batch_size: N` (or `evaluate --batch-size N`,
+a device knob rather than an override) the harness calls it in chunks of N;
+outputs, validation, slices and the prediction cache are per row as before,
+and the report's per-row latency is the chunk's time divided by its rows,
+flagged `latency_amortized` in extras. A predictor without it runs one row at
+a time whatever the batch size, with a warning; a chunk that returns the
+wrong number of outputs is an error, never padded.
 
 Whatever the predictor does to raw output — repairing braces, stripping fences —
 belongs in `report_extras` too, so the report says the pass rate includes a

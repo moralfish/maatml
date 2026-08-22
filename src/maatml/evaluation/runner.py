@@ -65,6 +65,7 @@ def evaluate_model(
     force: bool = False,
     label: Optional[str] = None,
     overrides: Optional[dict[str, Any]] = None,
+    batch_size: Optional[int] = None,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
@@ -79,7 +80,8 @@ def evaluate_model(
     current; ``force`` allows a repeat spend. ``overrides`` (already applied
     to ``model_def`` by ``--set``) are recorded on the report and refused
     with ``gate`` or ``blind``: a measurement under an override is never
-    gate evidence.
+    gate evidence. ``batch_size`` falls back to ``evaluation.batch_size``
+    (default 1) and only takes effect on a predictor with ``predict_batch``.
     """
     from ..runs import (
         evidence_fingerprint,
@@ -139,6 +141,13 @@ def evaluate_model(
     slices = resolve_slices(model_def)
     if cache_predictions is None:
         cache_predictions = bool(evaluation.get("cache_predictions", False))
+    if batch_size is None:
+        raw_batch = evaluation.get("batch_size", 1)
+        if isinstance(raw_batch, bool) or not isinstance(raw_batch, int) or raw_batch < 1:
+            raise GateConfigError("evaluation.batch_size must be an integer >= 1")
+        batch_size = raw_batch
+    elif batch_size < 1:
+        raise GateConfigError("--batch-size must be >= 1")
 
     rows_path: Optional[Path] = None
     blind_sha256: Optional[str] = None
@@ -224,6 +233,7 @@ def evaluate_model(
         strict_population=strict_population,
         rows_path=rows_path,
         overrides=overrides,
+        batch_size=batch_size,
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
 

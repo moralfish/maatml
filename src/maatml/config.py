@@ -289,6 +289,7 @@ _EVALUATION_KNOWN_KEYS = frozenset(
         "repair_braces",
         "slices",
         "cache_predictions",
+        "batch_size",
     }
 )
 

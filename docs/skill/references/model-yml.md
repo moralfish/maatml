@@ -176,6 +176,7 @@ evaluation:
     all_layers_pass_rate:     0.94  # 401/414 = 0.969, w95 0.947
   slices: [family, {field: spectrum, values: [rgb, ir]}]   # per-value pass rates
   cache_predictions: true   # keep <run>.predictions.jsonl beside the report
+  batch_size: 32           # rows per predict_batch call (default 1; needs the predictor's predict_batch)
 ```
 
 `slices` names row fields; the report carries `n`, `pass_rate` and the Wilson

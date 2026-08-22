@@ -730,6 +730,7 @@ def run_evaluation(
     strict_population: bool = False,
     rows_path: Optional[Path] = None,
     overrides: Optional[dict[str, Any]] = None,
+    batch_size: int = 1,
 ) -> Report:
     """Run the shared eval loop and write a :class:`Report` JSON.
 
@@ -743,7 +744,12 @@ def run_evaluation(
     evaluates a manifest that is not one of the prepared splits (a blind
     population); ``split`` then only names it. ``overrides`` are the
     ``--set`` values already applied to ``model_def``, recorded on the report
-    so a number measured under one is never read as the file's.
+    so a number measured under one is never read as the file's. ``batch_size``
+    > 1 feeds rows through the predictor's ``predict_batch(rows)`` in chunks
+    (one device sync per chunk); per-row latency is then the chunk's time
+    divided by its rows and the report says so (``latency_amortized``). A
+    predictor without ``predict_batch`` runs one row at a time whatever the
+    batch size, with a warning.
     """
     discover_plugins()
 
@@ -851,6 +857,24 @@ def run_evaluation(
         request_field = str(cfg.get("request_field") or cfg.get("raw_field") or "request")
 
     predict = pred_obj.predict if hasattr(pred_obj, "predict") else pred_obj
+    predict_batch = getattr(pred_obj, "predict_batch", None)
+    batch_size = max(1, int(batch_size))
+    if batch_size > 1 and not callable(predict_batch):
+        console.print(
+            f"[yellow]warning[/] batch_size={batch_size} but the predictor has no "
+            "predict_batch(rows); evaluating one row at a time"
+        )
+        batch_size = 1
+
+    def _sync() -> None:
+        if target_device.type == "mps":
+            import torch
+
+            torch.mps.synchronize()
+        elif target_device.type == "cuda":
+            import torch
+
+            torch.cuda.synchronize()
 
     # Evaluation generates once per row and writes its report at the end, so
     # without this it is a silent half hour that looks identical to a hang -
@@ -861,21 +885,29 @@ def run_evaluation(
     total = len(rows)
     every = max(1, total // 20)
 
-    for index, row in enumerate(rows, start=1):
-        t0 = time.perf_counter()
-        gen_text = predict(row)
-        if target_device.type == "mps":
-            import torch
+    def _chunks() -> Any:
+        """(index of the chunk's last row, rows, outputs, ms per row)."""
+        for start in range(0, total, batch_size):
+            chunk = rows[start : start + batch_size]
+            t0 = time.perf_counter()
+            if batch_size > 1:
+                outputs = list(predict_batch(chunk))  # type: ignore[misc]
+                if len(outputs) != len(chunk):
+                    raise ValueError(
+                        f"predict_batch returned {len(outputs)} outputs for "
+                        f"{len(chunk)} rows; one string per row is the contract"
+                    )
+            else:
+                outputs = [predict(chunk[0])]
+            _sync()
+            per_row = (time.perf_counter() - t0) * 1000.0 / len(chunk)
+            yield start + len(chunk), chunk, outputs, per_row
 
-            torch.mps.synchronize()
-        elif target_device.type == "cuda":
-            import torch
+    for last_index, chunk, outputs, elapsed in _chunks():
+        timings.extend([elapsed] * len(chunk))
+        index = last_index
 
-            torch.cuda.synchronize()
-        elapsed = (time.perf_counter() - t0) * 1000.0
-        timings.append(elapsed)
-
-        if index % every == 0 or index == total:
+        if (index // every) != ((index - len(chunk)) // every) or index == total:
             # Remaining time from the rows this run has actually generated, not
             # from a rate measured elsewhere: the same split takes minutes on
             # one machine and an hour on another, and a figure carried over
@@ -887,50 +919,51 @@ def run_evaluation(
                 f"(mean {mean_s:.1f}s)  ~{left_s / 60.0:.0f}m left"
             )
 
-        user_prompt = row.get(request_field)
-        if not isinstance(user_prompt, str):
-            # Fall back to classic text field when request_field is an image path.
-            alt = row.get("request")
-            user_prompt = alt if isinstance(alt, str) else None
+        for row, gen_text in zip(chunk, outputs, strict=True):
+            user_prompt = row.get(request_field)
+            if not isinstance(user_prompt, str):
+                # Fall back to classic text field when request_field is an image path.
+                alt = row.get("request")
+                user_prompt = alt if isinstance(alt, str) else None
 
-        if resolved_schema is None and resolved_contracts is None:
-            result = validate_fn(gen_text, user_prompt=user_prompt)
-        else:
-            kwargs: dict[str, Any] = {"user_prompt": user_prompt}
-            if resolved_schema is not None:
-                kwargs["schema_path"] = resolved_schema
-            if resolved_contracts is not None:
-                kwargs["contracts_path"] = resolved_contracts
-            result = validate_fn(gen_text, **kwargs)
-
-        item = RowEval(row=row, gen_text=gen_text, result=result, latency_ms=elapsed)
-        row_results.append(item)
-
-        if not result.ok and len(failures) < failures_to_keep:
-            input_val = row.get(request_field, row.get("request"))
-            if isinstance(input_val, str):
-                input_preview: Any = input_val[:500]
+            if resolved_schema is None and resolved_contracts is None:
+                result = validate_fn(gen_text, user_prompt=user_prompt)
             else:
-                input_preview = input_val
-            failures.append(
-                {
-                    "sample_id": row.get("sample_id"),
-                    "category": row.get("category"),
-                    "request": input_preview,
-                    request_field: input_preview,
-                    "raw_output": gen_text[:1500],
-                    "errors": [
-                        {
-                            "layer": e.layer,
-                            "code": e.code,
-                            "message": e.message,
-                            "location": e.location,
-                            "hint": e.hint,
-                        }
-                        for e in result.errors
-                    ],
-                }
-            )
+                kwargs: dict[str, Any] = {"user_prompt": user_prompt}
+                if resolved_schema is not None:
+                    kwargs["schema_path"] = resolved_schema
+                if resolved_contracts is not None:
+                    kwargs["contracts_path"] = resolved_contracts
+                result = validate_fn(gen_text, **kwargs)
+
+            item = RowEval(row=row, gen_text=gen_text, result=result, latency_ms=elapsed)
+            row_results.append(item)
+
+            if not result.ok and len(failures) < failures_to_keep:
+                input_val = row.get(request_field, row.get("request"))
+                if isinstance(input_val, str):
+                    input_preview: Any = input_val[:500]
+                else:
+                    input_preview = input_val
+                failures.append(
+                    {
+                        "sample_id": row.get("sample_id"),
+                        "category": row.get("category"),
+                        "request": input_preview,
+                        request_field: input_preview,
+                        "raw_output": gen_text[:1500],
+                        "errors": [
+                            {
+                                "layer": e.layer,
+                                "code": e.code,
+                                "message": e.message,
+                                "location": e.location,
+                                "hint": e.hint,
+                            }
+                            for e in result.errors
+                        ],
+                    }
+                )
 
     n = len(row_results)
     counts: dict[str, dict[str, int]] = {}
@@ -998,6 +1031,10 @@ def run_evaluation(
         extras["limit"] = int(limit)
     if overrides:
         extras["overrides"] = dict(overrides)
+    extras["batch_size"] = batch_size
+    if batch_size > 1:
+        # A chunk's wall time spread over its rows, not a per-row measurement.
+        extras["latency_amortized"] = True
     if split == "test" and rows_path is None:
         from ..data.populations import read_benchmark_state
 

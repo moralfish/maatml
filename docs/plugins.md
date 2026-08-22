@@ -10,7 +10,7 @@ task semantics** and register them via decorators.
 | trainer | `@register_trainer` | Architecture training loop |
 | validator | `@register_validator` | Out-of-model JSON / contract gate |
 | metrics | `@register_metrics` | Eval scoring |
-| predictor | `@register_predictor` | Checkpoint → text / structured output |
+| predictor | `@register_predictor` | Checkpoint → text / structured output; optional `predict_batch(rows)` for batched evaluate |
 | format | `@register_format` | Dataset prepare adapters |
 | sanitizer | `@register_sanitizer` | Regex PII / domain scrubbing |
 | transform | `@register_transform` | Text pre-tokenization |

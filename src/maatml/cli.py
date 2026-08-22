@@ -422,6 +422,12 @@ def cmd_evaluate(
     force: bool = typer.Option(
         False, "--force", help="With --blind: repeat a spend on the same frozen candidate"
     ),
+    batch_size: Optional[int] = typer.Option(
+        None,
+        "--batch-size",
+        help="Rows per predict_batch call (defaults to evaluation.batch_size, 1); the "
+        "outputs are identical, so this is a device knob, not an override",
+    ),
     set_overrides: Optional[list[str]] = typer.Option(
         None,
         "--set",
@@ -465,6 +471,7 @@ def cmd_evaluate(
             blind=blind,
             force=force,
             overrides=applied or None,
+            batch_size=batch_size,
         )
     except GateConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
