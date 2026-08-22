@@ -126,6 +126,27 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   teacher cache now starts with a `maatml.teacher_cache/1` provenance header
   (teacher, prompt pools by sha256, benchmark version), repeated on the
   distill card; a cache that recorded nothing still leaves no file.
+- **Runs travel**: `maatml runs <dir> --pack RUN` writes
+  `output/bundles/<run>.maatml-run.tar.gz` — the run directory (without
+  `checkpoint-*` unless `--with-checkpoints`), the run's eval reports, caches
+  and selection reports, the registry record, the environment, and the
+  model-folder fingerprint (`spec_hash`), every file hashed. `--adopt BUNDLE`
+  unpacks it into the receiving folder, verifies every file, refuses another
+  identity or `model.yml` fingerprint and an existing run without `--force`,
+  and appends the record with its paths rewritten (`RunRecord.adopted_from`).
+  Records move; jobs do not.
+- **Environment manifest** (`maatml.environment/1`: git SHA, Python, OS,
+  maatml / torch / transformers / peft / safetensors, CUDA, cuDNN, GPUs and
+  driver, MPS, determinism settings) on every train record
+  (`RunRecord.environment`) and every evaluate (`extras.environment`, and
+  `gates.environment` when gated). Every train record now also carries
+  `spec_hash` (`spec_fingerprint`).
+- **`maatml report`**: Markdown (default, `output/REPORT.md`) or CSV of
+  runs, every eval report's metrics with their derivation (k / n and Wilson
+  95 % from `counts`) beside the floor that judged them, slice and pathology
+  gates, slices, seed statistics and spends — generated from `runs.jsonl`,
+  `output/eval/*.json` and `output/seeds/*.json` alone, so it regenerates
+  byte-identically and never reads `model.yml`.
 
 ## [0.10.0] - 2026-08-17
 

@@ -584,14 +584,17 @@ every other item writes into it.
 
 **Runs travel**
 
-- `maatml runs pack RUN` / `maatml runs adopt BUNDLE`: the run directory
-  (without `checkpoint-*` unless `--with-checkpoints`), its `runs.jsonl`
-  record, eval reports and caches, and an environment manifest; `adopt`
-  refuses a bundle whose model-folder fingerprint does not match without
-  `--force` (test). Records move; jobs do not — no remote executor
-- Environment manifest on every `train` and `evaluate` record: git SHA,
-  Python, torch, maatml, CUDA / cuDNN, GPU and driver, OS, determinism
-  settings (test)
+- `maatml runs <dir> --pack RUN` / `--adopt BUNDLE` (options on `runs`, since
+  its positional model dir leaves no room for a subcommand): the run
+  directory (without `checkpoint-*` unless `--with-checkpoints`), its
+  `runs.jsonl` record, eval reports and caches, and an environment manifest,
+  every file hashed; `--adopt` refuses a bundle whose model-folder
+  fingerprint (`spec_hash` of the effective `model.yml`) or identity does not
+  match without `--force` (test). Records move; jobs do not — no remote
+  executor
+- Environment manifest on every `train` record and every `evaluate` report
+  and gate payload: git SHA, Python, torch, maatml, CUDA / cuDNN, GPU and
+  driver, OS, determinism settings (test)
 - `maatml report`: Markdown / CSV of runs, floors with derivation, slices,
   seed statistics and test spends, generated from the report schema alone
   (test: output regenerates from `output/eval/*.json` and `runs.jsonl` with
@@ -609,8 +612,8 @@ both spends (test); `evaluate --blind` on an unchanged fingerprint exits
 non-zero without `--force` (test); `prepare` exits non-zero for a source with
 `commercial-use: no` and no accepted-risk sign-off (test); `distill` with a
 benchmark prompt in its pool exits non-zero before any teacher call (test); a
-"never fires" fixture fails the smoke tier (test); `runs adopt` of a packed run
-reproduces `maatml runs` output on the receiving machine (test);
+"never fires" fixture fails the smoke tier (test); `runs --adopt` of a packed
+run reproduces `maatml runs` output on the receiving machine (test);
 `maatml report` regenerates byte-identically from reports and `runs.jsonl`
 (test).
 

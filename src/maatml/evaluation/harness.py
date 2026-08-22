@@ -981,7 +981,16 @@ def run_evaluation(
     # Anything the predictor did to the raw model output (brace repair) or to
     # the input (truncation at the token budget) is reported, so a pass rate is
     # never quietly a measurement of a repaired output.
-    extras: dict[str, Any] = {"max_input_tokens": max_input_tokens, "split_sha256": split_sha256}
+    from ..environment import environment_manifest
+
+    environment = environment_manifest(
+        getattr(model_def, "model_dir", None) if model_def is not None else None
+    )
+    extras: dict[str, Any] = {
+        "max_input_tokens": max_input_tokens,
+        "split_sha256": split_sha256,
+        "environment": environment,
+    }
     if limit is not None and limit > 0:
         extras["limit"] = int(limit)
     if split == "test" and rows_path is None:
@@ -1055,6 +1064,7 @@ def run_evaluation(
         # A smoke-tier pass is recorded as such wherever it is stored, so it
         # can never be read as a production gate pass later.
         gates_payload["smoke"] = bool(smoke_gated)
+        gates_payload["environment"] = environment
         # Floors describe the population they were derived on. Enforcing them
         # against another split mixes distribution shift into the regression
         # signal, so the mismatch is always recorded and, strictly, refused.

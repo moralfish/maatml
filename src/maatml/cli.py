@@ -1307,9 +1307,44 @@ def cmd_runs(
         help="Include trainer timing metrics (runtime, samples/s) in --compare",
     ),
     limit: Optional[int] = typer.Option(None, "--limit", help="Only the most recent N runs"),
+    pack: Optional[str] = typer.Option(
+        None,
+        "--pack",
+        help="Write RUN as a portable bundle (run dir without checkpoint-*, its eval "
+        "reports and caches, the record, the environment) under output/bundles/",
+    ),
+    with_checkpoints: bool = typer.Option(
+        False, "--with-checkpoints", help="Include checkpoint-* dirs in --pack"
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Bundle path or directory for --pack"),
+    adopt: Optional[Path] = typer.Option(
+        None, "--adopt", help="Unpack a bundle into this model folder and append its record"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="--adopt: accept a bundle from another model.yml / identity, or overwrite a run",
+    ),
 ) -> None:
     """List training runs recorded in <model-dir>/output/runs.jsonl."""
     md = load_model_def(model_dir)
+    if pack or adopt:
+        from .portable import BundleError, adopt_bundle, pack_run
+
+        try:
+            if pack and adopt:
+                raise BundleError("--pack and --adopt are separate operations")
+            if pack:
+                path = pack_run(md, pack, out=out, with_checkpoints=with_checkpoints)
+                console.print(f"[green]packed[/] {pack} -> {path}")
+            else:
+                assert adopt is not None
+                rec = adopt_bundle(md, adopt, force=force)
+                console.print(f"[green]adopted[/] {rec.run_id} -> {rec.out_dir}")
+        except BundleError as exc:
+            console.print(f"[red]runs refused[/] {exc}")
+            raise typer.Exit(code=1) from exc
+        return
     records = list_runs(md)
     if limit is not None and limit > 0:
         records = records[-limit:]
@@ -1336,6 +1371,33 @@ def cmd_runs(
             f"{rec.run_id}  [{rec.status}]  smoke={rec.smoke}  "
             f"device={rec.device or '-'}  {rec.out_dir}{metrics}{spends}"
         )
+
+
+@app.command("report")
+def cmd_report(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    format: str = typer.Option("md", "--format", help="md | csv"),
+    out: Optional[Path] = typer.Option(
+        None, "--out", help="Write here instead of stdout (default output/REPORT.md / .csv)"
+    ),
+    stdout: bool = typer.Option(False, "--stdout", help="Print instead of writing a file"),
+) -> None:
+    """Runs, floors with their derivation, slices, seed statistics and spends —
+    regenerated from output/runs.jsonl, output/eval/*.json and output/seeds/*.json alone."""
+    from .report import build_report, render_csv, render_markdown
+
+    md = load_model_def(model_dir)
+    data = build_report(md.output_dir)
+    if format not in ("md", "csv"):
+        raise typer.BadParameter("--format must be md or csv", param_hint="--format")
+    text = render_markdown(data) if format == "md" else render_csv(data)
+    if stdout:
+        console.print(text, markup=False, highlight=False, end="")
+        return
+    target = out if out is not None else md.output_dir / f"REPORT.{format}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    console.print(f"[green]report[/] {target}")
 
 
 @app.command("scaffold")

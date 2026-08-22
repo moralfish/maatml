@@ -41,6 +41,9 @@ maatml run  <model-dir>              # the whole walk, stopping at the first fai
 maatml run  <model-dir> --smoke      # same walk, smoke tier
 maatml plan <model-dir>              # what is stale and why (= run --dry-run)
 maatml runs <model-dir> [--compare]  # what has been recorded
+maatml runs <model-dir> --pack RUN   # the run, its evidence and its record, in one tar
+maatml runs <model-dir> --adopt B    # unpack a bundle here; refuses another recipe
+maatml report <model-dir>            # runs, floors with derivation, slices, seeds, spends
 ```
 
 `run` skips steps whose fingerprint still matches — effective config, declared
@@ -186,10 +189,13 @@ from documentation is a different version's contract, and it drifts silently.
   contract name. Check which one a site means.
 - **Train elsewhere, export at home.** `runs.jsonl` is written where training
   ran and does not travel with the weights; without it an export records
-  `gated: false` for a run that passed. Carry the whole run directory
-  (`--exclude 'checkpoint-*'`), never a list of name patterns — a pattern list
-  carries only what someone remembered to name, and a missing
-  `chat_template.jinja` is an adapter that cannot build a prompt.
+  `gated: false` for a run that passed. Carry the run with
+  `maatml runs <dir> --pack RUN` and `--adopt` it at home: the whole run
+  directory (without `checkpoint-*`), its eval reports and caches, the record
+  and the environment, hashed and checked against the receiving `model.yml`.
+  Never a list of name patterns — a pattern list carries only what someone
+  remembered to name, and a missing `chat_template.jinja` is an adapter that
+  cannot build a prompt.
 - **A flag that changes nothing.** A backend taking `**_ignored` accepts flags
   it does not honour, silently. Confirm the behaviour, not the exit code.
 - **Silence is not success.** An empty reply, a quiet log, a stalled stream.

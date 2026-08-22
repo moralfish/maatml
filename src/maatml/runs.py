@@ -61,6 +61,11 @@ class RunRecord(BaseModel):
     selection: Optional[dict[str, Any]] = None
     # Subdirectory of out_dir the run id resolves to (None = the final weights).
     selected_checkpoint: Optional[str] = None
+    # The machine this run trained on (maatml.environment/1); evaluate records
+    # its own under gates.environment.
+    environment: Optional[dict[str, Any]] = None
+    # Set by `runs --adopt`: {bundle, spec_hash, forced}.
+    adopted_from: Optional[dict[str, Any]] = None
 
 
 def _utc_now() -> str:
@@ -276,6 +281,16 @@ def adopt_run(model_def: ModelDefinition, run_id: str) -> Optional[RunRecord]:
     return record
 
 
+def spec_fingerprint(model_def: ModelDefinition) -> str:
+    """sha256 of the effective model definition: the model-folder fingerprint
+    a run is produced under (the same hash ``run_metadata.json`` records)."""
+    import hashlib
+
+    spec = model_def.model_dump(mode="json", exclude={"model_dir"})
+    body = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def start_run(
     model_def: ModelDefinition,
     *,
@@ -288,6 +303,8 @@ def start_run(
     trial: Optional[dict[str, Any]] = None,
 ) -> RunRecord:
     """Create a new ``running`` run and append it to ``runs.jsonl``."""
+    from .environment import environment_manifest
+
     rid = run_id or make_run_id()
     ckpt = Path(out_dir) if out_dir else (model_def.checkpoints_dir / rid)
     ckpt.mkdir(parents=True, exist_ok=True)
@@ -301,8 +318,9 @@ def start_run(
         device=device,
         profile=profile,
         out_dir=str(ckpt.resolve()),
-        spec_hash=spec_hash,
+        spec_hash=spec_hash or spec_fingerprint(model_def),
         trial=trial,
+        environment=environment_manifest(model_def.model_dir),
     )
     _append_record(model_def, record)
     return record
