@@ -271,7 +271,9 @@ _DATASET_KNOWN_KEYS = frozenset(
         "test_fraction",
     }
 )
-_EVALUATION_KNOWN_KEYS = frozenset({"predictor", "validator", "metrics", "gates", "repair_braces"})
+_EVALUATION_KNOWN_KEYS = frozenset(
+    {"predictor", "validator", "metrics", "gates", "repair_braces", "slices", "cache_predictions"}
+)
 
 
 def config_key_warnings(md: ModelDefinition) -> list[str]:

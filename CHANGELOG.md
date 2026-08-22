@@ -8,6 +8,29 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+Evidence layer, first slice: versioned eval reports, per-field slices, and a
+prediction cache the next derivations read from (ROADMAP: Evidence layer).
+
+### Added
+
+- **`report_version`** on every eval report. `Report.read(strict=True)`
+  refuses a report that predates the field or lacks a required one, so a
+  derivation never reads a missing number as zero; lenient reads still load
+  older reports as version 0.
+- **`evaluation.slices`**. A list of row fields (or `{field, values}`); the
+  harness reports `n`, `pass_rate` and the Wilson 95 % lower bound per value,
+  `(absent)` for rows without the field, and `n: 0` with no rate for a
+  declared value that has no rows. Rendered in the markdown summary.
+- **`evaluate --cache` / `evaluation.cache_predictions`**. Writes
+  `<run>.predictions.jsonl` beside the report: a `maatml.predictions/1`
+  header (split, content sha256, checkpoint, report name) and one line per
+  row with the row's metadata, the raw output, the validator verdict and the
+  parsed object. `read_predictions` refuses a torn or foreign file. The
+  report's `extras` now always carry `split_sha256` and, when cached,
+  `predictions_cache`.
+- `maatml.evaluation.stats`: `wilson_interval` / `wilson_lower`, exact at the
+  0 and n boundaries, raising on `n <= 0`.
+
 ## [0.10.0] - 2026-08-17
 
 Gated device compiles, a shared capture path for custom servers, video-frame

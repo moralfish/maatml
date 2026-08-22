@@ -57,19 +57,22 @@ def evaluate_model(
     limit: Optional[int] = None,
     gate: bool = False,
     smoke: bool = False,
+    cache_predictions: Optional[bool] = None,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
     The single implementation behind ``maatml evaluate`` and the lifecycle
     runner's evaluate step, so both enforce gates, resolve the token budget,
     and record results on the run identically. Configuration problems raise
-    before the checkpoint is resolved or loaded.
+    before the checkpoint is resolved or loaded. ``cache_predictions`` falls
+    back to ``evaluation.cache_predictions`` when not given.
     """
     from ..runs import get_run, resolve_checkpoint, update_run_gates
     from . import predictors as _predictors  # noqa: F401  register built-ins
     from .harness import (
         _resolve_metrics,
         resolve_gate_spec,
+        resolve_slices,
         resolve_validator,
         run_evaluation,
         uses_smoke_gates,
@@ -105,6 +108,9 @@ def evaluate_model(
     if validator is not None:
         resolve_validator(validator)
     _resolve_metrics(metrics)
+    slices = resolve_slices(model_def)
+    if cache_predictions is None:
+        cache_predictions = bool(evaluation.get("cache_predictions", False))
 
     ckpt = resolve_checkpoint(model_def, checkpoint)
     model_def.eval_dir.mkdir(parents=True, exist_ok=True)
@@ -130,6 +136,8 @@ def evaluate_model(
         enforce_gates=gate,
         gate_spec=gate_spec,
         smoke_gated=smoke_gated,
+        slices=slices,
+        cache_predictions=cache_predictions,
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
 
@@ -212,6 +220,18 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
         lines.extend(["", "## Per-class", ""])
         for label, vals in sorted(report.per_class.items()):
             lines.append(f"- {label}: {_format_class_stats(vals)}")
+    if report.slices:
+        lines.extend(["", "## Slices", ""])
+        for field_name, values in sorted(report.slices.items()):
+            for value, stats in sorted(values.items()):
+                n = int(stats.get("n", 0))
+                if n == 0:
+                    lines.append(f"- {field_name}={value}: n=0 (no rate)")
+                    continue
+                lines.append(
+                    f"- {field_name}={value}: n={n} "
+                    f"pass_rate={stats['pass_rate']:.3f} w95={stats['pass_rate_w95']:.3f}"
+                )
     if report.baseline_delta:
         lines.extend(["", "## Baseline delta", ""])
         for k, v in sorted(report.baseline_delta.items()):

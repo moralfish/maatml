@@ -19,8 +19,10 @@ from rich.console import Console
 from ..config import ModelDefinition, get_dataset_cfg
 from ..device import resolve_device
 from ..registry import METRICS, PREDICTORS, VALIDATORS, discover_plugins
-from ..utils.io import iter_jsonl, write_json
+from ..utils.io import iter_jsonl, read_json, sha256_file, write_json
 from ..validation.base import ValidationResult
+from .predictions import prediction_row, predictions_path, write_predictions
+from .stats import wilson_lower
 
 console = Console()
 
@@ -33,9 +35,47 @@ class LatencyStats(BaseModel):
     n: int
 
 
+# Bumped when a field a consumer relies on changes shape. A report that does
+# not carry the key predates the versioned schema and reads back as 0.
+REPORT_VERSION = 1
+_REPORT_REQUIRED = ("report_version", "model_id", "dataset", "n", "metrics")
+
+
+class ReportSchemaError(ValueError):
+    """A report is missing a field this schema version requires."""
+
+
+def validate_report_payload(payload: Any, *, strict: bool = False) -> dict[str, Any]:
+    """Check a raw report object before it becomes a :class:`Report`.
+
+    Lenient by default so reports written before ``report_version`` still read
+    (as version 0). ``strict`` is for consumers that derive from a report
+    (floors, sweeps): a missing field there is a wrong number later, not a
+    missing key now.
+    """
+    if not isinstance(payload, dict):
+        raise ReportSchemaError("report is not a JSON object")
+    if "report_version" not in payload:
+        payload = {**payload, "report_version": 0}
+    if strict:
+        missing = [key for key in _REPORT_REQUIRED if key not in payload]
+        if missing:
+            raise ReportSchemaError(
+                f"report is missing required field(s) {missing}; "
+                f"re-run evaluate with maatml >= report_version {REPORT_VERSION}"
+            )
+        if int(payload["report_version"]) < 1:
+            raise ReportSchemaError(
+                "report predates report_version 1 (no version field); "
+                "re-run evaluate before deriving from it"
+            )
+    return payload
+
+
 class Report(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    report_version: int = REPORT_VERSION
     model_id: str = ""
     name: str = ""
     version: str = ""
@@ -44,6 +84,8 @@ class Report(BaseModel):
     n: int = 0
     metrics: dict[str, float] = Field(default_factory=dict)
     per_class: dict[str, dict[str, float]] = Field(default_factory=dict)
+    # evaluation.slices: field -> value -> {n, passed, pass_rate, pass_rate_w95}
+    slices: dict[str, dict[str, dict[str, float]]] = Field(default_factory=dict)
     latency_ms: Optional[LatencyStats] = None
     baseline_delta: Optional[dict[str, float]] = None
     sample_failures: list[dict] = Field(default_factory=list)
@@ -56,8 +98,9 @@ class Report(BaseModel):
         return write_json(path, self.model_dump(mode="json"))
 
     @classmethod
-    def read(cls, path: str | Path) -> "Report":
-        return cls.model_validate_json(Path(path).read_text(encoding="utf-8"))
+    def read(cls, path: str | Path, *, strict: bool = False) -> "Report":
+        payload = validate_report_payload(read_json(path), strict=strict)
+        return cls.model_validate(payload)
 
 
 class GateConfigError(ValueError):
@@ -407,6 +450,93 @@ def _category_buckets(row_results: list[RowEval]) -> dict[str, dict[str, float]]
     }
 
 
+@dataclass(frozen=True)
+class SliceSpec:
+    """One ``evaluation.slices`` entry: a row field, optionally with declared values."""
+
+    field: str
+    values: Optional[tuple[str, ...]] = None
+
+
+SLICE_ABSENT = "(absent)"
+
+
+def resolve_slices(model_def: Any) -> list[SliceSpec]:
+    """Parse ``evaluation.slices``: a list of field names or ``{field, values}``."""
+    evaluation = getattr(model_def, "evaluation", None)
+    spec = evaluation.get("slices") if isinstance(evaluation, dict) else None
+    if spec is None:
+        return []
+    if not isinstance(spec, list):
+        raise GateConfigError("evaluation.slices must be a list of field names or {field, values}")
+    out: list[SliceSpec] = []
+    for entry in spec:
+        if isinstance(entry, str) and entry.strip():
+            out.append(SliceSpec(field=entry.strip()))
+            continue
+        if isinstance(entry, dict) and isinstance(entry.get("field"), str):
+            values = entry.get("values")
+            if values is not None and not isinstance(values, list):
+                raise GateConfigError(
+                    f"evaluation.slices[{entry['field']!r}].values must be a list"
+                )
+            out.append(
+                SliceSpec(
+                    field=entry["field"].strip(),
+                    values=tuple(str(v) for v in values) if values is not None else None,
+                )
+            )
+            continue
+        raise GateConfigError(
+            f"evaluation.slices entry {entry!r} is not a field name or {{field, values}}"
+        )
+    seen: set[str] = set()
+    for item in out:
+        if item.field in seen:
+            raise GateConfigError(f"evaluation.slices names {item.field!r} twice")
+        seen.add(item.field)
+    return out
+
+
+def slice_buckets(
+    row_results: list[RowEval], specs: Sequence[SliceSpec]
+) -> dict[str, dict[str, dict[str, float]]]:
+    """Validator pass rate per value of each declared row field.
+
+    A value with rows reports ``n`` / ``passed`` / ``pass_rate`` and the Wilson
+    95 % lower bound; a declared value with no rows reports ``n: 0`` and no
+    rate, so an empty slice can never read as ``0.0``. Rows lacking the field
+    land under ``(absent)`` rather than vanishing from the denominator.
+    """
+    out: dict[str, dict[str, dict[str, float]]] = {}
+    for spec in specs:
+        counts: dict[str, dict[str, int]] = {}
+        if spec.values:
+            for value in spec.values:
+                counts[value] = {"n": 0, "passed": 0}
+        for item in row_results:
+            raw = item.row.get(spec.field)
+            value = SLICE_ABSENT if raw is None else str(raw)
+            bucket = counts.setdefault(value, {"n": 0, "passed": 0})
+            bucket["n"] += 1
+            if item.result.ok:
+                bucket["passed"] += 1
+        stats: dict[str, dict[str, float]] = {}
+        for value, bucket in counts.items():
+            n = bucket["n"]
+            if n == 0:
+                stats[value] = {"n": 0.0}
+                continue
+            stats[value] = {
+                "n": float(n),
+                "passed": float(bucket["passed"]),
+                "pass_rate": bucket["passed"] / n,
+                "pass_rate_w95": wilson_lower(bucket["passed"], n),
+            }
+        out[spec.field] = stats
+    return out
+
+
 def _resolve_metrics(metrics_fn: Any) -> list[Callable[..., dict[str, float]]]:
     """Resolve one metrics entry, or a list of them, to callables.
 
@@ -478,11 +608,16 @@ def run_evaluation(
     enforce_gates: bool = False,
     gate_spec: Optional[dict[str, float]] = None,
     smoke_gated: bool = False,
+    slices: Optional[Sequence[SliceSpec]] = None,
+    cache_predictions: bool = False,
 ) -> Report:
     """Run the shared eval loop and write a :class:`Report` JSON.
 
     ``gate_spec`` overrides the configured minima (the lifecycle runner passes
     the smoke tier); ``smoke_gated`` records that the pass came from that tier.
+    ``slices`` adds per-value pass rates for the named row fields;
+    ``cache_predictions`` keeps every row's output beside the report, keyed to
+    the split's content hash, for derivations that must not re-run inference.
     """
     discover_plugins()
 
@@ -490,9 +625,11 @@ def run_evaluation(
     dataset_dir = Path(dataset_dir)
     out_path = Path(out_path)
 
-    rows = list(iter_jsonl(dataset_dir / f"{split}.jsonl"))
+    split_path = dataset_dir / f"{split}.jsonl"
+    rows = list(iter_jsonl(split_path))
     if not rows:
-        raise ValueError(f"No rows in {dataset_dir / f'{split}.jsonl'}")
+        raise ValueError(f"No rows in {split_path}")
+    split_sha256 = sha256_file(split_path)
     if limit is not None and limit > 0:
         rows = rows[:limit]
 
@@ -693,11 +830,14 @@ def run_evaluation(
         metrics[key] = value
 
     per_class = _category_buckets(row_results)
+    slice_stats = slice_buckets(row_results, slices or [])
 
     # Anything the predictor did to the raw model output (brace repair) or to
     # the input (truncation at the token budget) is reported, so a pass rate is
     # never quietly a measurement of a repaired output.
-    extras: dict[str, Any] = {"max_input_tokens": max_input_tokens}
+    extras: dict[str, Any] = {"max_input_tokens": max_input_tokens, "split_sha256": split_sha256}
+    if limit is not None and limit > 0:
+        extras["limit"] = int(limit)
     report_extras = getattr(pred_obj, "report_extras", None)
     if callable(report_extras):
         extras.update(report_extras() or {})
@@ -718,6 +858,31 @@ def run_evaluation(
     identity_version = model_def.version if model_def else ""
     identity_id = model_def.model_id if model_def else str(checkpoint_dir)
     report_task = task or (model_def.task if model_def else "")
+
+    if cache_predictions:
+        cache_path = predictions_path(out_path)
+        write_predictions(
+            cache_path,
+            header={
+                "checkpoint": str(checkpoint_dir),
+                "split": split,
+                "split_path": str(split_path),
+                "split_sha256": split_sha256,
+                "report": out_path.name,
+                "limit": int(limit) if limit is not None and limit > 0 else None,
+            },
+            rows=(
+                prediction_row(
+                    row=item.row,
+                    gen_text=item.gen_text,
+                    result=item.result,
+                    latency_ms=item.latency_ms,
+                    drop_fields=(request_field, "request"),
+                )
+                for item in row_results
+            ),
+        )
+        extras["predictions_cache"] = cache_path.name
 
     gates_payload: Optional[dict[str, Any]] = None
     passed: Optional[bool] = None
@@ -740,6 +905,7 @@ def run_evaluation(
         n=n,
         metrics=metrics,
         per_class=per_class,
+        slices=slice_stats,
         latency_ms=latency_stats(timings),
         baseline_delta=baseline_delta(metrics, baseline_path),
         sample_failures=failures,

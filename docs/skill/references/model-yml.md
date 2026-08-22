@@ -81,7 +81,17 @@ evaluation:
     routing_json_parse_rate:  0.85  # 117/128 = 0.914, w95 0.853
     routing_team_known_rate:  0.85  # 117/128 = 0.914, w95 0.853
     all_layers_pass_rate:     0.94  # 401/414 = 0.969, w95 0.947
+  slices: [family, {field: spectrum, values: [rgb, ir]}]   # per-value pass rates
+  cache_predictions: true   # keep <run>.predictions.jsonl beside the report
 ```
+
+`slices` names row fields; the report carries `n`, `pass_rate` and the Wilson
+95% lower bound per value, with `(absent)` for rows lacking the field and
+`n: 0` (no rate) for a declared value with no rows. `cache_predictions` (or
+`evaluate --cache`) keeps every row's output, verdict and metadata keyed to the
+split's content hash, so floors and sweeps derive from the predictions the
+report measured instead of re-running inference. Reports carry
+`report_version`; `Report.read(strict=True)` refuses one that predates it.
 
 Each floor is the **Wilson 95% lower bound of the observed rate at that
 metric's own denominator**, floored to two places, with the measurement written

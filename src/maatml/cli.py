@@ -359,6 +359,13 @@ def cmd_evaluate(
         "(e.g. 0.03). Repeatable; metric=0.05 overrides one metric, and an "
         "override may also name an ungated metric.",
     ),
+    cache: Optional[bool] = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help="Keep every row's prediction beside the report "
+        "(<run>.predictions.jsonl) so floors and threshold sweeps derive from "
+        "it without re-running inference; defaults to evaluation.cache_predictions",
+    ),
 ) -> None:
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
@@ -382,6 +389,7 @@ def cmd_evaluate(
             max_input_tokens=max_input_tokens,
             limit=limit,
             gate=gate,
+            cache_predictions=cache,
         )
     except GateConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
