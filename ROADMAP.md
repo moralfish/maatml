@@ -45,8 +45,8 @@ are ordered but unversioned.
 | v0.9 | Serving-bundle exports (MLX / ONNX), loud distill, content-level benchmark leakage check, lint/type gate | Done |
 | v0.9.1 | Pluggable compile / serve runtimes, actionable `vision_scene` feedback, `maatml audit`, slimmer examples | Done |
 | v0.10 | Gated device compiles (`compile --require-gated`), shared capture path, `ingest --video`, Anthropic Messages wire, `diffusion_lora` | Done |
+| v0.11 | Evidence layer: derived gates, operating points, named populations, licensed sources, portable runs | Done |
 | — | Slim artifact distribution | Planned |
-| — | Evidence layer: derived gates, operating points, named populations, portable runs | Planned |
 
 ## Non-goals
 
@@ -438,10 +438,11 @@ ledger, `verify --require-signature`.
 through the local backend in CPU-free CI preserving the digest; a file
 injected into a bundle after export fails `verify` (test).
 
-## Evidence layer: derived gates, named populations, portable runs (Planned)
+## v0.11: Evidence layer: derived gates, named populations, portable runs (Done)
 
-Unversioned until it ships (status rule above); the number is assigned at
-release.
+Shipped in 0.11.0 (#34). Two exit criteria need hardware and stay open as
+noted below: a real `checkpoint-*` loading under `training.select_by`, and
+the vision example on CPU-free CI.
 
 v0.10 ends at "the run finished and the floors passed". Everything between a
 finished run and an honest floor — deriving the floor, choosing the operating

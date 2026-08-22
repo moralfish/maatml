@@ -6,10 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for the Python package and per-model versions under `examples/`.
 
-## [Unreleased]
+## [0.11.0] - 2026-08-23
 
-Evidence layer, first slice: versioned eval reports, per-field slices, and a
-prediction cache the next derivations read from (ROADMAP: Evidence layer).
+The Evidence layer (#34): everything between a finished run and an honest
+floor, as lifecycle rather than per-folder scripts. Versioned eval reports
+with slices, counts and a prediction cache; floors derived by `maatml gates
+derive` with tiers and a population stamp; `maatml ship-check`; the operating
+point derived on val with recorded test spends; named populations
+(isolation, pins, benchmark version, a once-only blind evaluate, seed
+studies); a sidecar licence table gating `prepare` and a corpus lock in the
+export manifest; checkpoint selection on val, pathology signatures failing
+the smoke tier, `distill` refusing held-out prompts; and runs that travel
+(`runs --pack` / `--adopt`, an environment manifest on every record,
+`maatml report` from the records alone).
 
 ### Added
 
