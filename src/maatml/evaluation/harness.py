@@ -962,6 +962,14 @@ def run_evaluation(
     extras: dict[str, Any] = {"max_input_tokens": max_input_tokens, "split_sha256": split_sha256}
     if limit is not None and limit > 0:
         extras["limit"] = int(limit)
+    # The cut the predictor decoded at, so a later sweep knows the cache cannot
+    # be re-filtered below it.
+    evaluation_cfg = getattr(model_def, "evaluation", None) if model_def is not None else None
+    if isinstance(evaluation_cfg, dict):
+        op = evaluation_cfg.get("operating_point")
+        op_key = op.get("threshold_key") if isinstance(op, dict) else None
+        if isinstance(op_key, str) and op_key in evaluation_cfg:
+            extras["decode_threshold"] = {"key": op_key, "value": evaluation_cfg[op_key]}
     report_extras = getattr(pred_obj, "report_extras", None)
     if callable(report_extras):
         extras.update(report_extras() or {})

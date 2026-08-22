@@ -587,6 +587,100 @@ def cmd_gates_derive(
         console.print(f"[green]wrote[/] {len(result.floors)} floors -> {path} ({section}.gates)")
 
 
+operating_point_app = typer.Typer(
+    no_args_is_help=True, help="Choose a decision threshold on val and spend test once"
+)
+app.add_typer(operating_point_app, name="operating-point")
+
+
+@operating_point_app.command("derive")
+def cmd_operating_point_derive(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    run: str = typer.Option(
+        ..., "--run", help="Run id whose --split report carries a predictions cache"
+    ),
+    split: str = typer.Option(
+        "val", "--split", help="Split the cache was evaluated on (never test)"
+    ),
+    grid: list[float] = typer.Option([], "--grid", help="Override evaluation.operating_point.grid"),
+    write: bool = typer.Option(
+        False, "--write", help="Write evaluation.<threshold_key> into model.yml with provenance"
+    ),
+    confirm_on_test: bool = typer.Option(
+        False,
+        "--confirm-on-test",
+        help="Evaluate the run once on test at the chosen threshold and record the spend "
+        "on the run (implies --write)",
+    ),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    """Sweep the predictor's rescore() over cached val predictions and pick under the budget."""
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .evaluation.harness import GateConfigError
+    from .evaluation.operating_point import (
+        OperatingPointError,
+        derive_operating_point,
+        render,
+        write_artifact,
+        write_threshold,
+    )
+
+    try:
+        result = derive_operating_point(md, run=run, split=split, grid=grid or None)
+    except (OperatingPointError, GateConfigError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    artifact = write_artifact(md, result)
+    for line in render(result):
+        console.print(line)
+    console.print(f"[dim]sweep -> {artifact}[/]")
+    if not (write or confirm_on_test):
+        return
+    try:
+        path = write_threshold(md.resolve("model.yml"), result, artifact)
+    except OperatingPointError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+    assert result.chosen is not None
+    chosen = float(result.chosen["threshold"])
+    console.print(f"[green]wrote[/] evaluation.{result.spec.threshold_key}: {chosen:g} -> {path}")
+    if not confirm_on_test:
+        return
+
+    from .evaluation.runner import evaluate_model
+    from .runs import record_test_spend
+
+    # The written cut is what test is spent at; the in-memory model_def is
+    # updated so the predictor decodes at it without re-reading the file.
+    md.evaluation[result.spec.threshold_key] = chosen
+    try:
+        report, report_path = evaluate_model(
+            md, checkpoint=run, split="test", device=device, gate=True, cache_predictions=True
+        )
+    except (GateConfigError, KeyError) as exc:
+        raise typer.BadParameter(_user_message(exc), param_hint="evaluation") from exc
+    spend = {
+        "benchmark_sha256": report.extras.get("split_sha256"),
+        "split": "test",
+        "threshold_key": result.spec.threshold_key,
+        "threshold": chosen,
+        "report": report_path.name,
+        "val_split_sha256": result.split_sha256,
+    }
+    rec, prior = record_test_spend(md, run, spend)
+    if rec is None:
+        console.print(
+            f"[yellow]warning[/] {run} is not in runs.jsonl; the test spend was not recorded"
+        )
+    elif prior:
+        console.print(
+            f"[yellow]warning[/] test split {str(spend['benchmark_sha256'])[:16]} was already "
+            f"spent {prior} time(s) for {run}; this confirmation is the {prior + 1}th"
+        )
+    else:
+        console.print(f"[green]confirmed on test[/] {report_path.name}; spend recorded on {run}")
+
+
 @app.command("ship-check")
 def cmd_ship_check(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
@@ -1166,9 +1260,13 @@ def cmd_runs(
         if rec.metrics:
             top = list(rec.metrics.items())[:3]
             metrics = " " + " ".join(f"{k}={v:.4g}" for k, v in top)
+        spends = ""
+        if rec.test_spends:
+            benches = sorted({str(s.get("benchmark_sha256"))[:8] for s in rec.test_spends})
+            spends = f"  test-spends={len(rec.test_spends)} ({', '.join(benches)})"
         console.print(
             f"{rec.run_id}  [{rec.status}]  smoke={rec.smoke}  "
-            f"device={rec.device or '-'}  {rec.out_dir}{metrics}"
+            f"device={rec.device or '-'}  {rec.out_dir}{metrics}{spends}"
         )
 
 

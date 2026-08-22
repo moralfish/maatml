@@ -49,6 +49,9 @@ class RunRecord(BaseModel):
     smoke_gated: Optional[bool] = None
     # Optional HPO / sweep trial metadata (rank-0 writes only).
     trial: Optional[dict[str, Any]] = None
+    # Every time the test split was spent to confirm a val-chosen operating
+    # point: {benchmark_sha256, split, threshold_key, threshold, report, at}.
+    test_spends: Optional[list[dict[str, Any]]] = None
 
 
 def _utc_now() -> str:
@@ -350,6 +353,24 @@ def update_run_gates(
     updated = RunRecord(**payload)
     _append_record(model_def, updated)
     return updated
+
+
+def record_test_spend(
+    model_def: ModelDefinition, run_id: str, spend: dict[str, Any]
+) -> tuple[Optional[RunRecord], int]:
+    """Append a test spend to a run; returns the record and how many spends the
+    same benchmark already had (so a caller can say the test was spent twice)."""
+    rec = get_run(model_def, run_id)
+    if rec is None:
+        return None, 0
+    spends = list(rec.test_spends or [])
+    prior = sum(1 for s in spends if s.get("benchmark_sha256") == spend.get("benchmark_sha256"))
+    spends.append({**spend, "at": _utc_now()})
+    payload = rec.model_dump()
+    payload["test_spends"] = spends
+    updated = RunRecord(**payload)
+    _append_record(model_def, updated)
+    return updated, prior
 
 
 def latest_completed_run(model_def: ModelDefinition) -> Optional[RunRecord]:

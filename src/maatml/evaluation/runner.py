@@ -118,9 +118,12 @@ def evaluate_model(
         cache_predictions = bool(evaluation.get("cache_predictions", False))
 
     ckpt = resolve_checkpoint(model_def, checkpoint)
+    from .operating_point import report_name
+
     target_dir = Path(out_dir) if out_dir is not None else model_def.eval_dir
     target_dir.mkdir(parents=True, exist_ok=True)
-    out_path = target_dir / f"{ckpt.name}.json"
+    # A val report is named for its split so it never overwrites the test one.
+    out_path = target_dir / f"{report_name(ckpt.name, split)}.json"
     budget = (
         max_input_tokens if max_input_tokens is not None else model_def.packaging.max_input_tokens
     )

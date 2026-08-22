@@ -278,6 +278,7 @@ _EVALUATION_KNOWN_KEYS = frozenset(
         "metrics",
         "gates",
         "gates_benchmark",
+        "operating_point",
         "repair_braces",
         "slices",
         "cache_predictions",

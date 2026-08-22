@@ -53,6 +53,19 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   over the current test split under `output/eval/replay/` without touching
   either run's own evidence). Exit 1 on DO NOT SHIP; `--json` for the
   verdict. `evaluate_model` gained `out_dir` and `record_gates` for this.
+- **`maatml operating-point derive`** and `evaluation.operating_point`
+  (`threshold_key`, `objective`, `budget: {metric, max}`, `sources`, `grid`).
+  Sweeps the predictor's new `rescore(rows, threshold)` over a val prediction
+  cache, skips cuts below the one the cache was decoded at, picks the best
+  objective under the budget, writes `<run>.<split>.operating_point.json`,
+  and with `--write` sets `evaluation.<threshold_key>` in `model.yml` with
+  the sweep as provenance. `--confirm-on-test` evaluates once on test at the
+  written cut and records a **test spend** on the run (`RunRecord.test_spends`;
+  listed by `maatml runs`; a repeat on the same benchmark warns). Deriving on
+  test is refused.
+- Reports for non-test splits are named `<run>.<split>.json` (and their
+  caches likewise), so a val evaluate no longer overwrites the test report.
+  `extras.decode_threshold` records the cut the predictor decoded at.
 - **Population stamp**: with `--gate`, the gates payload records the split's
   `benchmark_sha256`; when `evaluation.gates_benchmark` names another split
   evaluate warns (`population_mismatch`), and `--strict-population` refuses.

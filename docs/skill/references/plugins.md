@@ -156,6 +156,14 @@ class MyPredictor:
         return {}
 ```
 
+A predictor whose output carries a score may also implement
+`rescore(rows, threshold) -> dict[str, float]`: given the rows of a prediction
+cache (`evaluate --cache`; each row has `row`, `output`, `parsed`, `ok`), return
+the metrics that hold when predictions below `threshold` are dropped, with
+`__counts__` for the rates. `maatml operating-point derive` sweeps it over a
+val cache without running inference, so it must be callable on a freshly
+instantiated predictor that never saw `setup()`.
+
 Whatever the predictor does to raw output — repairing braces, stripping fences —
 belongs in `report_extras` too, so the report says the pass rate includes a
 repair rather than hiding it.

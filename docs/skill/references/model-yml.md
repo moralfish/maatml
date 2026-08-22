@@ -122,6 +122,36 @@ A metrics plugin makes its rates derivable by reporting the evidence behind
 them: `{"recall": 0.315, "__counts__": {"recall": [69087, 219079]}}`. Without
 counts a metric is floored at its observed value and the comment says so.
 
+### Operating point
+
+A decision threshold is chosen on val and spent once on test:
+
+```yaml
+evaluation:
+  score_thresh: 0.40   # written by operating-point derive; comment carries the sweep
+  operating_point:
+    threshold_key: score_thresh     # the evaluation key the predictor reads
+    objective: recall               # maximised
+    budget: {metric: fp_per_frame, max: 1.0}   # must hold at the chosen cut
+    sources: [meva, virat]          # rows whose `dataset` is one of these
+    grid: {start: 0.05, stop: 0.95, step: 0.05}
+```
+
+```bash
+maatml evaluate <dir> --checkpoint R --split val --cache       # writes R.val.json + cache
+maatml operating-point derive <dir> --run R --write            # sweep, pick, write
+maatml operating-point derive <dir> --run R --confirm-on-test  # spend test once
+```
+
+The sweep calls the predictor's `rescore(rows, threshold)` over the cached val
+predictions (see the plugins reference), skips grid points below the cut the
+cache was decoded at, picks the best objective under the budget (ties to the
+lower budget, then the higher cut), writes `<run>.<split>.operating_point.json`
+and, with `--write`, the threshold line with its provenance. `--confirm-on-test`
+evaluates once on test at the written cut and records the spend on the run;
+`maatml runs` lists spends per benchmark, and a second spend on the same
+benchmark warns. Deriving on the test split is refused.
+
 Gate values are a number or `{min, tier}`; `tier: advisory` is reported and
 recorded but never fails a step. A gate may name a slice:
 `"slice:camera=G339": 0.45` gates that slice's pass rate, and a slice with no
