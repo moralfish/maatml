@@ -60,7 +60,17 @@ teacher problem.
 
 Responses are cached on prompt hash **plus teacher model and revision**, so
 `--replay` reproduces exactly the same accepted corpus and a different teacher
-never silently reuses another's labels.
+never silently reuses another's labels. The cache's first line is a
+provenance header — teacher, every prompt pool it labelled (by sha256), and
+the benchmark version current when it was recorded — and the distill card
+repeats it.
+
+`distill` refuses a pool that overlaps a held-out population before any
+teacher call: a prompt whose text is in `benchmark_samples`, `blind_samples`
+or the prepared val / test split, or a pool row tagged with a pinned group
+(`dataset.pins`). A teacher label for one of those would enter training as
+a memorised answer to a question the benchmark asks. Fix the pool; the
+held-out manifests are not prompt sources.
 
 The teacher is any OpenAI-compatible endpoint, named by
 `MAATML_TEACHER_BASE_URL` and `MAATML_TEACHER_API_KEY` — so serving one locally

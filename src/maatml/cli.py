@@ -197,6 +197,12 @@ def cmd_train(
     ),
     device: str = typer.Option("auto", "--device", help="auto|mps|cpu|cuda"),
     seed: Optional[int] = typer.Option(None, "--seed"),
+    seeds: Optional[int] = typer.Option(
+        None,
+        "--seeds",
+        help="Train the same recipe N times (seed, seed+1, ...) and record the spread "
+        "under output/seeds/; gates derive --seed-study takes the per-metric minimum",
+    ),
     resume: Optional[str] = typer.Option(
         None,
         "--resume",
@@ -218,8 +224,42 @@ def cmd_train(
     _boot_plugins(md)
     arch = normalize_architecture(md.architecture)
     trainer = TRAINERS.get(md.architecture) or TRAINERS.require(arch)
-    result = trainer(md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume)
-    console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
+    from .training.selection import render_selection, select_checkpoint
+
+    if seeds is None:
+        result = trainer(md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume)
+        console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
+        selection = select_checkpoint(md, Path(result.out_dir).name, device=device, smoke=smoke)
+        if selection:
+            for line in render_selection(selection):
+                console.print(line)
+        return
+    if seeds < 2:
+        raise typer.BadParameter("--seeds needs at least 2", param_hint="--seeds")
+    if resume:
+        raise typer.BadParameter(
+            "--seeds cannot resume; each seed is its own run", param_hint="--resume"
+        )
+    from .training.seeds import load_seed_study, render_seed_study, write_seed_study
+
+    base = seed if seed is not None else 0
+    seed_values = [base + i for i in range(seeds)]
+    runs: list[dict[str, Any]] = []
+    for value in seed_values:
+        console.print(f"[cyan]seeds[/] {len(runs) + 1}/{seeds} seed={value}")
+        result = trainer(md, smoke=smoke, limit=limit, device=device, seed=value)
+        metrics = dict(result.metrics or {})
+        selection = select_checkpoint(md, Path(result.out_dir).name, device=device, smoke=smoke)
+        if selection:
+            chosen = next(c for c in selection["candidates"] if c["name"] == selection["selected"])
+            metrics[f"select:{selection['metric']}"] = chosen["value"]
+            console.print(f"  selected {selection['selected']} ({chosen['value']:.4f})")
+        runs.append({"run_id": Path(result.out_dir).name, "seed": value, "metrics": metrics})
+    label = f"{runs[0]['run_id']}-x{seeds}"
+    path = write_seed_study(md, label=label, seeds=seed_values, runs=runs, smoke=smoke)
+    for line in render_seed_study(load_seed_study(path)):
+        console.print(line)
+    console.print(f"[green]seed study[/] {path}")
 
 
 @app.command("sweep")
@@ -359,6 +399,28 @@ def cmd_evaluate(
         "(e.g. 0.03). Repeatable; metric=0.05 overrides one metric, and an "
         "override may also name an ungated metric.",
     ),
+    cache: Optional[bool] = typer.Option(
+        None,
+        "--cache/--no-cache",
+        help="Keep every row's prediction beside the report "
+        "(<run>.predictions.jsonl) so floors and threshold sweeps derive from "
+        "it without re-running inference; defaults to evaluation.cache_predictions",
+    ),
+    strict_population: bool = typer.Option(
+        False,
+        "--strict-population",
+        help="With --gate: refuse when evaluation.gates_benchmark is not this "
+        "split's content hash, instead of warning",
+    ),
+    blind: bool = typer.Option(
+        False,
+        "--blind",
+        help="Spend dataset.blind_samples once on a candidate whose production gate pass "
+        "is current (gates enforced; writes <run>.blind.json; recorded on the run)",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="With --blind: repeat a spend on the same frozen candidate"
+    ),
 ) -> None:
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
@@ -382,6 +444,10 @@ def cmd_evaluate(
             max_input_tokens=max_input_tokens,
             limit=limit,
             gate=gate,
+            cache_predictions=cache,
+            strict_population=strict_population,
+            blind=blind,
+            force=force,
         )
     except GateConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
@@ -459,11 +525,10 @@ def cmd_export(
     md = load_model_def(model_dir)
     _boot_plugins(md)
     from .export.bundle import export_model, run_parity_check
-    from .runs import get_run
+    from .runs import run_id_for_checkpoint
 
     ckpt = resolve_checkpoint(md, checkpoint)
-    run_rec = get_run(md, ckpt.name)
-    run_id = run_rec.run_id if run_rec else ckpt.name
+    run_id = run_id_for_checkpoint(md, ckpt)
     out_dir = out if out is not None else (md.output_dir / "export" / run_id)
     try:
         export_model(md, ckpt, out_dir, format=format, run_id=run_id)
@@ -504,6 +569,285 @@ def cmd_verify(
 
 manifest_app = typer.Typer(no_args_is_help=True, help="Inspect or amend export manifests")
 app.add_typer(manifest_app, name="manifest")
+
+
+gates_app = typer.Typer(no_args_is_help=True, help="Derive evaluation gates from measured reports")
+app.add_typer(gates_app, name="gates")
+
+
+@gates_app.command("derive")
+def cmd_gates_derive(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    run: list[str] = typer.Option(
+        [],
+        "--run",
+        help="Run id or report path; repeat to take the per-metric minimum across seeds",
+    ),
+    seed_study: Optional[Path] = typer.Option(
+        None,
+        "--seed-study",
+        help="A train --seeds record under output/seeds/; its runs join --run",
+    ),
+    metric: list[str] = typer.Option(
+        [],
+        "--metric",
+        help="Metric (or slice:<field>=<value>) to floor; defaults to the configured "
+        "gates, then to every rate the reports carry counts for",
+    ),
+    section: str = typer.Option("evaluation", "--section", help="evaluation or smoke"),
+    min_n: int = typer.Option(30, "--min-n", help="Refuse a rate with a thinner denominator"),
+    min_groups: int = typer.Option(
+        3, "--min-groups", help="Refuse a clustered rate spanning fewer groups"
+    ),
+    cluster_by: str = typer.Option(
+        "family",
+        "--cluster-by",
+        help="Row field whose values are resampled by the cluster bootstrap "
+        "(needs the run's predictions cache)",
+    ),
+    write: bool = typer.Option(
+        False, "--write", help="Replace <section>.gates in model.yml and stamp gates_benchmark"
+    ),
+) -> None:
+    """Wilson / cluster-bootstrap floors from eval reports, with the measurement beside each."""
+    md = load_model_def(model_dir)
+    from .evaluation.gates import DeriveError, derive_gates, write_gates
+    from .evaluation.harness import GateConfigError, gate_tiers
+
+    runs = list(run)
+    if seed_study is not None:
+        from .training.seeds import load_seed_study
+
+        try:
+            study = load_seed_study(seed_study)
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="--seed-study") from exc
+        runs.extend(r["run_id"] for r in study.get("runs") or [])
+    if not runs:
+        raise typer.BadParameter("give --run (repeatable) or --seed-study", param_hint="--run")
+    try:
+        result = derive_gates(
+            md,
+            runs=runs,
+            metrics=metric or None,
+            section=section,
+            min_n=min_n,
+            min_groups=min_groups,
+            cluster_by=cluster_by,
+        )
+        tiers = gate_tiers(md, smoke=section == "smoke")
+    except (DeriveError, GateConfigError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(f"benchmark {result.benchmark_sha256[:16]}  runs {', '.join(result.runs)}")
+    for line in result.lines():
+        console.print(line)
+    for refusal in result.refusals:
+        console.print(f"[yellow]refused[/] {refusal}")
+    if write:
+        try:
+            path = write_gates(md.resolve("model.yml"), result, tiers)
+        except DeriveError as exc:
+            console.print(f"[red]{exc}[/]")
+            raise typer.Exit(code=1) from exc
+        console.print(f"[green]wrote[/] {len(result.floors)} floors -> {path} ({section}.gates)")
+
+
+operating_point_app = typer.Typer(
+    no_args_is_help=True, help="Choose a decision threshold on val and spend test once"
+)
+app.add_typer(operating_point_app, name="operating-point")
+
+
+@operating_point_app.command("derive")
+def cmd_operating_point_derive(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    run: str = typer.Option(
+        ..., "--run", help="Run id whose --split report carries a predictions cache"
+    ),
+    split: str = typer.Option(
+        "val", "--split", help="Split the cache was evaluated on (never test)"
+    ),
+    grid: list[float] = typer.Option([], "--grid", help="Override evaluation.operating_point.grid"),
+    write: bool = typer.Option(
+        False, "--write", help="Write evaluation.<threshold_key> into model.yml with provenance"
+    ),
+    confirm_on_test: bool = typer.Option(
+        False,
+        "--confirm-on-test",
+        help="Evaluate the run once on test at the chosen threshold and record the spend "
+        "on the run (implies --write)",
+    ),
+    device: str = typer.Option("auto", "--device"),
+) -> None:
+    """Sweep the predictor's rescore() over cached val predictions and pick under the budget."""
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .evaluation.harness import GateConfigError
+    from .evaluation.operating_point import (
+        OperatingPointError,
+        derive_operating_point,
+        render,
+        write_artifact,
+        write_threshold,
+    )
+
+    try:
+        result = derive_operating_point(md, run=run, split=split, grid=grid or None)
+    except (OperatingPointError, GateConfigError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+    artifact = write_artifact(md, result)
+    for line in render(result):
+        console.print(line)
+    console.print(f"[dim]sweep -> {artifact}[/]")
+    if not (write or confirm_on_test):
+        return
+    try:
+        path = write_threshold(md.resolve("model.yml"), result, artifact)
+    except OperatingPointError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(code=1) from exc
+    assert result.chosen is not None
+    chosen = float(result.chosen["threshold"])
+    console.print(f"[green]wrote[/] evaluation.{result.spec.threshold_key}: {chosen:g} -> {path}")
+    if not confirm_on_test:
+        return
+
+    from .evaluation.runner import evaluate_model
+    from .runs import record_test_spend
+
+    # The written cut is what test is spent at; the in-memory model_def is
+    # updated so the predictor decodes at it without re-reading the file.
+    md.evaluation[result.spec.threshold_key] = chosen
+    try:
+        report, report_path = evaluate_model(
+            md, checkpoint=run, split="test", device=device, gate=True, cache_predictions=True
+        )
+    except (GateConfigError, KeyError) as exc:
+        raise typer.BadParameter(_user_message(exc), param_hint="evaluation") from exc
+    spend = {
+        "benchmark_sha256": report.extras.get("split_sha256"),
+        "split": "test",
+        "threshold_key": result.spec.threshold_key,
+        "threshold": chosen,
+        "report": report_path.name,
+        "val_split_sha256": result.split_sha256,
+    }
+    rec, prior = record_test_spend(md, run, spend)
+    if rec is None:
+        console.print(
+            f"[yellow]warning[/] {run} is not in runs.jsonl; the test spend was not recorded"
+        )
+    elif prior:
+        console.print(
+            f"[yellow]warning[/] test split {str(spend['benchmark_sha256'])[:16]} was already "
+            f"spent {prior} time(s) for {run}; this confirmation is the {prior + 1}th"
+        )
+    else:
+        console.print(f"[green]confirmed on test[/] {report_path.name}; spend recorded on {run}")
+
+
+@app.command("ship-check")
+def cmd_ship_check(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    candidate: str = typer.Argument(
+        ..., help="Candidate run id (its eval report under output/eval/)"
+    ),
+    baseline: str = typer.Argument(..., help="Accepted release run id"),
+    max_regression: Optional[float] = typer.Option(
+        None,
+        "--max-regression",
+        help="Fixed allowed drop per gated metric instead of the one-row tolerance",
+    ),
+    replay: bool = typer.Option(
+        False,
+        "--replay",
+        help="When the two reports were measured on different splits, re-evaluate both "
+        "checkpoints over the current test split (under output/eval/replay/) and judge those",
+    ),
+    device: str = typer.Option("auto", "--device"),
+    as_json: bool = typer.Option(False, "--json", help="Print the verdict as JSON"),
+) -> None:
+    """Absolute floors, delta vs the baseline, and a controlled replay when the split changed."""
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .evaluation.harness import (
+        GateConfigError,
+        Report,
+        ReportSchemaError,
+        effective_gates,
+        gate_tiers,
+    )
+    from .evaluation.shipcheck import render_verdict, ship_check
+
+    def _load(run: str, directory: Path) -> Report:
+        path = directory / f"{run}.json"
+        if not path.is_file():
+            raise typer.BadParameter(f"no eval report for {run!r} at {path}", param_hint="run")
+        try:
+            return Report.read(path, strict=True)
+        except ReportSchemaError as exc:
+            raise typer.BadParameter(f"{run}: {exc}", param_hint="run") from exc
+
+    try:
+        gates = effective_gates(md)
+        tiers = gate_tiers(md)
+    except GateConfigError as exc:
+        raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
+    if not gates:
+        raise typer.BadParameter(
+            "no evaluation.gates configured; nothing to check against", param_hint="evaluation"
+        )
+
+    cand = _load(candidate, md.eval_dir)
+    base = _load(baseline, md.eval_dir)
+    replayed = False
+    cand_split = (cand.gates or {}).get("benchmark_sha256") or cand.extras.get("split_sha256")
+    base_split = (base.gates or {}).get("benchmark_sha256") or base.extras.get("split_sha256")
+    if replay and cand_split != base_split:
+        from .evaluation.runner import evaluate_model
+
+        replay_dir = md.eval_dir / "replay"
+        console.print(
+            f"[cyan]replay[/] splits differ ({str(cand_split)[:16]} vs {str(base_split)[:16]}); "
+            f"re-evaluating both over the current test split -> {replay_dir}"
+        )
+        try:
+            for run in (candidate, baseline):
+                evaluate_model(
+                    md,
+                    checkpoint=run,
+                    split="test",
+                    device=device,
+                    gate=True,
+                    out_dir=replay_dir,
+                    record_gates=False,
+                )
+        except (GateConfigError, KeyError) as exc:
+            raise typer.BadParameter(_user_message(exc), param_hint="evaluation") from exc
+        cand = _load(candidate, replay_dir)
+        base = _load(baseline, replay_dir)
+        replayed = True
+
+    verdict = ship_check(
+        cand,
+        base,
+        gates=gates,
+        tiers=tiers,
+        max_regression=max_regression,
+        replayed=replayed,
+        candidate_label=candidate,
+        baseline_label=baseline,
+    )
+    if as_json:
+        import json as _json
+
+        console.print(_json.dumps(verdict.as_dict(), indent=2, sort_keys=True))
+    else:
+        for line in render_verdict(verdict):
+            console.print(line)
+    if not verdict.ship:
+        raise typer.Exit(code=1)
 
 
 @manifest_app.command("amend")
@@ -963,9 +1307,44 @@ def cmd_runs(
         help="Include trainer timing metrics (runtime, samples/s) in --compare",
     ),
     limit: Optional[int] = typer.Option(None, "--limit", help="Only the most recent N runs"),
+    pack: Optional[str] = typer.Option(
+        None,
+        "--pack",
+        help="Write RUN as a portable bundle (run dir without checkpoint-*, its eval "
+        "reports and caches, the record, the environment) under output/bundles/",
+    ),
+    with_checkpoints: bool = typer.Option(
+        False, "--with-checkpoints", help="Include checkpoint-* dirs in --pack"
+    ),
+    out: Optional[Path] = typer.Option(None, "--out", help="Bundle path or directory for --pack"),
+    adopt: Optional[Path] = typer.Option(
+        None, "--adopt", help="Unpack a bundle into this model folder and append its record"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="--adopt: accept a bundle from another model.yml / identity, or overwrite a run",
+    ),
 ) -> None:
     """List training runs recorded in <model-dir>/output/runs.jsonl."""
     md = load_model_def(model_dir)
+    if pack or adopt:
+        from .portable import BundleError, adopt_bundle, pack_run
+
+        try:
+            if pack and adopt:
+                raise BundleError("--pack and --adopt are separate operations")
+            if pack:
+                path = pack_run(md, pack, out=out, with_checkpoints=with_checkpoints)
+                console.print(f"[green]packed[/] {pack} -> {path}")
+            else:
+                assert adopt is not None
+                rec = adopt_bundle(md, adopt, force=force)
+                console.print(f"[green]adopted[/] {rec.run_id} -> {rec.out_dir}")
+        except BundleError as exc:
+            console.print(f"[red]runs refused[/] {exc}")
+            raise typer.Exit(code=1) from exc
+        return
     records = list_runs(md)
     if limit is not None and limit > 0:
         records = records[-limit:]
@@ -982,10 +1361,43 @@ def cmd_runs(
         if rec.metrics:
             top = list(rec.metrics.items())[:3]
             metrics = " " + " ".join(f"{k}={v:.4g}" for k, v in top)
+        spends = ""
+        if rec.test_spends:
+            benches = sorted({str(s.get("benchmark_sha256"))[:8] for s in rec.test_spends})
+            spends = f"  test-spends={len(rec.test_spends)} ({', '.join(benches)})"
+        if rec.blind_spends:
+            spends += f"  blind-spends={len(rec.blind_spends)}"
         console.print(
             f"{rec.run_id}  [{rec.status}]  smoke={rec.smoke}  "
-            f"device={rec.device or '-'}  {rec.out_dir}{metrics}"
+            f"device={rec.device or '-'}  {rec.out_dir}{metrics}{spends}"
         )
+
+
+@app.command("report")
+def cmd_report(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    format: str = typer.Option("md", "--format", help="md | csv"),
+    out: Optional[Path] = typer.Option(
+        None, "--out", help="Write here instead of stdout (default output/REPORT.md / .csv)"
+    ),
+    stdout: bool = typer.Option(False, "--stdout", help="Print instead of writing a file"),
+) -> None:
+    """Runs, floors with their derivation, slices, seed statistics and spends —
+    regenerated from output/runs.jsonl, output/eval/*.json and output/seeds/*.json alone."""
+    from .report import build_report, render_csv, render_markdown
+
+    md = load_model_def(model_dir)
+    data = build_report(md.output_dir)
+    if format not in ("md", "csv"):
+        raise typer.BadParameter("--format must be md or csv", param_hint="--format")
+    text = render_markdown(data) if format == "md" else render_csv(data)
+    if stdout:
+        console.print(text, markup=False, highlight=False, end="")
+        return
+    target = out if out is not None else md.output_dir / f"REPORT.{format}"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(text, encoding="utf-8")
+    console.print(f"[green]report[/] {target}")
 
 
 @app.command("scaffold")

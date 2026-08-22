@@ -108,10 +108,13 @@ line; `maatml --debug <command>` prints the traceback.
 | Command | What it does |
 | --- | --- |
 | `run` | The whole lifecycle in one command: prepare, train, evaluate (gated), export, verify. Skips steps that are already fresh |
-| `prepare` | Build `train`/`val`/`test` splits from the seed corpus |
-| `train` | Fine-tune the model (`--smoke`, `--resume auto\|PATH`, `--set K=V`) |
+| `prepare` | Build `train`/`val`/`test` splits from the seed corpus; enforces `dataset.isolation` / `pins`, records the benchmark version and the corpus lock, refuses unsigned sources (`dataset.attribution`) |
+| `train` | Fine-tune the model (`--smoke`, `--resume auto\|PATH`, `--set K=V`, `--seeds N`); `training.select_by` picks the checkpoint on val |
 | `sweep` | Offline grid HPO over `--param K=a,b` |
-| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss. The token budget defaults to `packaging.max_input_tokens` |
+| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss, `--cache` keeps per-row predictions, `--blind` spends the blind manifest once, `--strict-population` refuses floors from another split. The token budget defaults to `packaging.max_input_tokens` |
+| `gates derive` | Floors from a run's report: Wilson 95 % at each metric's own denominator, cluster bootstrap from a cache, `--seed-study`; `--write` rewrites `evaluation.gates` with the derivation beside each floor |
+| `ship-check` | `CANDIDATE BASELINE`: absolute, delta and population verdict in one; `--replay` re-evaluates both over the current test split |
+| `operating-point derive` | Sweep the predictor's `rescore` over a val cache under a budget; `--write` the cut, `--confirm-on-test` spends test once |
 | `export` | Deployable bundle + `manifest.json` (`--format`, `--parity`) |
 | `verify` | Recompute sha256 of an export against its `manifest.json` |
 | `serve` | JSON inference API; `--enforce` (422), `--max-retries`, `--auth-token`, `--capture` |
@@ -119,7 +122,8 @@ line; `maatml --debug <command>` prints the traceback.
 | `distill` | Validator-gated teacher labels over a prompt pool (`--replay` offline) |
 | `mint` | Preference pairs (`chosen`/`rejected`) from validator-scored candidates |
 | `ingest` | Import external samples (`--map field=col`, `--sanitize tag`) |
-| `runs` | List recorded training runs (`--compare` tabulates their metrics) |
+| `runs` | List recorded training runs (`--compare` tabulates their metrics); `--pack RUN` / `--adopt BUNDLE` carry a run, its evidence and its record between machines |
+| `report` | Runs, floors with their derivation, slices, pathologies, seed statistics and spends, regenerated from `output/` alone (`--format md\|csv`) |
 | `plan` | Show which lifecycle steps are stale (alias for `run --dry-run`) |
 | `plugins` | List discovered trainers, validators, and metrics |
 | `audit` | Check the environment, plugins, and a model folder; exits 1 on problems |
@@ -162,6 +166,26 @@ maatml serve    examples/support-ticket-triage/           # JSON inference API
 
 For a **multimodal** walkthrough (image → description, servable by vLLM) see
 [examples/vision-vlm/](examples/vision-vlm/).
+
+## From a passed gate to a claim
+
+A green `evaluate --gate` is the start of the evidence, not the end of it.
+The same CLI derives the floors, chooses the operating point, names the
+populations, and carries the run home:
+
+```bash
+maatml gates derive <model-dir> --run RUN --write      # Wilson floors, derivation beside each
+maatml operating-point derive <model-dir> --run RUN --write --confirm-on-test
+maatml ship-check <model-dir> CANDIDATE BASELINE        # absolute + delta + population
+maatml evaluate <model-dir> --blind                     # once per frozen candidate
+maatml runs <model-dir> --pack RUN                      # → --adopt on the machine that exports
+maatml report <model-dir>                               # everything above, from the records alone
+```
+
+`model.yml` declares the rest: `dataset.isolation` / `pins` / `blind_samples`
+for populations, `dataset.attribution` for the licence table every source
+must be signed in, `training.select_by` for checkpoint selection on val.
+[docs/evidence.md](docs/evidence.md) walks through it.
 
 ## Batch scripts
 

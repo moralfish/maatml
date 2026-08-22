@@ -13,6 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 # used to fall through resolve_load_dtype as "fp32", so `precision: bfloat16`
 # or a typo trained at a precision nobody asked for.
 VALID_PRECISIONS = ("bf16", "fp16", "fp32")
+# Read by the lifecycle after training, not by any trainer.
+LIFECYCLE_TRAINING_KEYS = frozenset({"select_by"})
 
 
 def reject_unknown_training_keys(
@@ -26,7 +28,7 @@ def reject_unknown_training_keys(
     ``training_config`` is hashed into the lifecycle fingerprint the typo'd key
     still makes the run look legitimately fresh.
     """
-    unknown = sorted(set(training) - known)
+    unknown = sorted(set(training) - known - LIFECYCLE_TRAINING_KEYS)
     if unknown:
         raise ValueError(
             f"Unknown training key(s) for {architecture}: {', '.join(unknown)}. "
@@ -103,6 +105,8 @@ class SFTTrainConfig(BaseModel):
     attn_implementation: Optional[str] = None
     dataloader_workers: Optional[int] = None
     model_revision: Optional[str] = None
+    # save_total_limit: how many checkpoint-* dirs survive for select_by to compare.
+    keep_checkpoints: int = Field(default=2, ge=1)
 
     @field_validator("precision")
     @classmethod

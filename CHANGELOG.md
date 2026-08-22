@@ -8,6 +8,146 @@ for the Python package and per-model versions under `examples/`.
 
 ## [Unreleased]
 
+Evidence layer, first slice: versioned eval reports, per-field slices, and a
+prediction cache the next derivations read from (ROADMAP: Evidence layer).
+
+### Added
+
+- **`report_version`** on every eval report. `Report.read(strict=True)`
+  refuses a report that predates the field or lacks a required one, so a
+  derivation never reads a missing number as zero; lenient reads still load
+  older reports as version 0.
+- **`evaluation.slices`**. A list of row fields (or `{field, values}`); the
+  harness reports `n`, `pass_rate` and the Wilson 95 % lower bound per value,
+  `(absent)` for rows without the field, and `n: 0` with no rate for a
+  declared value that has no rows. Rendered in the markdown summary.
+- **`evaluate --cache` / `evaluation.cache_predictions`**. Writes
+  `<run>.predictions.jsonl` beside the report: a `maatml.predictions/1`
+  header (split, content sha256, checkpoint, report name) and one line per
+  row with the row's metadata, the raw output, the validator verdict and the
+  parsed object. `read_predictions` refuses a torn or foreign file. The
+  report's `extras` now always carry `split_sha256` and, when cached,
+  `predictions_cache`.
+- `maatml.evaluation.stats`: `wilson_interval` / `wilson_lower`, exact at the
+  0 and n boundaries, raising on `n <= 0`; `cluster_bootstrap_lower` and
+  `floor2`.
+- **`maatml gates derive`**. Floors from one or more runs' reports: Wilson
+  95 % lower bound at each metric's own denominator, the per-metric minimum
+  across runs, `--min-n` refusal for thin denominators, and a group-cluster
+  bootstrap (`--cluster-by`, `--min-groups`) when the run carries a
+  predictions cache. `--write` rewrites `<section>.gates` in `model.yml`
+  textually, keeping comments and tiers, and stamps
+  `evaluation.gates_benchmark` with the split hash.
+- **Report `counts`**: `{metric: {k, n}}` behind every harness rate and
+  slice; a metrics plugin adds its own through a `__counts__` entry, which is
+  lifted out of `metrics`.
+- **Gate tiers**: a gate value may be `{min, tier}`; `advisory` misses are
+  recorded under `gates.advisory_failed` and never fail evaluate, the
+  lifecycle runner, or `compile --require-gated`.
+- **Slice gates**: `"slice:<field>=<value>"` gates that slice's pass rate; an
+  empty slice reads `None` and fails.
+- **`maatml ship-check CANDIDATE BASELINE`**. The release decision in one
+  verdict: absolute (every blocking floor met at production tier), delta
+  (no gated metric drops more than one row at n >= 30, or `--max-regression`),
+  and population (same split, else `--replay` re-evaluates both checkpoints
+  over the current test split under `output/eval/replay/` without touching
+  either run's own evidence). Exit 1 on DO NOT SHIP; `--json` for the
+  verdict. `evaluate_model` gained `out_dir` and `record_gates` for this.
+- **`maatml operating-point derive`** and `evaluation.operating_point`
+  (`threshold_key`, `objective`, `budget: {metric, max}`, `sources`, `grid`).
+  Sweeps the predictor's new `rescore(rows, threshold)` over a val prediction
+  cache, skips cuts below the one the cache was decoded at, picks the best
+  objective under the budget, writes `<run>.<split>.operating_point.json`,
+  and with `--write` sets `evaluation.<threshold_key>` in `model.yml` with
+  the sweep as provenance. `--confirm-on-test` evaluates once on test at the
+  written cut and records a **test spend** on the run (`RunRecord.test_spends`;
+  listed by `maatml runs`; a repeat on the same benchmark warns). Deriving on
+  test is refused.
+- **Populations** (`dataset.isolation`, `dataset.pins`, `dataset.blind_samples`).
+  `isolation: {fields, policy}` declares the row hierarchy (fine → coarse) and
+  the level each of val / benchmark / blind must be disjoint from training at;
+  `pins: {val: [field:value], benchmark: [...]}` move whole groups after the
+  hash split, and a pinned population is exactly its pins. `prepare` refuses
+  to write splits that violate the policy, refuses a pin matching nothing,
+  checks the blind manifest for leakage without writing it, and `audit`
+  re-checks the prepared splits.
+- **Benchmark version**: `output/prepared/benchmark.json` records an
+  order-insensitive hash of the test rows plus the pins; reports carry it as
+  `extras.benchmark_version`. An in-place edit of `benchmark_samples` is
+  refused — version the file instead.
+- **`evaluate --blind`**: spends `dataset.blind_samples` once on a candidate
+  whose production gate pass is current (`RunRecord.gated_fingerprint`:
+  evaluation config + weights, recorded on every non-smoke test gate pass);
+  gates enforced; `<run>.blind.json`; the spend is recorded on the run
+  (`blind_spends`, listed by `maatml runs`) and a repeat needs `--force`.
+- **`maatml train --seeds N`**: one recipe, N seeds (from `--seed`, default
+  0), each its own run; `output/seeds/<first-run>-xN.json` records the runs
+  and mean / sd / min / max per metric every run reported. `gates derive
+  --seed-study FILE` takes those runs (the per-metric minimum) alongside
+  `--run`.
+- Reports for non-test splits are named `<run>.<split>.json` (and their
+  caches likewise), so a val evaluate no longer overwrites the test report.
+  `extras.decode_threshold` records the cut the predictor decoded at.
+- **Population stamp**: with `--gate`, the gates payload records the split's
+  `benchmark_sha256`; when `evaluation.gates_benchmark` names another split
+  evaluate warns (`population_mismatch`), and `--strict-population` refuses.
+- **Sources carry their licence** (`dataset.attribution`). A sidecar Markdown
+  table with one row per `source` (`source`, `licence`, `commercial-use`,
+  `sign-off` required; `provenance` / `consent` and `attribution` read when
+  present; long headers and extra columns accepted). `prepare` refuses a row
+  without a `source` or without a table row, a blocked or unsigned sign-off,
+  and a `no` / `unknown` commercial-use whose sign-off does not record an
+  `accepted-risk — <name> <date>`; the acceptance is recorded in the lock
+  rather than passed as a flag.
+- **Corpus lock**: every prepare writes `output/prepared/corpus.lock.json` —
+  input files by sha256 and row count, the attribution rows used, the risk
+  accepted, and a `lock_sha256` over all of it. `export` copies it into
+  `manifest.json` as `corpus_lock`, and a lock that names sources also ships
+  as the bundle's `ATTRIBUTION.md` (listed in the manifest). The auto
+  `MODEL_CARD.md` from the Slim tranche will embed the same block.
+- **`training.select_by`**: after training, every saved `checkpoint-<step>`
+  and the final weights are evaluated on val with the evaluate harness; the
+  best by the named metric is recorded on the run (`selection`,
+  `selected_checkpoint`) and the run id resolves to it for evaluate, export
+  and serve, with evidence still recorded against the run
+  (`run_id_for_checkpoint`). Per-candidate reports under
+  `output/eval/select/<run>/`; a metric the harness does not report is an
+  error. `training.keep_checkpoints` sets `save_total_limit` (default 2) for
+  every trainer. `evaluate_model` gained `label`.
+- **Pathologies**: every report carries `pathologies[]` — `never_fires`
+  (no output, or recall ≤ 0.01 with precision ≥ 0.9 / absent),
+  `identical_output`, `one_class` — plus a metrics plugin's own
+  `__pathologies__`. The gates payload lists them; at the smoke tier each is a
+  failing blocking gate (`pathology:<name>`), so a never-firing fixture fails
+  `run --smoke` whatever the floor. Rendered in the markdown summary.
+- **`distill` refuses held-out prompts**: a pool prompt found in
+  `benchmark_samples`, `blind_samples` or the prepared val / test split, or a
+  pool row carrying a pinned group, stops the run before any teacher call. The
+  teacher cache now starts with a `maatml.teacher_cache/1` provenance header
+  (teacher, prompt pools by sha256, benchmark version), repeated on the
+  distill card; a cache that recorded nothing still leaves no file.
+- **Runs travel**: `maatml runs <dir> --pack RUN` writes
+  `output/bundles/<run>.maatml-run.tar.gz` — the run directory (without
+  `checkpoint-*` unless `--with-checkpoints`), the run's eval reports, caches
+  and selection reports, the registry record, the environment, and the
+  model-folder fingerprint (`spec_hash`), every file hashed. `--adopt BUNDLE`
+  unpacks it into the receiving folder, verifies every file, refuses another
+  identity or `model.yml` fingerprint and an existing run without `--force`,
+  and appends the record with its paths rewritten (`RunRecord.adopted_from`).
+  Records move; jobs do not.
+- **Environment manifest** (`maatml.environment/1`: git SHA, Python, OS,
+  maatml / torch / transformers / peft / safetensors, CUDA, cuDNN, GPUs and
+  driver, MPS, determinism settings) on every train record
+  (`RunRecord.environment`) and every evaluate (`extras.environment`, and
+  `gates.environment` when gated). Every train record now also carries
+  `spec_hash` (`spec_fingerprint`).
+- **`maatml report`**: Markdown (default, `output/REPORT.md`) or CSV of
+  runs, every eval report's metrics with their derivation (k / n and Wilson
+  95 % from `counts`) beside the floor that judged them, slice and pathology
+  gates, slices, seed statistics and spends — generated from `runs.jsonl`,
+  `output/eval/*.json` and `output/seeds/*.json` alone, so it regenerates
+  byte-identically and never reads `model.yml`.
+
 ## [0.10.0] - 2026-08-17
 
 Gated device compiles, a shared capture path for custom servers, video-frame

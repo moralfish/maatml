@@ -64,6 +64,7 @@ from .load import from_pretrained_kwargs, maybe_prepare_kbit
 from .schedule import precision_flags, total_training_steps
 from .schedule import warmup_steps as resolve_warmup_steps
 from .sft_config import (  # noqa: F401  re-export public config surface
+    LIFECYCLE_TRAINING_KEYS,
     LoraSettings,
     QuantizationSettings,
     SFTTrainConfig,
@@ -437,7 +438,7 @@ def train_sft(
     training_dict = dict(model_def.merged_smoke() if smoke else model_def.training)
     embedding_strategy = training_dict.pop("embedding_strategy", None)
     # Drop keys not modeled on SFTTrainConfig (task-specific passthrough).
-    for drop in ("generation", "heads", "head_loss_weights"):
+    for drop in ("generation", "heads", "head_loss_weights", *LIFECYCLE_TRAINING_KEYS):
         training_dict.pop(drop, None)
     cfg = config_cls(**training_dict)
     if seed is not None:
@@ -606,7 +607,7 @@ def train_sft(
             "eval_steps": cfg.eval_steps if run_eval_during_training else None,
             "save_strategy": "steps",
             "save_steps": cfg.save_steps,
-            "save_total_limit": 2,
+            "save_total_limit": cfg.keep_checkpoints,
             "seed": cfg.seed,
             "bf16": use_bf16,
             "fp16": use_fp16,

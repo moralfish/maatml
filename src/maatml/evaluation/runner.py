@@ -57,19 +57,40 @@ def evaluate_model(
     limit: Optional[int] = None,
     gate: bool = False,
     smoke: bool = False,
+    cache_predictions: Optional[bool] = None,
+    strict_population: bool = False,
+    out_dir: Optional[Path] = None,
+    record_gates: bool = True,
+    blind: bool = False,
+    force: bool = False,
+    label: Optional[str] = None,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
     The single implementation behind ``maatml evaluate`` and the lifecycle
     runner's evaluate step, so both enforce gates, resolve the token budget,
     and record results on the run identically. Configuration problems raise
-    before the checkpoint is resolved or loaded.
+    before the checkpoint is resolved or loaded. ``cache_predictions`` falls
+    back to ``evaluation.cache_predictions`` when not given. ``out_dir`` redirects
+    the report (a controlled replay must not overwrite the run's own evidence)
+    and ``record_gates=False`` keeps it off the run record. ``blind`` evaluates
+    ``dataset.blind_samples`` once for a candidate whose gate evidence is
+    current; ``force`` allows a repeat spend.
     """
-    from ..runs import get_run, resolve_checkpoint, update_run_gates
+    from ..runs import (
+        evidence_fingerprint,
+        get_run,
+        record_blind_spend,
+        resolve_checkpoint,
+        run_id_for_checkpoint,
+        update_run_gates,
+    )
     from . import predictors as _predictors  # noqa: F401  register built-ins
     from .harness import (
+        GateConfigError,
         _resolve_metrics,
         resolve_gate_spec,
+        resolve_slices,
         resolve_validator,
         run_evaluation,
         uses_smoke_gates,
@@ -105,10 +126,68 @@ def evaluate_model(
     if validator is not None:
         resolve_validator(validator)
     _resolve_metrics(metrics)
+    slices = resolve_slices(model_def)
+    if cache_predictions is None:
+        cache_predictions = bool(evaluation.get("cache_predictions", False))
+
+    rows_path: Optional[Path] = None
+    blind_sha256: Optional[str] = None
+    current_fp: Optional[str] = None
+    if blind:
+        from ..config import get_dataset_cfg
+        from ..utils.io import sha256_file
+
+        blind_rel = get_dataset_cfg(model_def).get("blind_samples")
+        if not blind_rel:
+            raise GateConfigError("--blind needs dataset.blind_samples in model.yml")
+        rows_path = model_def.resolve(str(blind_rel))
+        if not rows_path.is_file():
+            raise GateConfigError(f"dataset.blind_samples not found: {rows_path}")
+        blind_sha256 = sha256_file(rows_path)
 
     ckpt = resolve_checkpoint(model_def, checkpoint)
-    model_def.eval_dir.mkdir(parents=True, exist_ok=True)
-    out_path = model_def.eval_dir / f"{ckpt.name}.json"
+    run_id = run_id_for_checkpoint(model_def, ckpt)
+    from .operating_point import report_name
+
+    if blind:
+        split = "blind"
+        gate = True
+        if gate_spec is None:
+            gate_spec = resolve_gate_spec(model_def, smoke=False)
+        rec = get_run(model_def, run_id)
+        current_fp = evidence_fingerprint(model_def, ckpt)
+        if rec is None:
+            raise GateConfigError(
+                f"{run_id} is not in runs.jsonl; a blind evaluate needs a recorded, gated run"
+            )
+        if not (rec.gates or {}).get("passed") or rec.smoke_gated:
+            raise GateConfigError(
+                f"{run_id} has no production gate pass on record; run evaluate --gate "
+                "on the benchmark first. The blind population is spent only on a candidate "
+                "that already passed."
+            )
+        if rec.gated_fingerprint != current_fp:
+            raise GateConfigError(
+                f"{run_id} changed since its gate pass (evaluation config or weights); "
+                "re-run evaluate --gate before spending the blind population"
+            )
+        prior = [
+            s
+            for s in (rec.blind_spends or [])
+            if s.get("fingerprint") == current_fp and s.get("blind_sha256") == blind_sha256
+        ]
+        if prior and not force:
+            raise GateConfigError(
+                f"{run_id} already spent this blind population at this fingerprint "
+                f"({len(prior)} time(s), last report {prior[-1].get('report')}); "
+                "a blind test is run once per frozen candidate. Pass --force to repeat, "
+                "and say so in the record."
+            )
+
+    target_dir = Path(out_dir) if out_dir is not None else model_def.eval_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    # A val report is named for its split so it never overwrites the test one.
+    out_path = target_dir / f"{report_name(label or run_id, split)}.json"
     budget = (
         max_input_tokens if max_input_tokens is not None else model_def.packaging.max_input_tokens
     )
@@ -130,10 +209,25 @@ def evaluate_model(
         enforce_gates=gate,
         gate_spec=gate_spec,
         smoke_gated=smoke_gated,
+        slices=slices,
+        cache_predictions=cache_predictions,
+        strict_population=strict_population,
+        rows_path=rows_path,
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
 
-    run_rec = get_run(model_def, ckpt.name)
+    if blind:
+        spend = {
+            "fingerprint": current_fp,
+            "blind_sha256": blind_sha256,
+            "report": out_path.name,
+            "passed": report.passed,
+            "forced": bool(force),
+        }
+        record_blind_spend(model_def, run_id, spend)
+        return report, out_path
+
+    run_rec = get_run(model_def, run_id) if record_gates else None
     if run_rec is not None and report.gates is not None:
         update_run_gates(
             model_def,
@@ -141,6 +235,7 @@ def evaluate_model(
             report.gates,
             metrics=report.metrics,
             smoke_gated=smoke_gated,
+            gated_fingerprint=evidence_fingerprint(model_def, ckpt) if split == "test" else None,
         )
     return report, out_path
 
@@ -193,9 +288,18 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
             lines.append(f"- passed: {report.passed}")
         results = report.gates.get("results") or {}
         for name, info in sorted(results.items()):
+            tier = info.get("tier", "blocking")
+            suffix = "" if tier == "blocking" else f" tier={tier}"
             lines.append(
                 f"- {name}: actual={info.get('actual')} "
-                f"minimum={info.get('minimum')} passed={info.get('passed')}"
+                f"minimum={info.get('minimum')} passed={info.get('passed')}{suffix}"
+            )
+        if report.gates.get("benchmark_sha256"):
+            lines.append(f"- benchmark: `{report.gates['benchmark_sha256']}`")
+        if report.gates.get("population_mismatch"):
+            lines.append(
+                f"- floors derived on `{report.gates.get('floors_benchmark_sha256')}` "
+                "(population mismatch)"
             )
     if report.latency_ms:
         lines.extend(
@@ -208,10 +312,26 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
                 f"- n: {report.latency_ms.n}",
             ]
         )
+    if report.pathologies:
+        lines.extend(["", "## Pathologies", ""])
+        for entry in report.pathologies:
+            lines.append(f"- {entry.get('name')}: {entry.get('evidence')}")
     if report.per_class:
         lines.extend(["", "## Per-class", ""])
         for label, vals in sorted(report.per_class.items()):
             lines.append(f"- {label}: {_format_class_stats(vals)}")
+    if report.slices:
+        lines.extend(["", "## Slices", ""])
+        for field_name, values in sorted(report.slices.items()):
+            for value, stats in sorted(values.items()):
+                n = int(stats.get("n", 0))
+                if n == 0:
+                    lines.append(f"- {field_name}={value}: n=0 (no rate)")
+                    continue
+                lines.append(
+                    f"- {field_name}={value}: n={n} "
+                    f"pass_rate={stats['pass_rate']:.3f} w95={stats['pass_rate_w95']:.3f}"
+                )
     if report.baseline_delta:
         lines.extend(["", "## Baseline delta", ""])
         for k, v in sorted(report.baseline_delta.items()):

@@ -31,6 +31,7 @@ _PATH_KEYS = frozenset(
         "contracts",
         "tokenizer",
         "template_dir",
+        "attribution",
     }
 )
 
@@ -269,9 +270,26 @@ _DATASET_KNOWN_KEYS = frozenset(
         "source_dir",
         "val_fraction",
         "test_fraction",
+        # populations
+        "isolation",
+        "pins",
+        "blind_samples",
+        "attribution",
     }
 )
-_EVALUATION_KNOWN_KEYS = frozenset({"predictor", "validator", "metrics", "gates", "repair_braces"})
+_EVALUATION_KNOWN_KEYS = frozenset(
+    {
+        "predictor",
+        "validator",
+        "metrics",
+        "gates",
+        "gates_benchmark",
+        "operating_point",
+        "repair_braces",
+        "slices",
+        "cache_predictions",
+    }
+)
 
 
 def config_key_warnings(md: ModelDefinition) -> list[str]:

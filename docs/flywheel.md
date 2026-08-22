@@ -37,8 +37,13 @@ Accepted rows carry provenance (teacher model and revision, prompt hash,
 source, family), and rejections are kept in a report. Teacher responses are
 recorded in a cache keyed on the prompt hash plus the teacher's model and
 revision, so `--replay` reproduces exactly the same accepted corpus with no
-network, and a different teacher never silently reuses another's labels. Point
-it at a pool with `--prompts`, or declare a `distill:` section in `model.yml`:
+network, and a different teacher never silently reuses another's labels. The
+cache opens with a provenance header (teacher, prompt pools by sha256, the
+benchmark version it was recorded against). A pool prompt that already sits
+in `benchmark_samples`, `blind_samples` or the prepared val / test split is
+refused before any teacher call: its label would enter training as a
+memorised answer to a question the benchmark asks. Point it at a pool with
+`--prompts`, or declare a `distill:` section in `model.yml`:
 
 ```yaml
 distill:

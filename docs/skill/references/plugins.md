@@ -127,6 +127,15 @@ def metrics_my_task(rows):
 Report each rate at **its own denominator** and name the metric after what it
 measures. maatml adds `output_nonempty_rate` alongside whatever you return.
 
+Two reserved keys are lifted out of `metrics` before the report is written.
+`__counts__` is the evidence behind each rate — `{"my_family_pass_rate":
+{"k": passed, "n": len(graded)}}` — and is what `maatml gates derive` floors
+on; a rate without counts cannot be floored. `__pathologies__` is a list of
+names or `{name, evidence}` dicts for output shapes no floor should have to
+catch (a detector that never fires, one class for everything); they join the
+harness's own `never_fires` / `identical_output` / `one_class` and fail the
+smoke tier.
+
 Resist collapsing everything into one aggregate. A pooled rate stays flat while
 the composition underneath it moves, and it can read highest at the arm where a
 safety metric is worst.
@@ -155,6 +164,14 @@ class MyPredictor:
         """Optional. Counts the report should carry, e.g. truncated_inputs."""
         return {}
 ```
+
+A predictor whose output carries a score may also implement
+`rescore(rows, threshold) -> dict[str, float]`: given the rows of a prediction
+cache (`evaluate --cache`; each row has `row`, `output`, `parsed`, `ok`), return
+the metrics that hold when predictions below `threshold` are dropped, with
+`__counts__` for the rates. `maatml operating-point derive` sweeps it over a
+val cache without running inference, so it must be callable on a freshly
+instantiated predictor that never saw `setup()`.
 
 Whatever the predictor does to raw output — repairing braces, stripping fences —
 belongs in `report_extras` too, so the report says the pass rate includes a

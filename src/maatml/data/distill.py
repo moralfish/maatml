@@ -84,25 +84,58 @@ class DistillConfig(BaseModel):
             raise DistillConfigError(f"invalid distill: section: {exc}") from exc
 
 
+TEACHER_CACHE_KIND = "maatml.teacher_cache/1"
+
+
 class TeacherCache:
     """Record/replay store for teacher responses, keyed by prompt + teacher.
 
     The key binds the prompt hash to the teacher model and revision, so a run
     against a different teacher does not reuse cached labels, and a replay is a
     faithful reproduction of what that teacher said. Stored as JSONL so it is
-    diffable and can ship with an example for offline CI.
+    diffable and can ship with an example for offline CI. The first line is a
+    provenance header: which prompt pools (by sha256) and which benchmark
+    version the labels were recorded against.
     """
 
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
         self._store: dict[str, str] = {}
+        self.provenance: dict[str, Any] = {"kind": TEACHER_CACHE_KIND, "prompt_sources": []}
         if self.path.is_file():
             for row in iter_jsonl(self.path):
+                if row.get("kind") == TEACHER_CACHE_KIND:
+                    self.provenance = dict(row)
+                    continue
                 key = row.get("key")
                 response = row.get("response")
                 if isinstance(key, str) and isinstance(response, str):
                     self._store[key] = response
         self._dirty = False
+
+    def note_provenance(
+        self,
+        *,
+        teacher: str,
+        prompt_source: Path,
+        benchmark_version: Optional[str],
+    ) -> None:
+        """Record the pool and benchmark version this session labels against."""
+        from ..utils.io import sha256_file
+
+        entry = {"path": str(prompt_source), "sha256": sha256_file(prompt_source)}
+        sources = [
+            s
+            for s in self.provenance.get("prompt_sources", [])
+            if s.get("sha256") != entry["sha256"]
+        ]
+        sources.append(entry)
+        self.provenance = {
+            "kind": TEACHER_CACHE_KIND,
+            "teacher": teacher,
+            "prompt_sources": sources,
+            "benchmark_version": benchmark_version,
+        }
 
     @staticmethod
     def key(prompt_hash: str, model: str, revision: str) -> str:
@@ -126,7 +159,12 @@ class TeacherCache:
     def flush(self) -> None:
         if not self._dirty:
             return
-        rows = [{"key": k, "response": v} for k, v in sorted(self._store.items())]
+        # The header rides with the labels: a cache that recorded nothing
+        # leaves no file, so a re-run reaches the teacher again.
+        rows: list[dict[str, Any]] = (
+            [dict(self.provenance)] if self.provenance.get("teacher") else []
+        )
+        rows.extend({"key": k, "response": v} for k, v in sorted(self._store.items()))
         write_jsonl_atomic(self.path, rows)
         self._dirty = False
         self._unflushed = 0
@@ -167,6 +205,59 @@ def load_prompt_rows(path: Path, request_field: str) -> list[tuple[str, dict[str
     if not rows:
         raise DistillConfigError(f"no usable prompts in {path}")
     return rows
+
+
+def heldout_overlaps(
+    model_def: ModelDefinition, prompt_rows: list[tuple[str, dict[str, Any]]], request_field: str
+) -> list[str]:
+    """Prompts that already belong to a held-out population.
+
+    Checked by content against ``benchmark_samples``, ``blind_samples`` and the
+    prepared val / test splits, and by ``dataset.pins`` against any isolation
+    field the pool row declares (a pool row tagged with a pinned camera is
+    that camera's row, whatever the prompt says).
+    """
+    from .populations import resolve_isolation, resolve_pins
+
+    ds_cfg = get_dataset_cfg(model_def)
+    held: dict[str, str] = {}
+    sources: list[tuple[str, Path]] = []
+    for key in ("benchmark_samples", "blind_samples"):
+        rel = ds_cfg.get(key)
+        if isinstance(rel, str) and rel:
+            sources.append((key, model_def.resolve(rel)))
+    for split in ("val", "test"):
+        sources.append((f"prepared {split}", Path(model_def.prepared_dir) / f"{split}.jsonl"))
+    for label, path in sources:
+        if not path.is_file():
+            continue
+        for row in iter_jsonl(path):
+            value = row.get(request_field) or row.get("prompt") or row.get("request")
+            if isinstance(value, str) and value.strip():
+                held.setdefault(value.strip(), label)
+    try:
+        pins = resolve_pins(ds_cfg, resolve_isolation(ds_cfg))
+    except ValueError:
+        pins = []
+    problems: list[str] = []
+    by_content = 0
+    by_pin: dict[str, int] = {}
+    for prompt, declared in prompt_rows:
+        where = held.get(prompt.strip())
+        if where is not None:
+            by_content += 1
+            if by_content <= 3:
+                problems.append(f"{prompt[:60]!r} is in {where}")
+            continue
+        for pin in pins:
+            if pin.matches(declared):
+                by_pin[pin.label] = by_pin.get(pin.label, 0) + 1
+                break
+    if by_content > 3:
+        problems.append(f"... {by_content} prompt(s) by content in total")
+    for label, count in sorted(by_pin.items()):
+        problems.append(f"{count} prompt row(s) carry pinned {label}")
+    return problems
 
 
 def load_prompts(path: Path, request_field: str) -> list[str]:
@@ -250,7 +341,25 @@ def run_distill(
     if cap is not None:
         prompt_rows = prompt_rows[:cap]
 
+    overlaps = heldout_overlaps(model_def, prompt_rows, request_field)
+    if overlaps:
+        raise DistillConfigError(
+            "the prompt pool overlaps held-out populations; a teacher label for one of "
+            "those prompts would enter training:\n  "
+            + "\n  ".join(overlaps)
+            + "\nRemove them from the pool (the benchmark and blind manifests are "
+            "not prompt sources)."
+        )
     cache = TeacherCache(model_def.resolve(cfg.cache))
+    if not (replay or offline):
+        from .populations import read_benchmark_state
+
+        state = read_benchmark_state(model_def.prepared_dir)
+        cache.note_provenance(
+            teacher=f"{cfg.teacher_model}@{cfg.teacher_revision}",
+            prompt_source=model_def.resolve(cfg.prompt_source),
+            benchmark_version=str(state.get("version")) if state else None,
+        )
     offline = offline or replay
     teacher: Optional[TeacherClient] = None
     briefing = cfg.system_prompt
@@ -423,6 +532,7 @@ def run_distill(
         "teacher_revision": cfg.teacher_revision,
         "out_path": str(dest),
         "cache_path": str(cache.path),
+        "cache_provenance": {k: v for k, v in cache.provenance.items() if k != "kind"},
         **stats,
     }
     _write_distill_card(dest, summary)
@@ -462,6 +572,7 @@ def _write_distill_card(dest: Path, summary: dict[str, Any]) -> Path:
         f"misses={summary['cache_misses']} failures={summary['teacher_failures']}",
         f"- validator_errors: {summary['validator_errors']}",
         *([f"- aborted: {summary['aborted']}"] if summary.get("aborted") else []),
+        f"- cache provenance: {summary.get('cache_provenance')}",
         "",
         "Every accepted row was gated by evaluation.validator before entering "
         "the corpus, and carries teacher provenance. Teacher responses are "

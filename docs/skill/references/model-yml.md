@@ -65,10 +65,97 @@ A key covering nearly the whole corpus cannot be split, so those rows are split
 individually **with a warning**: group-level leakage protection does not apply
 to them. Read that warning rather than scrolling past it.
 
+### Populations: isolation, pins, a blind manifest
+
+`group_by` keeps correlated rows on one side of a split; it cannot say which
+side a camera lands on or that a site is absent from training. Declare the
+hierarchy a row carries and the level each held-out population is disjoint at:
+
+```yaml
+dataset:
+  isolation:
+    fields: [clip, camera, site]                  # row fields, fine -> coarse
+    policy: {val: camera, benchmark: camera, blind: site}
+  pins:
+    val: ["camera:G339"]                          # whole groups, field:value
+    benchmark: ["camera:G341", "camera:G421"]
+  blind_samples: datasets/samples/blind_v001.jsonl
+```
+
+`prepare` moves pinned groups after the hash split; a pinned population is
+exactly its pins (plus `benchmark_samples` for the benchmark), so unpinned
+groups the hash dealt it return to train. It then asserts the policy over
+train / val / benchmark / blind and refuses to write splits on a violation; a
+pin matching no row is an error. `maatml audit` re-checks the prepared splits.
+The blind manifest is checked for leakage but never written into a split.
+
+Every prepare writes `output/prepared/benchmark.json`: the **benchmark
+version** (an order-insensitive hash of the test rows plus the pins), which
+eval reports carry as `extras.benchmark_version`. Editing `benchmark_samples`
+under the same filename is refused — write the rows to a new file and point
+the key at it, so floors keep naming the population they came from.
+
+`maatml evaluate --blind` spends the blind manifest once per frozen candidate:
+the run must hold a production gate pass whose recorded fingerprint
+(evaluation config + weights) is unchanged, the gates are enforced on the blind
+rows, the report is `<run>.blind.json`, and the spend is recorded on the run;
+a repeat at the same fingerprint needs `--force` and is recorded as forced.
+
 A `benchmark_samples` row sharing a group key with the training splits is an
 error, not a warning. A benchmark is pinned to test on purpose: it is the
 population release decisions are made against, and it should be able to grow
 without retraining.
+
+### Sources carry their licence
+
+```yaml
+dataset:
+  attribution: datasets/ATTRIBUTION.md   # a sidecar Markdown table, one row per `source`
+```
+
+The table is the execute-time licence record, kept beside the corpus rather
+than inside `model.yml` because licence rows are long and shared across model
+folders. The first Markdown table whose first column is `source` is read;
+columns are matched by the casefolded prefix of their header, so a real table
+with long headers and extra columns parses as it is:
+
+```markdown
+| source     | licence   | commercial-use | provenance/consent | attribution         | sign-off                           |
+| ---        | ---       | ---            | ---                | ---                 | ---                                |
+| meva       | CC BY 4.0 | yes            | consented actors   | © Kitware and IARPA | cleared — A. Name 2026-08-17       |
+| crowdhuman | research  | no             | third-party photos | CrowdHuman          | accepted-risk — A. Name 2026-08-17 |
+| dukemtmc   | withdrawn | no             | non-consented      | —                   | do not use                         |
+```
+
+`source`, `licence` (or `license`), `commercial-use` and `sign-off` are
+required; `provenance` / `consent` and `attribution` are read when present.
+`commercial-use` is read from the start of the cell — `yes`, `no`, anything
+else is `unknown` — so a hedge like `unknown until filtered` stays unknown.
+
+With the key declared, `prepare` checks every row that enters (seed,
+benchmark and blind) and refuses to write splits when:
+
+- a row carries no `source`, or its source has no table row;
+- the sign-off is blocked (`do not use`, `blocked`, `fixtures only`) or
+  unsigned (empty or `*unsigned*`);
+- commercial-use is `no` or `unknown` and the sign-off does not record an
+  accepted risk.
+
+Risk is accepted in the table, not on the command line: a sign-off such as
+`accepted-risk — A. Name 2026-08-17` admits a `no` / `unknown` source and is
+recorded against it in the corpus lock, so the acceptance carries a name and
+a date rather than a flag nobody can trace later. A blocked row is never
+admitted by an acceptance.
+
+Every prepare — with or without a table — writes
+`output/prepared/corpus.lock.json`: each input file by path, sha256 and row
+count, the table rows the corpus actually used with their row counts, the
+risk accepted, and a `lock_sha256` over all of it. `maatml export` copies the
+lock into `manifest.json` as `corpus_lock`, and when it names sources the
+bundle also ships an `ATTRIBUTION.md` rendered from those rows (listed in the
+manifest, so `verify` covers it). Nothing is looked up or inferred at export:
+the block is the declared table and nothing else. When the auto
+`MODEL_CARD.md` lands it embeds the same block.
 
 ## Evaluation and gates
 
@@ -81,13 +168,85 @@ evaluation:
     routing_json_parse_rate:  0.85  # 117/128 = 0.914, w95 0.853
     routing_team_known_rate:  0.85  # 117/128 = 0.914, w95 0.853
     all_layers_pass_rate:     0.94  # 401/414 = 0.969, w95 0.947
+  slices: [family, {field: spectrum, values: [rgb, ir]}]   # per-value pass rates
+  cache_predictions: true   # keep <run>.predictions.jsonl beside the report
 ```
+
+`slices` names row fields; the report carries `n`, `pass_rate` and the Wilson
+95% lower bound per value, with `(absent)` for rows lacking the field and
+`n: 0` (no rate) for a declared value with no rows. `cache_predictions` (or
+`evaluate --cache`) keeps every row's output, verdict and metadata keyed to the
+split's content hash, so floors and sweeps derive from the predictions the
+report measured instead of re-running inference. Reports carry
+`report_version`; `Report.read(strict=True)` refuses one that predates it.
 
 Each floor is the **Wilson 95% lower bound of the observed rate at that
 metric's own denominator**, floored to two places, with the measurement written
-beside it so the number can be audited without rerunning anything. Regenerate
-after every accepted run; a folder should carry a `scripts/derive_gates.py
---write` rather than have floors typed by hand.
+beside it so the number can be audited without rerunning anything. Derive them,
+never type them:
+
+```bash
+maatml gates derive <model-dir> --run <run_id> [--run <run_id2>] --write
+```
+
+`maatml train --seeds N [--seed S]` trains the same recipe at seeds S..S+N-1 and
+writes `output/seeds/<first-run>-xN.json` with mean / sd / min / max per
+metric; `gates derive --seed-study <that file>` floors on those runs.
+
+`gates derive` reads each run's eval report (`report_version >= 1`), takes the
+per-metric **minimum across runs** so a lucky seed cannot set the contract,
+refuses a rate with fewer than `--min-n` rows, and rewrites `evaluation.gates`
+in place with the measurement as the comment. It also stamps
+`evaluation.gates_benchmark` with the split's content hash: `evaluate --gate`
+warns when it is asked to enforce those floors on a different split and
+refuses under `--strict-population`, because floors describe the population
+they were derived on.
+
+Where rows cluster (frames within a camera, paraphrases within a scenario) a
+row-level bound overstates the evidence. If the run was evaluated with
+`--cache`, `gates derive --cluster-by family` resamples whole groups of the
+prediction cache instead (harness rates and `slice:` gates; a plugin rate needs
+its own per-row verdict), and refuses a rate spanning fewer than
+`--min-groups` groups.
+
+A metrics plugin makes its rates derivable by reporting the evidence behind
+them: `{"recall": 0.315, "__counts__": {"recall": [69087, 219079]}}`. Without
+counts a metric is floored at its observed value and the comment says so.
+
+### Operating point
+
+A decision threshold is chosen on val and spent once on test:
+
+```yaml
+evaluation:
+  score_thresh: 0.40   # written by operating-point derive; comment carries the sweep
+  operating_point:
+    threshold_key: score_thresh     # the evaluation key the predictor reads
+    objective: recall               # maximised
+    budget: {metric: fp_per_frame, max: 1.0}   # must hold at the chosen cut
+    sources: [meva, virat]          # rows whose `dataset` is one of these
+    grid: {start: 0.05, stop: 0.95, step: 0.05}
+```
+
+```bash
+maatml evaluate <dir> --checkpoint R --split val --cache       # writes R.val.json + cache
+maatml operating-point derive <dir> --run R --write            # sweep, pick, write
+maatml operating-point derive <dir> --run R --confirm-on-test  # spend test once
+```
+
+The sweep calls the predictor's `rescore(rows, threshold)` over the cached val
+predictions (see the plugins reference), skips grid points below the cut the
+cache was decoded at, picks the best objective under the budget (ties to the
+lower budget, then the higher cut), writes `<run>.<split>.operating_point.json`
+and, with `--write`, the threshold line with its provenance. `--confirm-on-test`
+evaluates once on test at the written cut and records the spend on the run;
+`maatml runs` lists spends per benchmark, and a second spend on the same
+benchmark warns. Deriving on the test split is refused.
+
+Gate values are a number or `{min, tier}`; `tier: advisory` is reported and
+recorded but never fails a step. A gate may name a slice:
+`"slice:camera=G339": 0.45` gates that slice's pass rate, and a slice with no
+rows fails rather than passing on an invented number.
 
 ### Why Wilson
 
@@ -191,6 +350,28 @@ training:
     target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 ```
 
+### Selecting the checkpoint
+
+```yaml
+training:
+  select_by: all_layers_pass_rate   # a metric the eval harness reports
+  keep_checkpoints: 4               # save_total_limit (default 2)
+```
+
+Without `select_by` a run ships its last weights, and "last" is not a
+selection. With it, after training every saved `checkpoint-<step>` plus the
+final weights is evaluated on the **val** split with the same predictor,
+validator and metrics as `evaluate`, the best by the named metric wins (ties
+go to the later one), and the choice is recorded on the run (`selection`:
+every candidate's score and report; `selected_checkpoint`). From then on the
+run id resolves to that checkpoint for evaluate, export and serve, while
+evidence is still recorded against the run. The per-candidate reports live
+under `output/eval/select/<run>/`; the test split is never read. A metric the
+harness does not report is an error, not a silent fallback to the last
+checkpoint. `keep_checkpoints` is what makes the comparison worth anything —
+at the default of 2 only the last two survive. A seed study records the
+selected value as `select:<metric>`.
+
 `generation.max_new_tokens` is a frequent silent cause of bad scores: a ceiling
 below what the contract needs truncates every long answer, and the validator
 correctly reports the truncation as a contract failure. If a metric collapses
@@ -270,6 +451,27 @@ pass is recorded as smoke-gated in the run record and in the export manifest's
 `output_nonempty_rate` is always reported and is the honest thing for a smoke
 tier to gate on: it says the checkpoint saved, reloaded and produced output,
 without claiming the output was any good.
+
+### Pathologies
+
+Some shapes of output no floor should have to catch. Every evaluate reports
+them as `pathologies[]` (`{name, evidence}`), the gates payload lists their
+names, and at the smoke tier each one is a failing blocking gate
+(`pathology:<name>`), since a rehearsal floor is loose enough for a broken
+model to clear:
+
+- `never_fires` — no output on any row, or a recall-like metric at or below
+  0.01 while its precision counterpart is 0.9 or better (or absent): nothing
+  is being predicted and precision is flattering it.
+- `identical_output` — the same non-empty output on every row.
+- `one_class` — every parsed output carries the same `class` / `category` /
+  `label` / `family` / `intent` / `kind` while the gold rows span two or more
+  categories.
+
+Fewer than five rows report nothing. At the production tier the floors decide,
+with the signature beside them. A metrics plugin contributes its own through a
+`__pathologies__` entry (names, or `{name, evidence}` dicts), lifted out of
+`metrics` like `__counts__`.
 
 ## Overrides that still get recorded
 

@@ -49,6 +49,23 @@ class RunRecord(BaseModel):
     smoke_gated: Optional[bool] = None
     # Optional HPO / sweep trial metadata (rank-0 writes only).
     trial: Optional[dict[str, Any]] = None
+    # Every time the test split was spent to confirm a val-chosen operating
+    # point: {benchmark_sha256, split, threshold_key, threshold, report, at}.
+    test_spends: Optional[list[dict[str, Any]]] = None
+    # Evaluation config + checkpoint contents at the last production gate
+    # pass; a blind evaluate requires the candidate to be unchanged since.
+    gated_fingerprint: Optional[str] = None
+    # Every blind evaluate: {fingerprint, blind_sha256, report, passed, at}.
+    blind_spends: Optional[list[dict[str, Any]]] = None
+    # training.select_by: every candidate's val score and the one chosen.
+    selection: Optional[dict[str, Any]] = None
+    # Subdirectory of out_dir the run id resolves to (None = the final weights).
+    selected_checkpoint: Optional[str] = None
+    # The machine this run trained on (maatml.environment/1); evaluate records
+    # its own under gates.environment.
+    environment: Optional[dict[str, Any]] = None
+    # Set by `runs --adopt`: {bundle, spec_hash, forced}.
+    adopted_from: Optional[dict[str, Any]] = None
 
 
 def _utc_now() -> str:
@@ -264,6 +281,16 @@ def adopt_run(model_def: ModelDefinition, run_id: str) -> Optional[RunRecord]:
     return record
 
 
+def spec_fingerprint(model_def: ModelDefinition) -> str:
+    """sha256 of the effective model definition: the model-folder fingerprint
+    a run is produced under (the same hash ``run_metadata.json`` records)."""
+    import hashlib
+
+    spec = model_def.model_dump(mode="json", exclude={"model_dir"})
+    body = json.dumps(spec, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
 def start_run(
     model_def: ModelDefinition,
     *,
@@ -276,6 +303,8 @@ def start_run(
     trial: Optional[dict[str, Any]] = None,
 ) -> RunRecord:
     """Create a new ``running`` run and append it to ``runs.jsonl``."""
+    from .environment import environment_manifest
+
     rid = run_id or make_run_id()
     ckpt = Path(out_dir) if out_dir else (model_def.checkpoints_dir / rid)
     ckpt.mkdir(parents=True, exist_ok=True)
@@ -289,8 +318,9 @@ def start_run(
         device=device,
         profile=profile,
         out_dir=str(ckpt.resolve()),
-        spec_hash=spec_hash,
+        spec_hash=spec_hash or spec_fingerprint(model_def),
         trial=trial,
+        environment=environment_manifest(model_def.model_dir),
     )
     _append_record(model_def, record)
     return record
@@ -337,6 +367,7 @@ def update_run_gates(
     *,
     metrics: Optional[dict[str, float]] = None,
     smoke_gated: bool = False,
+    gated_fingerprint: Optional[str] = None,
 ) -> Optional[RunRecord]:
     """Attach eval-gate results to a known run (no-op if run_id unknown)."""
     rec = get_run(model_def, run_id)
@@ -345,11 +376,113 @@ def update_run_gates(
     payload = rec.model_dump()
     payload["gates"] = gates
     payload["smoke_gated"] = bool(smoke_gated)
+    if gated_fingerprint is not None and not smoke_gated:
+        payload["gated_fingerprint"] = gated_fingerprint
     if metrics is not None:
         payload["metrics"] = {**(payload.get("metrics") or {}), **metrics}
     updated = RunRecord(**payload)
     _append_record(model_def, updated)
     return updated
+
+
+def record_selection(
+    model_def: ModelDefinition,
+    run_id: str,
+    selection: dict[str, Any],
+    *,
+    selected_checkpoint: Optional[str],
+) -> Optional[RunRecord]:
+    """Record a ``training.select_by`` outcome on a run (no-op if unknown)."""
+    rec = get_run(model_def, run_id)
+    if rec is None:
+        return None
+    payload = rec.model_dump()
+    payload["selection"] = selection
+    payload["selected_checkpoint"] = selected_checkpoint
+    updated = RunRecord(**payload)
+    _append_record(model_def, updated)
+    return updated
+
+
+def run_id_for_checkpoint(model_def: ModelDefinition, path: Path) -> str:
+    """The run a checkpoint path belongs to: its own name, or its parent run's.
+
+    A selected ``checkpoint-<step>`` lives inside the run directory; evidence
+    is recorded against the run, never against the subdirectory.
+    """
+    path = Path(path)
+    if get_run(model_def, path.name) is not None:
+        return path.name
+    parent = get_run(model_def, path.parent.name)
+    if parent is not None and parent.selected_checkpoint == path.name:
+        return parent.run_id
+    return path.name
+
+
+def _selected(rec: RunRecord, out: Path) -> Path:
+    if rec.selected_checkpoint:
+        chosen = out / rec.selected_checkpoint
+        if chosen.is_dir():
+            return chosen
+    return out
+
+
+def record_test_spend(
+    model_def: ModelDefinition, run_id: str, spend: dict[str, Any]
+) -> tuple[Optional[RunRecord], int]:
+    """Append a test spend to a run; returns the record and how many spends the
+    same benchmark already had (so a caller can say the test was spent twice)."""
+    rec = get_run(model_def, run_id)
+    if rec is None:
+        return None, 0
+    spends = list(rec.test_spends or [])
+    prior = sum(1 for s in spends if s.get("benchmark_sha256") == spend.get("benchmark_sha256"))
+    spends.append({**spend, "at": _utc_now()})
+    payload = rec.model_dump()
+    payload["test_spends"] = spends
+    updated = RunRecord(**payload)
+    _append_record(model_def, updated)
+    return updated, prior
+
+
+def evidence_fingerprint(model_def: ModelDefinition, checkpoint: Path) -> str:
+    """What a gate pass was measured on: the evaluation config and the weights.
+
+    A blind evaluate is spent against exactly this; change a threshold or the
+    checkpoint and the candidate must be re-gated first.
+    """
+    from .lifecycle import _dir_signature
+    from .utils.io import stable_hash
+
+    evaluation = model_def.evaluation or {}
+    return stable_hash(
+        sorted(evaluation.items(), key=lambda kv: kv[0]),
+        model_def.packaging.model_dump(),
+        _dir_signature(Path(checkpoint)),
+    )
+
+
+def record_blind_spend(
+    model_def: ModelDefinition, run_id: str, spend: dict[str, Any]
+) -> tuple[Optional[RunRecord], int]:
+    """Append a blind spend; returns the record and how many prior spends share
+    the same fingerprint and blind population."""
+    rec = get_run(model_def, run_id)
+    if rec is None:
+        return None, 0
+    spends = list(rec.blind_spends or [])
+    prior = sum(
+        1
+        for s in spends
+        if s.get("fingerprint") == spend.get("fingerprint")
+        and s.get("blind_sha256") == spend.get("blind_sha256")
+    )
+    spends.append({**spend, "at": _utc_now()})
+    payload = rec.model_dump()
+    payload["blind_spends"] = spends
+    updated = RunRecord(**payload)
+    _append_record(model_def, updated)
+    return updated, prior
 
 
 def latest_completed_run(model_def: ModelDefinition) -> Optional[RunRecord]:
@@ -468,7 +601,7 @@ def resolve_checkpoint(
         if rec is not None:
             out = Path(rec.out_dir)
             if out.exists():
-                return out.resolve()
+                return _selected(rec, out).resolve()
             # A run trained elsewhere records that machine's absolute path. The
             # weights travel home; the path does not. `output/checkpoints/
             # <run_id>` is where they land, so looking there lets a relocated
@@ -477,7 +610,7 @@ def resolve_checkpoint(
             # manifest looks the run up by exactly this id.
             moved = model_def.checkpoints_dir / raw
             if moved.exists():
-                return moved.resolve()
+                return _selected(rec, moved).resolve()
             return out
         cand = model_def.checkpoints_dir / raw
         if cand.exists():
@@ -490,7 +623,7 @@ def resolve_checkpoint(
     if completed is not None:
         out = Path(completed.out_dir)
         if out.exists():
-            return out
+            return _selected(completed, out)
 
     # Legacy fallback: newest mtime under checkpoints/
     ckpt_root = model_def.checkpoints_dir

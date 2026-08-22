@@ -542,17 +542,16 @@ def _resolve_paths(
     model_def: ModelDefinition,
 ) -> tuple[Optional[Path], Optional[Path], Optional[Path]]:
     """Current checkpoint, export dir, and eval report, when they exist."""
-    from .runs import get_run, resolve_checkpoint
+    from .runs import resolve_checkpoint, run_id_for_checkpoint
 
     try:
         checkpoint = resolve_checkpoint(model_def)
     except FileNotFoundError:
         return None, None, None
 
-    run = get_run(model_def, checkpoint.name)
-    run_id = run.run_id if run else checkpoint.name
+    run_id = run_id_for_checkpoint(model_def, checkpoint)
     export_dir = model_def.output_dir / "export" / run_id
-    report = model_def.eval_dir / f"{checkpoint.name}.json"
+    report = model_def.eval_dir / f"{run_id}.json"
     return checkpoint, export_dir, report
 
 
@@ -578,7 +577,13 @@ def _step_train(model_def: ModelDefinition, options: RunOptions) -> str:
         device=options.device,
         seed=options.seed,
     )
-    return f"out_dir={Path(result.out_dir).name} metrics={result.metrics}"
+    from .training.selection import select_checkpoint
+
+    selection = select_checkpoint(
+        model_def, Path(result.out_dir).name, device=options.device, smoke=options.smoke
+    )
+    chosen = f" selected={selection['selected']}" if selection else ""
+    return f"out_dir={Path(result.out_dir).name} metrics={result.metrics}{chosen}"
 
 
 def _step_evaluate(model_def: ModelDefinition, options: RunOptions) -> str:
@@ -595,7 +600,7 @@ def _step_evaluate(model_def: ModelDefinition, options: RunOptions) -> str:
         failed = [
             name
             for name, info in ((report.gates or {}).get("results") or {}).items()
-            if not info.get("passed")
+            if not info.get("passed") and info.get("tier", "blocking") != "advisory"
         ]
         raise StepError(f"{tier} failed: {', '.join(sorted(failed))} (report {out_path})")
     return f"{tier} passed, report={out_path.name}"
@@ -603,11 +608,10 @@ def _step_evaluate(model_def: ModelDefinition, options: RunOptions) -> str:
 
 def _step_export(model_def: ModelDefinition, options: RunOptions) -> str:
     from .export.bundle import export_model
-    from .runs import get_run, resolve_checkpoint
+    from .runs import resolve_checkpoint, run_id_for_checkpoint
 
     checkpoint = resolve_checkpoint(model_def)
-    run = get_run(model_def, checkpoint.name)
-    run_id = run.run_id if run else checkpoint.name
+    run_id = run_id_for_checkpoint(model_def, checkpoint)
     out_dir = model_def.output_dir / "export" / run_id
     export_model(model_def, checkpoint, out_dir, format=options.export_format, run_id=run_id)
     return f"export={out_dir.name}"

@@ -103,6 +103,10 @@ maatml serve     <model-dir>   # JSON inference API (validator inline)
 maatml audit     [model-dir]   # environment + model-folder health check
 ```
 
+Between evaluate and export sits the evidence the gate rests on: derived
+floors, the ship verdict, the operating point, named populations, the run
+record that travels. Those are lifecycle steps too; see [Evidence](evidence.md).
+
 ## One command for the whole lifecycle
 
 ```bash
@@ -152,6 +156,10 @@ maatml always reports `output_nonempty_rate` alongside a model's own metrics,
 which is what a smoke tier can honestly gate on: it says the checkpoint saved,
 reloaded, and produced output, without claiming the output was any good.
 
+Every evaluate also reports **pathologies** (`never_fires`, `identical_output`,
+`one_class`), and at the smoke tier each one is a failing gate of its own, so a
+rehearsal floor loose enough for a broken model cannot be cleared by one.
+
 `maatml plan <model-dir>` is the same view as `run --dry-run`.
 
 ## What each stage refuses to do quietly
@@ -168,13 +176,26 @@ reloaded, and produced output, without claiming the output was any good.
   those rows are split individually with a warning: group-level leakage
   protection does not apply to them. An empty split is reported, and a
   `benchmark_samples` row sharing a group key with the training splits is an
-  error, because a benchmark is pinned to test.
+  error, because a benchmark is pinned to test. With `dataset.isolation`
+  declared it refuses to write splits that violate the policy; with
+  `dataset.attribution` declared it refuses a row whose source is unlisted,
+  unsigned, blocked, or non-commercial without a signed risk acceptance; and
+  an in-place edit of `benchmark_samples` is refused, because a benchmark is
+  versioned by file.
+- `distill` refuses a prompt pool that overlaps `benchmark_samples`,
+  `blind_samples`, the prepared val / test split, or a pinned group, before
+  any teacher call.
 - `train` fails on gold labels no head declares, on a seq2seq corpus with no
   targets, and on an unsupported `training.precision`. Any failure marks the
   run `aborted` in `runs.jsonl`.
 - `evaluate` uses `packaging.max_input_tokens` as its token budget (the same
   budget serve and `export --parity` enforce) and records how many inputs it
   truncated. Per-class output is a pass rate with its sample count, not a
-  confusion matrix.
+  confusion matrix. Floors derived on another split are reported as a
+  population mismatch (refused under `--strict-population`); `--blind` is
+  refused on a candidate that has no current production gate pass or has
+  already spent the blind population.
+- `runs --adopt` refuses a bundle packed under another `model.yml` or identity,
+  and any file whose hash differs from the bundle's manifest.
 - `sweep` records a failed trial and keeps going, then exits non-zero. It ranks
   only trials that reported the metric being ranked.
