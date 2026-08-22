@@ -54,6 +54,7 @@ def _evaluate(tmp_path: Path, predictor, **kwargs) -> Report:
         predictor=predictor,
         validator=_json_validator,
         schema_path=schema,
+        device="cpu",
         **kwargs,
     )
 

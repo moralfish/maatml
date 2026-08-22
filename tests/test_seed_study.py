@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -112,4 +113,7 @@ def test_gates_derive_takes_runs_from_a_seed_study(tmp_path: Path) -> None:
     assert "min over 2 runs (run-s1)" in result.output
 
     result = runner.invoke(app, ["gates", "derive", str(mdir)])
-    assert result.exit_code != 0 and "--seed-study" in result.output
+    assert result.exit_code != 0
+    # typer's rich error box wraps and colours the message at the CI terminal width.
+    plain = re.sub(r"\x1b\[[0-9;]*m|[│╭╮╰╯─\s]", "", result.output)
+    assert "--seed-study" in plain

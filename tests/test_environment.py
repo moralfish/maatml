@@ -55,6 +55,7 @@ def test_evaluate_records_its_environment_on_the_report_and_the_gates(tmp_path: 
         dataset_dir=prepared,
         out_path=tmp_path / "eval" / "r.json",
         predictor=lambda row: "ok",
+        device="cpu",
         enforce_gates=True,
         gate_spec={"output_nonempty_rate": 0.5},
     )

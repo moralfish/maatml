@@ -195,7 +195,7 @@ def test_prepare_pins_cameras_and_writes_the_benchmark_version(tmp_path: Path) -
     state = read_benchmark_state(prepared)
     assert state is not None and state["version"] == summary["benchmark_version"]
     assert state["n"] == 9 and state["pins"] == ["benchmark=camera:G341", "val=camera:G339"]
-    assert "Benchmark version:" in (prepared / "DATASET_CARD.md").read_text()
+    assert "Benchmark version:" in (prepared / "dataset_card.md").read_text()
     assert check_prepared_isolation(md) == []
 
 

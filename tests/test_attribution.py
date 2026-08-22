@@ -213,7 +213,7 @@ def test_prepare_admits_signed_sources_and_writes_the_corpus_lock(tmp_path: Path
     assert lock["attribution"]["sha256"] == sha256_file(mdir / "datasets" / "ATTRIBUTION.md")
     assert [(s["source"], s["rows"]) for s in lock["sources"]] == [("crowdhuman", 4), ("meva", 8)]
     assert lock["sources"][1]["attribution"].startswith("Contains material from MEVA")
-    card = (md.prepared_dir / "DATASET_CARD.md").read_text()
+    card = (md.prepared_dir / "dataset_card.md").read_text()
     assert "Accepted risk: {'crowdhuman'" in card and "Corpus lock:" in card
 
     again = prepare(load_model_def(mdir, load_plugins=False))
