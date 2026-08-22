@@ -2,7 +2,7 @@
 
 A finished run and a passed gate are not yet a claim. Between them sit the
 questions a reviewer asks: where did the floor come from, on which rows, at
-what threshold, against which baseline, on which machine — and can the same
+what threshold, against which baseline, on which machine, and can the same
 answer be produced again from the records alone. maatml answers each of them
 as a lifecycle step with a record, so a model folder does not have to carry
 its own scripts for any of it.
@@ -59,7 +59,7 @@ maatml ship-check <model-dir> CANDIDATE BASELINE --replay   # benchmark changed 
 One verdict in three parts, in order: **absolute** (every blocking floor met
 at production tier), **delta** (no gated metric drops more than one row at
 n ≥ 30, or `--max-regression`), **population** (both reports on the same
-split — else `--replay` re-evaluates both checkpoints over the current test
+split; else `--replay` re-evaluates both checkpoints over the current test
 split under `output/eval/replay/`, touching neither run's own evidence). Exit
 1 on DO NOT SHIP; `--json` for machines.
 
@@ -79,7 +79,7 @@ evaluation:
 ```
 
 The sweep re-scores a val prediction cache through the predictor's
-`rescore(rows, threshold)` — no inference re-run — skips cuts below the one
+`rescore(rows, threshold)`, with no inference re-run, skips cuts below the one
 the cache was decoded at, and picks the best objective under the budget.
 `--write` sets the threshold in `model.yml` with the sweep as provenance.
 `--confirm-on-test` evaluates once on test at that cut and records a **test
@@ -136,8 +136,8 @@ sign-off, and a `no` / `unknown` commercial-use unless the sign-off itself
 reads `accepted-risk — <name> <date>`. Acceptance is signed in the table, not
 passed as a flag, so it carries a name and a date.
 
-Every prepare writes `output/prepared/corpus.lock.json` — input files by
-sha256 and row count, the attribution rows used, the risk accepted — and
+Every prepare writes `output/prepared/corpus.lock.json` (input files by
+sha256 and row count, the attribution rows used, the risk accepted), and
 `export` copies it into `manifest.json` as `corpus_lock`, with the rows
 rendered as the bundle's `ATTRIBUTION.md`. Declared metadata only; nothing is
 looked up.
@@ -155,8 +155,8 @@ evaluated on **val** with the evaluate harness; the best is recorded on the
 run and the run id resolves to it from then on, with evidence still recorded
 against the run. Reports under `output/eval/select/<run>/`.
 
-Every evaluate reports **pathologies** — `never_fires`, `identical_output`,
-`one_class`, plus a plugin's `__pathologies__` — and at the smoke tier each
+Every evaluate reports **pathologies** (`never_fires`, `identical_output`,
+`one_class`, plus a plugin's `__pathologies__`), and at the smoke tier each
 one is a failing gate, so a rehearsal cannot pass on a model that does not
 work. `distill` refuses a prompt pool that overlaps a held-out population
 before any teacher call.
@@ -182,7 +182,7 @@ determinism settings.
 
 `maatml report` renders runs, every report's metrics with k / n and the
 Wilson bound beside the floor that judged them, slice and pathology gates,
-seed statistics and spends — from `runs.jsonl`, `output/eval/*.json` and
+seed statistics and spends, from `runs.jsonl`, `output/eval/*.json` and
 `output/seeds/*.json` alone, so it regenerates byte-identically and never
 reads `model.yml`.
 

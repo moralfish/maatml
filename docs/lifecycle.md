@@ -103,7 +103,7 @@ maatml serve     <model-dir>   # JSON inference API (validator inline)
 maatml audit     [model-dir]   # environment + model-folder health check
 ```
 
-Between evaluate and export sits the evidence the gate rests on — derived
+Between evaluate and export sits the evidence the gate rests on: derived
 floors, the ship verdict, the operating point, named populations, the run
 record that travels. Those are lifecycle steps too; see [Evidence](evidence.md).
 
@@ -156,8 +156,8 @@ maatml always reports `output_nonempty_rate` alongside a model's own metrics,
 which is what a smoke tier can honestly gate on: it says the checkpoint saved,
 reloaded, and produced output, without claiming the output was any good.
 
-Every evaluate also reports **pathologies** — `never_fires`, `identical_output`,
-`one_class` — and at the smoke tier each one is a failing gate of its own, so a
+Every evaluate also reports **pathologies** (`never_fires`, `identical_output`,
+`one_class`), and at the smoke tier each one is a failing gate of its own, so a
 rehearsal floor loose enough for a broken model cannot be cleared by one.
 
 `maatml plan <model-dir>` is the same view as `run --dry-run`.
