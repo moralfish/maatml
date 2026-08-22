@@ -20,6 +20,15 @@ from rich.console import Console
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import SANITIZERS, register_format
 from ..utils.io import iter_jsonl, stable_hash, write_jsonl
+from .populations import (
+    apply_pins,
+    benchmark_version,
+    check_isolation,
+    refuse_in_place_benchmark_change,
+    resolve_isolation,
+    resolve_pins,
+    write_benchmark_state,
+)
 from .schemas import Split
 
 console = Console()
@@ -317,8 +326,13 @@ def prepare_rows(
     benchmark_rows: Optional[list[dict]] = None,
     benchmark_label: Optional[str] = None,
     sanitize_applied: Optional[list[str]] = None,
+    blind_rows: Optional[list[dict]] = None,
 ) -> dict:
     """Split already-loaded rows and write train/val/test + dataset card.
+
+    ``dataset.pins`` move whole groups into val or the benchmark after the
+    hash split; ``dataset.isolation`` is then asserted over every population,
+    including ``blind_rows``, which are checked but never written.
 
     Shared by ``jsonl_seed`` and format adapters (alpaca / sharegpt).
 
@@ -337,6 +351,36 @@ def prepare_rows(
     by_split, group_assignment, degenerate_key = _assign_group_splits(
         seed_rows, ratios, group_by=group_by
     )
+    isolation = resolve_isolation(cfg)
+    pins = resolve_pins(cfg, isolation)
+    pinned: dict[str, int] = {}
+    if pins:
+        as_str = {split.value: rows for split, rows in by_split.items()}
+        pinned = apply_pins(as_str, pins)
+        # A pinned population is exactly its pins: whatever the hash split
+        # dealt it from unpinned groups would share a camera or site with
+        # training, so those rows return to train.
+        pinned_populations = {"test" if p.population == "benchmark" else p.population for p in pins}
+        for name in pinned_populations:
+            keep: list[dict] = []
+            for row in as_str.get(name, []):
+                if any(
+                    p.matches(row)
+                    for p in pins
+                    if (p.population if p.population != "benchmark" else "test") == name
+                ):
+                    keep.append(row)
+                else:
+                    back = dict(row)
+                    back["split"] = Split.train.value
+                    as_str[Split.train.value].append(back)
+            as_str[name] = keep
+        by_split = {split: as_str.get(split.value, []) for split in by_split}
+        # A pinned group has a declared home; the hash assignment no longer
+        # describes it, and the benchmark guard must see where it went.
+        for split, rows in by_split.items():
+            for row in rows:
+                group_assignment[_group_key(row, group_by=group_by)] = split
     category_counts: Counter[str] = Counter()
     source_counts: Counter[str] = Counter()
     family_counts: Counter[str] = Counter()
@@ -364,8 +408,42 @@ def prepare_rows(
             if tagged.get("family"):
                 family_counts[str(tagged["family"])] += 1
 
+    if isolation is not None:
+        populations = {
+            "train": by_split[Split.train],
+            "val": by_split[Split.val],
+            "benchmark": by_split[Split.test],
+            "blind": list(blind_rows or []),
+        }
+        problems = check_isolation(populations, isolation)
+        if problems:
+            raise ValueError(
+                "dataset.isolation violated; refusing to write splits:\n  "
+                + "\n  ".join(problems)
+                + "\nPin whole groups at the policy level (dataset.pins) or set "
+                "dataset.group_by to that level so the hash split cannot straddle it."
+            )
+    if blind_rows:
+        _check_benchmark_leakage(
+            blind_rows,
+            group_assignment,
+            group_by=group_by,
+            seed_rows=seed_rows + (benchmark_rows or []),
+            request_field=str(cfg.get("request_field") or cfg.get("raw_field") or "") or None,
+        )
+
     # After benchmark pinning: test may be non-empty only because of it.
     _warn_on_empty_splits(by_split, n_groups=len(group_assignment))
+
+    version = benchmark_version(by_split[Split.test], pins)
+    write_benchmark_state(
+        out,
+        version=version,
+        n=len(by_split[Split.test]),
+        benchmark_path=Path(benchmark_label) if benchmark_label else None,
+        pins=pins,
+        isolation=isolation,
+    )
 
     paths = {split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()}
     split_counts = {split.value: len(rows) for split, rows in by_split.items()}
@@ -382,6 +460,10 @@ def prepare_rows(
             f"Families: {dict(family_counts) if family_counts else '{}'}",
             f"Sanitize: {list(sanitize_applied) if sanitize_applied else 'none'}",
             f"Degenerate group split per row: {degenerate_key or 'none'}",
+            f"Benchmark version: {version}",
+            f"Pins: {pinned if pinned else 'none'}",
+            f"Isolation: {isolation.policy if isolation else 'none'}",
+            f"Blind rows (checked, not written): {len(blind_rows or [])}",
         ],
     )
 
@@ -394,6 +476,9 @@ def prepare_rows(
         "family_counts": dict(family_counts),
         "split_counts": split_counts,
         "degenerate_group": degenerate_key,
+        "benchmark_version": version,
+        "pins": pinned,
+        "blind_rows": len(blind_rows or []),
     }
     console.print(
         f"[green]prepare complete[/] ({model_def.identity}): {summary['split_counts']} "
@@ -428,8 +513,17 @@ def prepare(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
     if benchmark_path:
         bench = model_def.resolve(benchmark_path)
         bench_label = str(bench)
+        refuse_in_place_benchmark_change(
+            Path(out_dir) if out_dir else model_def.prepared_dir, bench
+        )
         for raw in iter_jsonl(bench):
             bench_rows.append(_apply_sanitize(raw, sanitize_tags, request_field))
+
+    blind_rows: list[dict] = []
+    blind_path = cfg.get("blind_samples")
+    if blind_path:
+        for raw in iter_jsonl(model_def.resolve(blind_path)):
+            blind_rows.append(_apply_sanitize(raw, sanitize_tags, request_field))
 
     return prepare_rows(
         model_def,
@@ -439,4 +533,5 @@ def prepare(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
         benchmark_rows=bench_rows or None,
         benchmark_label=bench_label,
         sanitize_applied=sanitize_tags,
+        blind_rows=blind_rows or None,
     )

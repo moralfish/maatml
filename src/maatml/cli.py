@@ -372,6 +372,15 @@ def cmd_evaluate(
         help="With --gate: refuse when evaluation.gates_benchmark is not this "
         "split's content hash, instead of warning",
     ),
+    blind: bool = typer.Option(
+        False,
+        "--blind",
+        help="Spend dataset.blind_samples once on a candidate whose production gate pass "
+        "is current (gates enforced; writes <run>.blind.json; recorded on the run)",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="With --blind: repeat a spend on the same frozen candidate"
+    ),
 ) -> None:
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
@@ -397,6 +406,8 @@ def cmd_evaluate(
             gate=gate,
             cache_predictions=cache,
             strict_population=strict_population,
+            blind=blind,
+            force=force,
         )
     except GateConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
@@ -1264,6 +1275,8 @@ def cmd_runs(
         if rec.test_spends:
             benches = sorted({str(s.get("benchmark_sha256"))[:8] for s in rec.test_spends})
             spends = f"  test-spends={len(rec.test_spends)} ({', '.join(benches)})"
+        if rec.blind_spends:
+            spends += f"  blind-spends={len(rec.blind_spends)}"
         console.print(
             f"{rec.run_id}  [{rec.status}]  smoke={rec.smoke}  "
             f"device={rec.device or '-'}  {rec.out_dir}{metrics}{spends}"

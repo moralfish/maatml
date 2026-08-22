@@ -717,6 +717,7 @@ def run_evaluation(
     slices: Optional[Sequence[SliceSpec]] = None,
     cache_predictions: bool = False,
     strict_population: bool = False,
+    rows_path: Optional[Path] = None,
 ) -> Report:
     """Run the shared eval loop and write a :class:`Report` JSON.
 
@@ -726,7 +727,9 @@ def run_evaluation(
     ``cache_predictions`` keeps every row's output beside the report, keyed to
     the split's content hash, for derivations that must not re-run inference.
     ``strict_population`` refuses to enforce floors derived on a different
-    split (``evaluation.gates_benchmark``) instead of warning.
+    split (``evaluation.gates_benchmark``) instead of warning. ``rows_path``
+    evaluates a manifest that is not one of the prepared splits (a blind
+    population); ``split`` then only names it.
     """
     discover_plugins()
 
@@ -734,7 +737,7 @@ def run_evaluation(
     dataset_dir = Path(dataset_dir)
     out_path = Path(out_path)
 
-    split_path = dataset_dir / f"{split}.jsonl"
+    split_path = Path(rows_path) if rows_path is not None else dataset_dir / f"{split}.jsonl"
     rows = list(iter_jsonl(split_path))
     if not rows:
         raise ValueError(f"No rows in {split_path}")
@@ -962,6 +965,12 @@ def run_evaluation(
     extras: dict[str, Any] = {"max_input_tokens": max_input_tokens, "split_sha256": split_sha256}
     if limit is not None and limit > 0:
         extras["limit"] = int(limit)
+    if split == "test" and rows_path is None:
+        from ..data.populations import read_benchmark_state
+
+        state = read_benchmark_state(dataset_dir)
+        if state and state.get("version"):
+            extras["benchmark_version"] = str(state["version"])
     # The cut the predictor decoded at, so a later sweep knows the cache cannot
     # be re-filtered below it.
     evaluation_cfg = getattr(model_def, "evaluation", None) if model_def is not None else None

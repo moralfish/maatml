@@ -61,6 +61,8 @@ def evaluate_model(
     strict_population: bool = False,
     out_dir: Optional[Path] = None,
     record_gates: bool = True,
+    blind: bool = False,
+    force: bool = False,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
@@ -70,11 +72,20 @@ def evaluate_model(
     before the checkpoint is resolved or loaded. ``cache_predictions`` falls
     back to ``evaluation.cache_predictions`` when not given. ``out_dir`` redirects
     the report (a controlled replay must not overwrite the run's own evidence)
-    and ``record_gates=False`` keeps it off the run record.
+    and ``record_gates=False`` keeps it off the run record. ``blind`` evaluates
+    ``dataset.blind_samples`` once for a candidate whose gate evidence is
+    current; ``force`` allows a repeat spend.
     """
-    from ..runs import get_run, resolve_checkpoint, update_run_gates
+    from ..runs import (
+        evidence_fingerprint,
+        get_run,
+        record_blind_spend,
+        resolve_checkpoint,
+        update_run_gates,
+    )
     from . import predictors as _predictors  # noqa: F401  register built-ins
     from .harness import (
+        GateConfigError,
         _resolve_metrics,
         resolve_gate_spec,
         resolve_slices,
@@ -117,8 +128,58 @@ def evaluate_model(
     if cache_predictions is None:
         cache_predictions = bool(evaluation.get("cache_predictions", False))
 
+    rows_path: Optional[Path] = None
+    blind_sha256: Optional[str] = None
+    current_fp: Optional[str] = None
+    if blind:
+        from ..config import get_dataset_cfg
+        from ..utils.io import sha256_file
+
+        blind_rel = get_dataset_cfg(model_def).get("blind_samples")
+        if not blind_rel:
+            raise GateConfigError("--blind needs dataset.blind_samples in model.yml")
+        rows_path = model_def.resolve(str(blind_rel))
+        if not rows_path.is_file():
+            raise GateConfigError(f"dataset.blind_samples not found: {rows_path}")
+        blind_sha256 = sha256_file(rows_path)
+
     ckpt = resolve_checkpoint(model_def, checkpoint)
     from .operating_point import report_name
+
+    if blind:
+        split = "blind"
+        gate = True
+        if gate_spec is None:
+            gate_spec = resolve_gate_spec(model_def, smoke=False)
+        rec = get_run(model_def, ckpt.name)
+        current_fp = evidence_fingerprint(model_def, ckpt)
+        if rec is None:
+            raise GateConfigError(
+                f"{ckpt.name} is not in runs.jsonl; a blind evaluate needs a recorded, gated run"
+            )
+        if not (rec.gates or {}).get("passed") or rec.smoke_gated:
+            raise GateConfigError(
+                f"{ckpt.name} has no production gate pass on record; run evaluate --gate "
+                "on the benchmark first. The blind population is spent only on a candidate "
+                "that already passed."
+            )
+        if rec.gated_fingerprint != current_fp:
+            raise GateConfigError(
+                f"{ckpt.name} changed since its gate pass (evaluation config or weights); "
+                "re-run evaluate --gate before spending the blind population"
+            )
+        prior = [
+            s
+            for s in (rec.blind_spends or [])
+            if s.get("fingerprint") == current_fp and s.get("blind_sha256") == blind_sha256
+        ]
+        if prior and not force:
+            raise GateConfigError(
+                f"{ckpt.name} already spent this blind population at this fingerprint "
+                f"({len(prior)} time(s), last report {prior[-1].get('report')}); "
+                "a blind test is run once per frozen candidate. Pass --force to repeat, "
+                "and say so in the record."
+            )
 
     target_dir = Path(out_dir) if out_dir is not None else model_def.eval_dir
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -148,8 +209,20 @@ def evaluate_model(
         slices=slices,
         cache_predictions=cache_predictions,
         strict_population=strict_population,
+        rows_path=rows_path,
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
+
+    if blind:
+        spend = {
+            "fingerprint": current_fp,
+            "blind_sha256": blind_sha256,
+            "report": out_path.name,
+            "passed": report.passed,
+            "forced": bool(force),
+        }
+        record_blind_spend(model_def, ckpt.name, spend)
+        return report, out_path
 
     run_rec = get_run(model_def, ckpt.name) if record_gates else None
     if run_rec is not None and report.gates is not None:
@@ -159,6 +232,7 @@ def evaluate_model(
             report.gates,
             metrics=report.metrics,
             smoke_gated=smoke_gated,
+            gated_fingerprint=evidence_fingerprint(model_def, ckpt) if split == "test" else None,
         )
     return report, out_path
 

@@ -269,6 +269,10 @@ _DATASET_KNOWN_KEYS = frozenset(
         "source_dir",
         "val_fraction",
         "test_fraction",
+        # populations
+        "isolation",
+        "pins",
+        "blind_samples",
     }
 )
 _EVALUATION_KNOWN_KEYS = frozenset(

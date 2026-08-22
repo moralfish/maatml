@@ -306,6 +306,16 @@ def _model_folder(diag: Diagnostics, model_dir: Path) -> None:
         path = md.prepared_dir / f"{split}.jsonl"
         splits.append(f"{split}={_count_rows(path) if path.is_file() else 'missing'}")
     empty = [s for s in splits if s.endswith(("=0", "=missing"))]
+    try:
+        from .data.populations import PopulationError, check_prepared_isolation
+
+        problems = check_prepared_isolation(md)
+    except PopulationError as exc:
+        problems = [str(exc)]
+    if problems:
+        diag.add(section, "isolation", ERROR, "; ".join(problems))
+    elif (get_dataset_cfg(md) or {}).get("isolation"):
+        diag.add(section, "isolation", OK, "prepared populations satisfy dataset.isolation")
     diag.add(
         section,
         "prepared splits",

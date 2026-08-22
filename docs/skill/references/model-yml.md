@@ -65,6 +65,42 @@ A key covering nearly the whole corpus cannot be split, so those rows are split
 individually **with a warning**: group-level leakage protection does not apply
 to them. Read that warning rather than scrolling past it.
 
+### Populations: isolation, pins, a blind manifest
+
+`group_by` keeps correlated rows on one side of a split; it cannot say which
+side a camera lands on or that a site is absent from training. Declare the
+hierarchy a row carries and the level each held-out population is disjoint at:
+
+```yaml
+dataset:
+  isolation:
+    fields: [clip, camera, site]                  # row fields, fine -> coarse
+    policy: {val: camera, benchmark: camera, blind: site}
+  pins:
+    val: ["camera:G339"]                          # whole groups, field:value
+    benchmark: ["camera:G341", "camera:G421"]
+  blind_samples: datasets/samples/blind_v001.jsonl
+```
+
+`prepare` moves pinned groups after the hash split; a pinned population is
+exactly its pins (plus `benchmark_samples` for the benchmark), so unpinned
+groups the hash dealt it return to train. It then asserts the policy over
+train / val / benchmark / blind and refuses to write splits on a violation; a
+pin matching no row is an error. `maatml audit` re-checks the prepared splits.
+The blind manifest is checked for leakage but never written into a split.
+
+Every prepare writes `output/prepared/benchmark.json`: the **benchmark
+version** (an order-insensitive hash of the test rows plus the pins), which
+eval reports carry as `extras.benchmark_version`. Editing `benchmark_samples`
+under the same filename is refused — write the rows to a new file and point
+the key at it, so floors keep naming the population they came from.
+
+`maatml evaluate --blind` spends the blind manifest once per frozen candidate:
+the run must hold a production gate pass whose recorded fingerprint
+(evaluation config + weights) is unchanged, the gates are enforced on the blind
+rows, the report is `<run>.blind.json`, and the spend is recorded on the run;
+a repeat at the same fingerprint needs `--force` and is recorded as forced.
+
 A `benchmark_samples` row sharing a group key with the training splits is an
 error, not a warning. A benchmark is pinned to test on purpose: it is the
 population release decisions are made against, and it should be able to grow

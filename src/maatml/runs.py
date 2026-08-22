@@ -52,6 +52,11 @@ class RunRecord(BaseModel):
     # Every time the test split was spent to confirm a val-chosen operating
     # point: {benchmark_sha256, split, threshold_key, threshold, report, at}.
     test_spends: Optional[list[dict[str, Any]]] = None
+    # Evaluation config + checkpoint contents at the last production gate
+    # pass; a blind evaluate requires the candidate to be unchanged since.
+    gated_fingerprint: Optional[str] = None
+    # Every blind evaluate: {fingerprint, blind_sha256, report, passed, at}.
+    blind_spends: Optional[list[dict[str, Any]]] = None
 
 
 def _utc_now() -> str:
@@ -340,6 +345,7 @@ def update_run_gates(
     *,
     metrics: Optional[dict[str, float]] = None,
     smoke_gated: bool = False,
+    gated_fingerprint: Optional[str] = None,
 ) -> Optional[RunRecord]:
     """Attach eval-gate results to a known run (no-op if run_id unknown)."""
     rec = get_run(model_def, run_id)
@@ -348,6 +354,8 @@ def update_run_gates(
     payload = rec.model_dump()
     payload["gates"] = gates
     payload["smoke_gated"] = bool(smoke_gated)
+    if gated_fingerprint is not None and not smoke_gated:
+        payload["gated_fingerprint"] = gated_fingerprint
     if metrics is not None:
         payload["metrics"] = {**(payload.get("metrics") or {}), **metrics}
     updated = RunRecord(**payload)
@@ -368,6 +376,46 @@ def record_test_spend(
     spends.append({**spend, "at": _utc_now()})
     payload = rec.model_dump()
     payload["test_spends"] = spends
+    updated = RunRecord(**payload)
+    _append_record(model_def, updated)
+    return updated, prior
+
+
+def evidence_fingerprint(model_def: ModelDefinition, checkpoint: Path) -> str:
+    """What a gate pass was measured on: the evaluation config and the weights.
+
+    A blind evaluate is spent against exactly this; change a threshold or the
+    checkpoint and the candidate must be re-gated first.
+    """
+    from .lifecycle import _dir_signature
+    from .utils.io import stable_hash
+
+    evaluation = model_def.evaluation or {}
+    return stable_hash(
+        sorted(evaluation.items(), key=lambda kv: kv[0]),
+        model_def.packaging.model_dump(),
+        _dir_signature(Path(checkpoint)),
+    )
+
+
+def record_blind_spend(
+    model_def: ModelDefinition, run_id: str, spend: dict[str, Any]
+) -> tuple[Optional[RunRecord], int]:
+    """Append a blind spend; returns the record and how many prior spends share
+    the same fingerprint and blind population."""
+    rec = get_run(model_def, run_id)
+    if rec is None:
+        return None, 0
+    spends = list(rec.blind_spends or [])
+    prior = sum(
+        1
+        for s in spends
+        if s.get("fingerprint") == spend.get("fingerprint")
+        and s.get("blind_sha256") == spend.get("blind_sha256")
+    )
+    spends.append({**spend, "at": _utc_now()})
+    payload = rec.model_dump()
+    payload["blind_spends"] = spends
     updated = RunRecord(**payload)
     _append_record(model_def, updated)
     return updated, prior

@@ -63,6 +63,23 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   written cut and records a **test spend** on the run (`RunRecord.test_spends`;
   listed by `maatml runs`; a repeat on the same benchmark warns). Deriving on
   test is refused.
+- **Populations** (`dataset.isolation`, `dataset.pins`, `dataset.blind_samples`).
+  `isolation: {fields, policy}` declares the row hierarchy (fine → coarse) and
+  the level each of val / benchmark / blind must be disjoint from training at;
+  `pins: {val: [field:value], benchmark: [...]}` move whole groups after the
+  hash split, and a pinned population is exactly its pins. `prepare` refuses
+  to write splits that violate the policy, refuses a pin matching nothing,
+  checks the blind manifest for leakage without writing it, and `audit`
+  re-checks the prepared splits.
+- **Benchmark version**: `output/prepared/benchmark.json` records an
+  order-insensitive hash of the test rows plus the pins; reports carry it as
+  `extras.benchmark_version`. An in-place edit of `benchmark_samples` is
+  refused — version the file instead.
+- **`evaluate --blind`**: spends `dataset.blind_samples` once on a candidate
+  whose production gate pass is current (`RunRecord.gated_fingerprint`:
+  evaluation config + weights, recorded on every non-smoke test gate pass);
+  gates enforced; `<run>.blind.json`; the spend is recorded on the run
+  (`blind_spends`, listed by `maatml runs`) and a repeat needs `--force`.
 - Reports for non-test splits are named `<run>.<split>.json` (and their
   caches likewise), so a val evaluate no longer overwrites the test report.
   `extras.decode_threshold` records the cut the predictor decoded at.
