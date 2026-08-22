@@ -42,6 +42,11 @@ are ordered but unversioned.
 | v0.7 | Silent-failure hardening + test floor | Done |
 | v0.8 | Fixed lifecycle runner: `maatml run` | Done |
 | v0.8 | Distill + reviewed flywheel + serve contract | Done |
+| v0.9 | Serving-bundle exports (MLX / ONNX), loud distill, content-level benchmark leakage check, lint/type gate | Done |
+| v0.9.1 | Pluggable compile / serve runtimes, actionable `vision_scene` feedback, `maatml audit`, slimmer examples | Done |
+| v0.10 | Gated device compiles (`compile --require-gated`), shared capture path, `ingest --video`, Anthropic Messages wire, `diffusion_lora` | Done |
+| — | Slim artifact distribution | Planned |
+| — | Evidence layer: derived gates, operating points, named populations, portable runs | Planned |
 
 ## Non-goals
 
@@ -432,6 +437,168 @@ ledger, `verify --require-signature`.
 **Exit criteria:** `export → verify → publish → pull → verify` round-trips
 through the local backend in CPU-free CI preserving the digest; a file
 injected into a bundle after export fails `verify` (test).
+
+## Evidence layer: derived gates, named populations, portable runs (Planned)
+
+Unversioned until it ships (status rule above); the number is assigned at
+release.
+
+v0.10 ends at "the run finished and the floors passed". Everything between a
+finished run and an honest floor — deriving the floor, choosing the operating
+point, naming which population a number came from, carrying the run record
+home — is left to each model folder. The evidence that this is a gap rather
+than a preference: the SIP detector folders (a production user of
+`object_detection` through plugins) carry about fifty scripts across three
+folders, at least eight of them in two or three near-identical copies
+(`derive_gates.py`, `derive_operating_point.py`, `pack_colab.py`,
+`write_model_card.py`, `check_split_hygiene.py`, …), plus twelve Colab
+runners; and `docs/skill/` itself instructs a folder to carry
+`scripts/derive_gates.py --write`. An external review round of that project's
+training report asked for exactly the mechanisms below (clustered floors,
+val-derived thresholds, a benchmark version, a blind population, seed
+statistics, an environment manifest). Everything here is lifecycle; nothing is
+an executor or a DAG.
+
+**Depends on:** the v0.8 runner (every new step fingerprints its inputs and
+records into `runs.jsonl`) and v0.8 distill (the KD cache gains provenance).
+The sources attribution block extends the auto `MODEL_CARD.md` from Slim
+artifact distribution and lands after it. The report schema lands first;
+every other item writes into it.
+
+**Eval reports have a schema and keep their predictions**
+
+- `output/eval/<run>.json` carries `report_version`; a report missing a
+  required field fails schema validation instead of being read as zeros
+  (test)
+- `evaluate --cache` persists per-row predictions keyed by run id and split
+  hash; `gates derive` and `operating-point derive` read the cache instead of
+  re-running inference (test: a derive from cache and a derive from a fresh
+  evaluate of the same checkpoint produce identical floors)
+- `evaluation.slices: [field, …]` — the harness emits `n`, rate metrics and
+  intervals per value of every declared row field; plugins supply only the
+  primary score and match (test: a declared slice with zero rows reports
+  `n: 0` and no rate, never `0.0`)
+- Detection metric helpers as a core library module plugins import — IoU
+  matching with ignore regions, VOC11 / COCO-101 AP selected by config and
+  named in the report, size buckets, `empty_clean`, `fp_per_frame`;
+  architectures stay plugin-owned per the design rule (test: two plugins
+  using the helpers agree on a fixture; a report without the AP protocol
+  field fails validation)
+
+**Gates are derived, tiered and population-stamped**
+
+- `maatml gates derive --run R [--run R2 …] --write`: Wilson 95% lower bound
+  at each metric's own denominator; per-metric minimum across the runs given;
+  refuses thin denominators (`min_n`) and few-group sources (`min_groups`)
+  and prints the refusal beside the metric rather than writing a floor (test)
+- Group-cluster bootstrap for rate floors when rows carry the group key,
+  replacing row-level Wilson on clustered populations; AP floors gain an
+  image-level bootstrap interval (test: on a fixture whose rows cluster
+  perfectly within groups, the clustered bound is wider than Wilson)
+- Every written floor carries its derivation comment and the **benchmark
+  version** it came from; `evaluate --gate` warns when the current benchmark
+  version differs from the floors' and refuses under `--strict-population`
+  (test)
+- `evaluation.gates` entries may carry a tier, `blocking` (default) or
+  `advisory`; an advisory miss is reported and recorded in `gate_evidence`
+  and never fails the step; `compile --require-gated` reads the tier (test)
+- `maatml runs ship-check CANDIDATE BASELINE`: absolute (floors), delta (no
+  gated metric regresses beyond one row at n ≥ 30), and controlled replay
+  (both checkpoints over identical rows when the benchmark version differs)
+  in one verdict (test: a benchmark version change alone never yields
+  "regressed")
+
+**Operating points are chosen on val and spent once on test**
+
+- `evaluation.operating_point: {threshold_key, objective, budget: {metric,
+  max}, sources}`; `maatml operating-point derive --run R --write` sweeps the
+  threshold over val predictions, takes the best objective under the budget,
+  and writes `evaluation.<threshold_key>` with the sweep artifact as
+  provenance; a val split with no rows in a required source refuses (test)
+- Sweep points carry intervals; the sweep artifact records `n` per source
+  (test)
+- `--confirm-on-test` evaluates once at the written threshold and appends a
+  test-spend record to `runs.jsonl`; `maatml runs` lists spends per benchmark
+  version; a second confirm on the same benchmark version warns and is
+  listed (test)
+- The report records val-to-benchmark transfer: the metrics at the written
+  threshold on val and on the benchmark, per source (test)
+
+**Populations beyond one group key**
+
+- `dataset.isolation: [clip, camera, site]` declares the hierarchy from row
+  fields and the policy each population satisfies; `dataset.pins: {val:
+  [...], benchmark: [...]}` assigns groups; `prepare` and `audit` refuse a
+  group that spans populations under the declared policy (test)
+- A benchmark has a version: hash of its rows plus the pins, written to the
+  eval report and the floor block; `prepare` refuses to change
+  `benchmark_samples` in place and requires a new version (test)
+- `dataset.blind_samples`: a population that never enters train, val or the
+  benchmark; `maatml evaluate --blind` runs once for a checkpoint whose
+  train, decode and threshold fingerprints are unchanged since its last gated
+  evaluate, records the spend, and refuses a second run for the same
+  fingerprint without `--force` (test)
+- `maatml train --seeds N`: one fixed recipe, N seeds, mean / sd / min / max
+  per metric in one record, consumable by `gates derive` as the per-metric
+  minimum (test)
+
+**Sources carry their licence**
+
+- `dataset.sources[]`: name, licence, commercial-use (`yes` / `no` /
+  `unknown`), consent basis, sign-off; `prepare` refuses rows whose source
+  has no entry, and refuses `no` / `unknown` commercial-use without
+  `--accept-risk`, recording the acceptance in the corpus lock (test)
+- Corpus lock: hash of every seed file that entered `prepare` plus the
+  sources table, written under `output/prepared/` and into the export
+  manifest (test)
+- The auto `MODEL_CARD.md` (Slim artifact distribution) gains a per-source
+  attribution block from the sources table; still declared metadata only, no
+  inference or lookup (test)
+
+**Training tells the truth earlier**
+
+- `training.select_by: <gated val metric>` selects the checkpoint; required
+  when a KD term is configured, since val loss is not comparable across arms
+  once a distillation term enters it (test: KD on and `select_by` absent
+  refuses to train)
+- The KD teacher cache records the split fingerprint it was built on; `train`
+  refuses a cache from another split. This constrains the top-k logit KD
+  item under Later (test)
+- Named pathology signatures at evaluate — "never fires" (precision high,
+  recall near zero, `empty_clean` 1.0), "one class", "identical output across
+  inputs" — reported as `pathologies[]` and failing the smoke tier (test)
+
+**Runs travel**
+
+- `maatml runs pack RUN` / `maatml runs adopt BUNDLE`: the run directory
+  (without `checkpoint-*` unless `--with-checkpoints`), its `runs.jsonl`
+  record, eval reports and caches, and an environment manifest; `adopt`
+  refuses a bundle whose model-folder fingerprint does not match without
+  `--force` (test). Records move; jobs do not — no remote executor
+- Environment manifest on every `train` and `evaluate` record: git SHA,
+  Python, torch, maatml, CUDA / cuDNN, GPU and driver, OS, determinism
+  settings (test)
+- `maatml report`: Markdown / CSV of runs, floors with derivation, slices,
+  seed statistics and test spends, generated from the report schema alone
+  (test: output regenerates from `output/eval/*.json` and `runs.jsonl` with
+  no other input)
+
+**Exit criteria:** a model folder with no `scripts/` directory derives its
+floors, selects its operating point, pins a camera-disjoint benchmark and a
+site-disjoint blind population, and produces a report, using only `model.yml`
+and the CLI (CI test on a vision example); `gates derive` on a clustered
+fixture writes a floor below row-level Wilson (test); floors carry a benchmark
+version and `evaluate --gate --strict-population` exits non-zero when it
+differs (test); `operating-point derive --write` followed by a second
+`--confirm-on-test` on the same benchmark version prints a warning and lists
+both spends (test); `evaluate --blind` on an unchanged fingerprint exits
+non-zero without `--force` (test); `prepare` exits non-zero for a source with
+`commercial-use: no` and no `--accept-risk` (test); `train` with a KD cache
+from another split exits non-zero before loading weights (test); a "never
+fires" fixture fails the smoke tier (test); `runs adopt` of a packed run
+reproduces `maatml runs` output on the receiving machine (test);
+`maatml report` regenerates byte-identically from reports and `runs.jsonl`
+(test).
 
 ## Later
 
