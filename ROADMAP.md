@@ -502,7 +502,7 @@ every other item writes into it.
 - `evaluation.gates` entries may carry a tier, `blocking` (default) or
   `advisory`; an advisory miss is reported and recorded in `gate_evidence`
   and never fails the step; `compile --require-gated` reads the tier (test)
-- `maatml runs ship-check CANDIDATE BASELINE`: absolute (floors), delta (no
+- `maatml ship-check CANDIDATE BASELINE`: absolute (floors), delta (no
   gated metric regresses beyond one row at n ≥ 30), and controlled replay
   (both checkpoints over identical rows when the benchmark version differs)
   in one verdict (test: a benchmark version change alone never yields

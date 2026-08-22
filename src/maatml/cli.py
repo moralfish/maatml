@@ -587,6 +587,109 @@ def cmd_gates_derive(
         console.print(f"[green]wrote[/] {len(result.floors)} floors -> {path} ({section}.gates)")
 
 
+@app.command("ship-check")
+def cmd_ship_check(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    candidate: str = typer.Argument(
+        ..., help="Candidate run id (its eval report under output/eval/)"
+    ),
+    baseline: str = typer.Argument(..., help="Accepted release run id"),
+    max_regression: Optional[float] = typer.Option(
+        None,
+        "--max-regression",
+        help="Fixed allowed drop per gated metric instead of the one-row tolerance",
+    ),
+    replay: bool = typer.Option(
+        False,
+        "--replay",
+        help="When the two reports were measured on different splits, re-evaluate both "
+        "checkpoints over the current test split (under output/eval/replay/) and judge those",
+    ),
+    device: str = typer.Option("auto", "--device"),
+    as_json: bool = typer.Option(False, "--json", help="Print the verdict as JSON"),
+) -> None:
+    """Absolute floors, delta vs the baseline, and a controlled replay when the split changed."""
+    md = load_model_def(model_dir)
+    _boot_plugins(md)
+    from .evaluation.harness import (
+        GateConfigError,
+        Report,
+        ReportSchemaError,
+        effective_gates,
+        gate_tiers,
+    )
+    from .evaluation.shipcheck import render_verdict, ship_check
+
+    def _load(run: str, directory: Path) -> Report:
+        path = directory / f"{run}.json"
+        if not path.is_file():
+            raise typer.BadParameter(f"no eval report for {run!r} at {path}", param_hint="run")
+        try:
+            return Report.read(path, strict=True)
+        except ReportSchemaError as exc:
+            raise typer.BadParameter(f"{run}: {exc}", param_hint="run") from exc
+
+    try:
+        gates = effective_gates(md)
+        tiers = gate_tiers(md)
+    except GateConfigError as exc:
+        raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
+    if not gates:
+        raise typer.BadParameter(
+            "no evaluation.gates configured; nothing to check against", param_hint="evaluation"
+        )
+
+    cand = _load(candidate, md.eval_dir)
+    base = _load(baseline, md.eval_dir)
+    replayed = False
+    cand_split = (cand.gates or {}).get("benchmark_sha256") or cand.extras.get("split_sha256")
+    base_split = (base.gates or {}).get("benchmark_sha256") or base.extras.get("split_sha256")
+    if replay and cand_split != base_split:
+        from .evaluation.runner import evaluate_model
+
+        replay_dir = md.eval_dir / "replay"
+        console.print(
+            f"[cyan]replay[/] splits differ ({str(cand_split)[:16]} vs {str(base_split)[:16]}); "
+            f"re-evaluating both over the current test split -> {replay_dir}"
+        )
+        try:
+            for run in (candidate, baseline):
+                evaluate_model(
+                    md,
+                    checkpoint=run,
+                    split="test",
+                    device=device,
+                    gate=True,
+                    out_dir=replay_dir,
+                    record_gates=False,
+                )
+        except (GateConfigError, KeyError) as exc:
+            raise typer.BadParameter(_user_message(exc), param_hint="evaluation") from exc
+        cand = _load(candidate, replay_dir)
+        base = _load(baseline, replay_dir)
+        replayed = True
+
+    verdict = ship_check(
+        cand,
+        base,
+        gates=gates,
+        tiers=tiers,
+        max_regression=max_regression,
+        replayed=replayed,
+        candidate_label=candidate,
+        baseline_label=baseline,
+    )
+    if as_json:
+        import json as _json
+
+        console.print(_json.dumps(verdict.as_dict(), indent=2, sort_keys=True))
+    else:
+        for line in render_verdict(verdict):
+            console.print(line)
+    if not verdict.ship:
+        raise typer.Exit(code=1)
+
+
 @manifest_app.command("amend")
 def cmd_manifest_amend(
     export_dir: Path = typer.Argument(

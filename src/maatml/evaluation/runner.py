@@ -59,6 +59,8 @@ def evaluate_model(
     smoke: bool = False,
     cache_predictions: Optional[bool] = None,
     strict_population: bool = False,
+    out_dir: Optional[Path] = None,
+    record_gates: bool = True,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
@@ -66,7 +68,9 @@ def evaluate_model(
     runner's evaluate step, so both enforce gates, resolve the token budget,
     and record results on the run identically. Configuration problems raise
     before the checkpoint is resolved or loaded. ``cache_predictions`` falls
-    back to ``evaluation.cache_predictions`` when not given.
+    back to ``evaluation.cache_predictions`` when not given. ``out_dir`` redirects
+    the report (a controlled replay must not overwrite the run's own evidence)
+    and ``record_gates=False`` keeps it off the run record.
     """
     from ..runs import get_run, resolve_checkpoint, update_run_gates
     from . import predictors as _predictors  # noqa: F401  register built-ins
@@ -114,8 +118,9 @@ def evaluate_model(
         cache_predictions = bool(evaluation.get("cache_predictions", False))
 
     ckpt = resolve_checkpoint(model_def, checkpoint)
-    model_def.eval_dir.mkdir(parents=True, exist_ok=True)
-    out_path = model_def.eval_dir / f"{ckpt.name}.json"
+    target_dir = Path(out_dir) if out_dir is not None else model_def.eval_dir
+    target_dir.mkdir(parents=True, exist_ok=True)
+    out_path = target_dir / f"{ckpt.name}.json"
     budget = (
         max_input_tokens if max_input_tokens is not None else model_def.packaging.max_input_tokens
     )
@@ -143,7 +148,7 @@ def evaluate_model(
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
 
-    run_rec = get_run(model_def, ckpt.name)
+    run_rec = get_run(model_def, ckpt.name) if record_gates else None
     if run_rec is not None and report.gates is not None:
         update_run_gates(
             model_def,

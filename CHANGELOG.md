@@ -46,6 +46,13 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   lifecycle runner, or `compile --require-gated`.
 - **Slice gates**: `"slice:<field>=<value>"` gates that slice's pass rate; an
   empty slice reads `None` and fails.
+- **`maatml ship-check CANDIDATE BASELINE`**. The release decision in one
+  verdict: absolute (every blocking floor met at production tier), delta
+  (no gated metric drops more than one row at n >= 30, or `--max-regression`),
+  and population (same split, else `--replay` re-evaluates both checkpoints
+  over the current test split under `output/eval/replay/` without touching
+  either run's own evidence). Exit 1 on DO NOT SHIP; `--json` for the
+  verdict. `evaluate_model` gained `out_dir` and `record_gates` for this.
 - **Population stamp**: with `--gate`, the gates payload records the split's
   `benchmark_sha256`; when `evaluation.gates_benchmark` names another split
   evaluate warns (`population_mismatch`), and `--strict-population` refuses.
