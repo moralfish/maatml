@@ -25,6 +25,7 @@ from .attribution import (
     check_sources,
     read_attribution,
     resolve_attribution,
+    resolve_attribution_field,
     write_corpus_lock,
 )
 from .populations import (
@@ -445,11 +446,12 @@ def prepare_rows(
         )
 
     attribution_path = resolve_attribution(model_def)
+    attribution_field = resolve_attribution_field(model_def)
     source_check = None
     if attribution_path is not None:
         entries = read_attribution(attribution_path)
         every_row = [row for rows in by_split.values() for row in rows] + list(blind_rows or [])
-        source_check = check_sources(every_row, entries)
+        source_check = check_sources(every_row, entries, field=attribution_field)
         if not source_check.ok:
             raise AttributionError(
                 f"{attribution_path.name} refuses to prepare:\n  "
@@ -481,7 +483,11 @@ def prepare_rows(
         ]
     )
     lock = write_corpus_lock(
-        out, files=lock_files, attribution_path=attribution_path, check=source_check
+        out,
+        files=lock_files,
+        attribution_path=attribution_path,
+        check=source_check,
+        field=attribution_field,
     )
     lock_sha = json.loads(lock.read_text(encoding="utf-8"))["lock_sha256"]
     accepted_risk = dict(source_check.accepted_risk) if source_check else {}
@@ -502,7 +508,8 @@ def prepare_rows(
             f"Pins: {pinned if pinned else 'none'}",
             f"Isolation: {isolation.policy if isolation else 'none'}",
             f"Blind rows (checked, not written): {len(blind_rows or [])}",
-            f"Attribution: {attribution_path or 'none'}",
+            f"Attribution: {attribution_path or 'none'}"
+            + (f" (keyed on `{attribution_field}`)" if attribution_path else ""),
             f"Accepted risk: {accepted_risk if accepted_risk else 'none'}",
             f"Corpus lock: {lock_sha}",
         ],

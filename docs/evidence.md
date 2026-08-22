@@ -66,6 +66,7 @@ split under `output/eval/replay/`, touching neither run's own evidence). Exit
 ## The operating point comes from val
 
 ```bash
+maatml evaluate <model-dir> --checkpoint RUN --split val --cache --set evaluation.score_thresh=0.05
 maatml operating-point derive <model-dir> --run RUN --split val
 maatml operating-point derive <model-dir> --run RUN --write --confirm-on-test
 ```
@@ -80,7 +81,10 @@ evaluation:
 
 The sweep re-scores a val prediction cache through the predictor's
 `rescore(rows, threshold)`, with no inference re-run, skips cuts below the one
-the cache was decoded at, and picks the best objective under the budget.
+the cache was decoded at, and picks the best objective under the budget. The
+val evaluate that writes the cache runs under `--set`, which overrides
+`model.yml` for that one evaluate, is recorded on the report as
+`extras.overrides`, and is refused together with `--gate` or `--blind`.
 `--write` sets the threshold in `model.yml` with the sweep as provenance.
 `--confirm-on-test` evaluates once on test at that cut and records a **test
 spend** on the run; a second spend on the same benchmark version warns and
@@ -130,7 +134,8 @@ dataset:
 ```
 
 A sidecar Markdown table, one row per `source` (`licence`, `commercial-use`,
-`sign-off` required; consent and attribution read when present). `prepare`
+`sign-off` required; consent and attribution read when present), keyed on
+another row field when `dataset.attribution_field` names one. `prepare`
 refuses a row without a source or without a table row, a blocked or unsigned
 sign-off, and a `no` / `unknown` commercial-use unless the sign-off itself
 reads `accepted-risk — <name> <date>`. Acceptance is signed in the table, not

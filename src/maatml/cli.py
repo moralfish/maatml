@@ -7,7 +7,7 @@ Outputs land under ``<model-dir>/output/`` (gitignored).
   maatml prepare   <model-dir>
   maatml train     <model-dir> [--smoke] [--resume auto|PATH] [--set K=V]
   maatml sweep     <model-dir> --param K=a,b [--metric NAME] [--smoke]
-  maatml evaluate  <model-dir> [--checkpoint X] [--split test] [--gate]
+  maatml evaluate  <model-dir> [--checkpoint X] [--split test] [--gate] [--set K=V]
   maatml export    <model-dir> [--checkpoint X] [--format gguf|mlx|safetensors|onnx]
   maatml compile   <export-dir> --target NAME --out DIR [--option K=V]
   maatml verify    <export-dir-or-manifest>
@@ -37,6 +37,7 @@ from .overrides import (
     expand_param_grid,
     minimizes,
     overrides_from_mapping,
+    parse_override,
     pick_metric,
 )
 from .registry import (
@@ -421,9 +422,24 @@ def cmd_evaluate(
     force: bool = typer.Option(
         False, "--force", help="With --blind: repeat a spend on the same frozen candidate"
     ),
+    set_overrides: Optional[list[str]] = typer.Option(
+        None,
+        "--set",
+        help="Override model.yml for this evaluate only (repeatable), e.g. "
+        "--set evaluation.score_thresh=0.05 to cache val predictions at a low cut "
+        "for operating-point derive; recorded as extras.overrides, refused with "
+        "--gate / --blind",
+    ),
 ) -> None:
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
+    applied: dict[str, Any] = {}
+    if set_overrides:
+        try:
+            apply_overrides(md, set_overrides)
+            applied = dict(parse_override(spec) for spec in set_overrides)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--set") from exc
     _boot_plugins(md)
     from .evaluation.harness import GateConfigError
     from .evaluation.runner import evaluate_model
@@ -448,6 +464,7 @@ def cmd_evaluate(
             strict_population=strict_population,
             blind=blind,
             force=force,
+            overrides=applied or None,
         )
     except GateConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="evaluation") from exc

@@ -148,6 +148,21 @@ def test_check_sources_applies_every_rule(tmp_path: Path) -> None:
     assert check.accepted_risk == {}
 
 
+def test_check_sources_can_key_on_another_row_field(tmp_path: Path) -> None:
+    """A corpus whose `source` is finer than its licence keys the table on `dataset`."""
+    entries = read_attribution(_attribution(tmp_path))
+    rows = [
+        {"dataset": "meva", "source": "meva:kpf:2018-03-05.G339.geom.yml"},
+        {"dataset": "meva", "source": "benchmark:holdout"},
+        {"dataset": "crowdhuman", "source": "crowdhuman:odgt"},
+    ]
+    assert not check_sources(rows, entries).ok
+    check = check_sources(rows, entries, field="dataset")
+    assert check.ok and check.used == {"meva": 2, "crowdhuman": 1}
+    unkeyed = check_sources([{"source": "meva"}], entries, field="dataset")
+    assert "1 row(s) carry no `dataset`" in "\n".join(unkeyed.refusals)
+
+
 # --- prepare -------------------------------------------------------------------------
 
 _MODEL_YML = """name: attr-test
@@ -240,6 +255,36 @@ def test_prepare_refuses_a_source_without_a_signed_row(tmp_path: Path) -> None:
     del rows[0]["source"]
     mdir = _model_dir(tmp_path / "d", rows)
     with pytest.raises(AttributionError, match="carry no `source`"):
+        prepare(load_model_def(mdir, load_plugins=False))
+
+
+def test_prepare_keys_the_table_on_dataset_attribution_field(tmp_path: Path) -> None:
+    rows = _rows(["meva"] * 8 + ["crowdhuman"] * 4)
+    for i, row in enumerate(rows):
+        row["dataset"] = row.pop("source")
+        row["source"] = f"{row['dataset']}:file{i}"
+    mdir = _model_dir(tmp_path, rows)
+    md = load_model_def(mdir, load_plugins=False)
+    with pytest.raises(AttributionError, match="no attribution row"):
+        prepare(md)
+
+    yml = mdir / "model.yml"
+    yml.write_text(
+        yml.read_text().replace(
+            "  attribution: datasets/ATTRIBUTION.md\n",
+            "  attribution: datasets/ATTRIBUTION.md\n  attribution_field: dataset\n",
+        )
+    )
+    md = load_model_def(mdir, load_plugins=False)
+    summary = prepare(md)
+    lock = read_corpus_lock(md.prepared_dir)
+    assert lock is not None and lock["attribution"]["field"] == "dataset"
+    assert [(s["source"], s["rows"]) for s in lock["sources"]] == [("crowdhuman", 4), ("meva", 8)]
+    assert summary["accepted_risk"] == {"crowdhuman": "accepted-risk — A. Name 2026-08-17"}
+    assert "keyed on `dataset`" in (md.prepared_dir / "dataset_card.md").read_text()
+
+    yml.write_text(yml.read_text().replace("attribution_field: dataset", "attribution_field: 3"))
+    with pytest.raises(AttributionError, match="attribution_field"):
         prepare(load_model_def(mdir, load_plugins=False))
 
 

@@ -8,7 +8,7 @@ here for backward compatibility.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from rich.console import Console
 
@@ -64,6 +64,7 @@ def evaluate_model(
     blind: bool = False,
     force: bool = False,
     label: Optional[str] = None,
+    overrides: Optional[dict[str, Any]] = None,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
@@ -75,7 +76,10 @@ def evaluate_model(
     the report (a controlled replay must not overwrite the run's own evidence)
     and ``record_gates=False`` keeps it off the run record. ``blind`` evaluates
     ``dataset.blind_samples`` once for a candidate whose gate evidence is
-    current; ``force`` allows a repeat spend.
+    current; ``force`` allows a repeat spend. ``overrides`` (already applied
+    to ``model_def`` by ``--set``) are recorded on the report and refused
+    with ``gate`` or ``blind``: a measurement under an override is never
+    gate evidence.
     """
     from ..runs import (
         evidence_fingerprint,
@@ -97,6 +101,12 @@ def evaluate_model(
     )
 
     evaluation = model_def.evaluation or {}
+    if overrides and (gate or blind):
+        raise GateConfigError(
+            "--set overrides model.yml for this evaluate only; a report measured under "
+            "an override is not gate evidence, so --set cannot be combined with --gate "
+            "or --blind"
+        )
     predictor = evaluation.get("predictor")
     validator = evaluation.get("validator")
     metrics = evaluation.get("metrics")
@@ -213,6 +223,7 @@ def evaluate_model(
         cache_predictions=cache_predictions,
         strict_population=strict_population,
         rows_path=rows_path,
+        overrides=overrides,
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
 

@@ -33,6 +33,7 @@ maatml audit    [model-dir]          # read-only pre-flight; exits 1 on anything
 maatml prepare  <model-dir>          # train/val/test splits
 maatml train    <model-dir>          # LoRA / QLoRA / full / DPO / ORPO / vision / VLM
 maatml evaluate <model-dir> --gate   # validator + metrics + gates, non-zero on failure
+maatml evaluate <model-dir> --split val --cache --set evaluation.score_thresh=0.05   # sweep input
 maatml export   <model-dir> --format gguf
 maatml verify   <export-dir>         # sha256 against manifest.json
 maatml serve    <model-dir>

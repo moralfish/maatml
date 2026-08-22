@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for the Python package and per-model versions under `examples/`.
 
+## [0.11.1] - 2026-08-23
+
+Two gaps found while a real model folder adopted the evidence layer.
+
+### Added
+
+- **`dataset.attribution_field`**. The attribution table is keyed on each
+  row's `source` by default; a corpus whose `source` is finer than its
+  licence (one value per annotation file, `benchmark:holdout` for pinned
+  rows) names the licence-level field instead, typically `dataset`. The
+  corpus lock records the field; an empty or non-string value is refused.
+- **`maatml evaluate --set K=V`**. Overrides `model.yml` for that one
+  evaluate (repeatable, same syntax as `train --set`), recorded on the report
+  as `extras.overrides`, refused together with `--gate` or `--blind`. This is
+  how the val prediction cache for `operating-point derive` is written at a
+  low decode cut without editing the file: the predictor receives the
+  overridden `model_def`, and `extras.decode_threshold` records the cut the
+  cache was decoded at.
+
 ## [0.11.0] - 2026-08-23
 
 The Evidence layer (#34): everything between a finished run and an honest

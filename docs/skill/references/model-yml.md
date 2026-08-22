@@ -111,6 +111,7 @@ without retraining.
 ```yaml
 dataset:
   attribution: datasets/ATTRIBUTION.md   # a sidecar Markdown table, one row per `source`
+  attribution_field: dataset             # optional: the row field the table is keyed on
 ```
 
 The table is the execute-time licence record, kept beside the corpus rather
@@ -131,6 +132,11 @@ with long headers and extra columns parses as it is:
 required; `provenance` / `consent` and `attribution` are read when present.
 `commercial-use` is read from the start of the cell — `yes`, `no`, anything
 else is `unknown` — so a hedge like `unknown until filtered` stays unknown.
+The table is keyed on each row's `source` unless `attribution_field` names
+another field: a corpus whose `source` is finer than its licence (one value
+per annotation file, `benchmark:holdout` for pinned rows) keys the table on
+the licence-level field it carries, typically `dataset`. The lock records the
+field.
 
 With the key declared, `prepare` checks every row that enters (seed,
 benchmark and blind) and refuses to write splits when:
@@ -229,14 +235,19 @@ evaluation:
 ```
 
 ```bash
-maatml evaluate <dir> --checkpoint R --split val --cache       # writes R.val.json + cache
+maatml evaluate <dir> --checkpoint R --split val --cache \
+    --set evaluation.score_thresh=0.05                         # cache val at a low cut
 maatml operating-point derive <dir> --run R --write            # sweep, pick, write
 maatml operating-point derive <dir> --run R --confirm-on-test  # spend test once
 ```
 
 The sweep calls the predictor's `rescore(rows, threshold)` over the cached val
 predictions (see the plugins reference), skips grid points below the cut the
-cache was decoded at, picks the best objective under the budget (ties to the
+cache was decoded at (so the val evaluate that feeds it runs under
+`--set evaluation.<threshold_key>=<low cut>`; the override is recorded as
+`extras.overrides`, model.yml is untouched, and `--set` is refused with
+`--gate` or `--blind` because a measurement under an override is never gate
+evidence), picks the best objective under the budget (ties to the
 lower budget, then the higher cut), writes `<run>.<split>.operating_point.json`
 and, with `--write`, the threshold line with its provenance. `--confirm-on-test`
 evaluates once on test at the written cut and records the spend on the run;

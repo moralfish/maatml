@@ -1,9 +1,11 @@
 """Sources carry their licence: a sidecar attribution table gates ``prepare``.
 
 ``dataset.attribution`` names a Markdown file with one table row per value
-the corpus rows carry in ``source``. ``prepare`` refuses a row whose source
-has no entry, an entry whose sign-off is blocked or unsigned, and a source
-whose commercial-use is ``no`` / ``unknown`` unless its sign-off records an
+the corpus rows carry in ``source`` (or the field ``dataset.attribution_field``
+names, for a corpus whose ``source`` is finer than its licence). ``prepare``
+refuses a row whose source has no entry, an entry whose sign-off is blocked or
+unsigned, and a source whose commercial-use is ``no`` / ``unknown`` unless its
+sign-off records an
 accepted risk (a name and a date, not a flag). What entered prepare — every
 input file with its sha256, the table rows it used, the risk accepted — is
 written to ``output/prepared/corpus.lock.json`` and copied into the export
@@ -35,6 +37,8 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 from ..utils.io import iter_jsonl, sha256_file, write_json_atomic
 
 ATTRIBUTION_KEY = "attribution"
+ATTRIBUTION_FIELD_KEY = "attribution_field"
+DEFAULT_ATTRIBUTION_FIELD = "source"
 ATTRIBUTION_FILE = "ATTRIBUTION.md"
 CORPUS_LOCK = "corpus.lock.json"
 CORPUS_LOCK_KIND = "maatml.corpus_lock/1"
@@ -183,6 +187,18 @@ def resolve_attribution(model_def: Any) -> Optional[Path]:
     return model_def.resolve(value)
 
 
+def resolve_attribution_field(model_def: Any) -> str:
+    """The row field the table is keyed on (``dataset.attribution_field``, default ``source``)."""
+    from ..config import get_dataset_cfg
+
+    value = get_dataset_cfg(model_def).get(ATTRIBUTION_FIELD_KEY)
+    if value is None:
+        return DEFAULT_ATTRIBUTION_FIELD
+    if not isinstance(value, str) or not value.strip():
+        raise AttributionError("dataset.attribution_field must be a row field name")
+    return value.strip()
+
+
 @dataclass
 class SourceCheck:
     used: dict[str, int]
@@ -195,12 +211,17 @@ class SourceCheck:
         return not self.refusals
 
 
-def check_sources(rows: Iterable[dict[str, Any]], entries: dict[str, SourceEntry]) -> SourceCheck:
-    """Every distinct ``source`` among ``rows`` against the table; refusals are strings."""
+def check_sources(
+    rows: Iterable[dict[str, Any]],
+    entries: dict[str, SourceEntry],
+    *,
+    field: str = DEFAULT_ATTRIBUTION_FIELD,
+) -> SourceCheck:
+    """Every distinct ``field`` value among ``rows`` against the table; refusals are strings."""
     used: dict[str, int] = {}
     unsourced = 0
     for row in rows:
-        source = row.get("source")
+        source = row.get(field)
         if source is None or not str(source).strip():
             unsourced += 1
             continue
@@ -209,7 +230,7 @@ def check_sources(rows: Iterable[dict[str, Any]], entries: dict[str, SourceEntry
     accepted: dict[str, str] = {}
     if unsourced:
         refusals.append(
-            f"{unsourced} row(s) carry no `source`; with dataset.attribution declared "
+            f"{unsourced} row(s) carry no `{field}`; with dataset.attribution declared "
             "every row must name the entry it enters under"
         )
     for name in sorted(used):
@@ -249,6 +270,7 @@ def write_corpus_lock(
     files: Sequence[Path],
     attribution_path: Optional[Path],
     check: Optional[SourceCheck],
+    field: str = DEFAULT_ATTRIBUTION_FIELD,
 ) -> Path:
     """Record what entered prepare: input files by hash, the table rows used, the risk accepted."""
     file_entries = []
@@ -274,7 +296,11 @@ def write_corpus_lock(
     payload: dict[str, Any] = {
         "kind": CORPUS_LOCK_KIND,
         "attribution": (
-            {"path": str(attribution_path), "sha256": sha256_file(attribution_path)}
+            {
+                "path": str(attribution_path),
+                "sha256": sha256_file(attribution_path),
+                "field": field,
+            }
             if attribution_path is not None
             else None
         ),

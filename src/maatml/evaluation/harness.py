@@ -729,6 +729,7 @@ def run_evaluation(
     cache_predictions: bool = False,
     strict_population: bool = False,
     rows_path: Optional[Path] = None,
+    overrides: Optional[dict[str, Any]] = None,
 ) -> Report:
     """Run the shared eval loop and write a :class:`Report` JSON.
 
@@ -740,7 +741,9 @@ def run_evaluation(
     ``strict_population`` refuses to enforce floors derived on a different
     split (``evaluation.gates_benchmark``) instead of warning. ``rows_path``
     evaluates a manifest that is not one of the prepared splits (a blind
-    population); ``split`` then only names it.
+    population); ``split`` then only names it. ``overrides`` are the
+    ``--set`` values already applied to ``model_def``, recorded on the report
+    so a number measured under one is never read as the file's.
     """
     discover_plugins()
 
@@ -993,6 +996,8 @@ def run_evaluation(
     }
     if limit is not None and limit > 0:
         extras["limit"] = int(limit)
+    if overrides:
+        extras["overrides"] = dict(overrides)
     if split == "test" and rows_path is None:
         from ..data.populations import read_benchmark_state
 

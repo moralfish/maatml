@@ -111,7 +111,7 @@ line; `maatml --debug <command>` prints the traceback.
 | `prepare` | Build `train`/`val`/`test` splits from the seed corpus; enforces `dataset.isolation` / `pins`, records the benchmark version and the corpus lock, refuses unsigned sources (`dataset.attribution`) |
 | `train` | Fine-tune the model (`--smoke`, `--resume auto\|PATH`, `--set K=V`, `--seeds N`); `training.select_by` picks the checkpoint on val |
 | `sweep` | Offline grid HPO over `--param K=a,b` |
-| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss, `--cache` keeps per-row predictions, `--blind` spends the blind manifest once, `--strict-population` refuses floors from another split. The token budget defaults to `packaging.max_input_tokens` |
+| `evaluate` | Score a checkpoint; `--gate` exits non-zero on a gate miss, `--cache` keeps per-row predictions, `--set K=V` overrides model.yml for that evaluate (recorded, never with `--gate`), `--blind` spends the blind manifest once, `--strict-population` refuses floors from another split. The token budget defaults to `packaging.max_input_tokens` |
 | `gates derive` | Floors from a run's report: Wilson 95 % at each metric's own denominator, cluster bootstrap from a cache, `--seed-study`; `--write` rewrites `evaluation.gates` with the derivation beside each floor |
 | `ship-check` | `CANDIDATE BASELINE`: absolute, delta and population verdict in one; `--replay` re-evaluates both over the current test split |
 | `operating-point derive` | Sweep the predictor's `rescore` over a val cache under a budget; `--write` the cut, `--confirm-on-test` spends test once |

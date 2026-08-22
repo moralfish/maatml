@@ -275,6 +275,7 @@ _DATASET_KNOWN_KEYS = frozenset(
         "pins",
         "blind_samples",
         "attribution",
+        "attribution_field",
     }
 )
 _EVALUATION_KNOWN_KEYS = frozenset(
