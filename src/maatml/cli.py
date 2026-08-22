@@ -197,6 +197,12 @@ def cmd_train(
     ),
     device: str = typer.Option("auto", "--device", help="auto|mps|cpu|cuda"),
     seed: Optional[int] = typer.Option(None, "--seed"),
+    seeds: Optional[int] = typer.Option(
+        None,
+        "--seeds",
+        help="Train the same recipe N times (seed, seed+1, ...) and record the spread "
+        "under output/seeds/; gates derive --seed-study takes the per-metric minimum",
+    ),
     resume: Optional[str] = typer.Option(
         None,
         "--resume",
@@ -218,8 +224,36 @@ def cmd_train(
     _boot_plugins(md)
     arch = normalize_architecture(md.architecture)
     trainer = TRAINERS.get(md.architecture) or TRAINERS.require(arch)
-    result = trainer(md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume)
-    console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
+    if seeds is None:
+        result = trainer(md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume)
+        console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
+        return
+    if seeds < 2:
+        raise typer.BadParameter("--seeds needs at least 2", param_hint="--seeds")
+    if resume:
+        raise typer.BadParameter(
+            "--seeds cannot resume; each seed is its own run", param_hint="--resume"
+        )
+    from .training.seeds import load_seed_study, render_seed_study, write_seed_study
+
+    base = seed if seed is not None else 0
+    seed_values = [base + i for i in range(seeds)]
+    runs: list[dict[str, Any]] = []
+    for value in seed_values:
+        console.print(f"[cyan]seeds[/] {len(runs) + 1}/{seeds} seed={value}")
+        result = trainer(md, smoke=smoke, limit=limit, device=device, seed=value)
+        runs.append(
+            {
+                "run_id": Path(result.out_dir).name,
+                "seed": value,
+                "metrics": dict(result.metrics or {}),
+            }
+        )
+    label = f"{runs[0]['run_id']}-x{seeds}"
+    path = write_seed_study(md, label=label, seeds=seed_values, runs=runs, smoke=smoke)
+    for line in render_seed_study(load_seed_study(path)):
+        console.print(line)
+    console.print(f"[green]seed study[/] {path}")
 
 
 @app.command("sweep")
@@ -540,9 +574,14 @@ app.add_typer(gates_app, name="gates")
 def cmd_gates_derive(
     model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
     run: list[str] = typer.Option(
-        ...,
+        [],
         "--run",
         help="Run id or report path; repeat to take the per-metric minimum across seeds",
+    ),
+    seed_study: Optional[Path] = typer.Option(
+        None,
+        "--seed-study",
+        help="A train --seeds record under output/seeds/; its runs join --run",
     ),
     metric: list[str] = typer.Option(
         [],
@@ -570,10 +609,21 @@ def cmd_gates_derive(
     from .evaluation.gates import DeriveError, derive_gates, write_gates
     from .evaluation.harness import GateConfigError, gate_tiers
 
+    runs = list(run)
+    if seed_study is not None:
+        from .training.seeds import load_seed_study
+
+        try:
+            study = load_seed_study(seed_study)
+        except (OSError, ValueError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="--seed-study") from exc
+        runs.extend(r["run_id"] for r in study.get("runs") or [])
+    if not runs:
+        raise typer.BadParameter("give --run (repeatable) or --seed-study", param_hint="--run")
     try:
         result = derive_gates(
             md,
-            runs=run,
+            runs=runs,
             metrics=metric or None,
             section=section,
             min_n=min_n,

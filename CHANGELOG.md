@@ -80,6 +80,11 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   evaluation config + weights, recorded on every non-smoke test gate pass);
   gates enforced; `<run>.blind.json`; the spend is recorded on the run
   (`blind_spends`, listed by `maatml runs`) and a repeat needs `--force`.
+- **`maatml train --seeds N`**: one recipe, N seeds (from `--seed`, default
+  0), each its own run; `output/seeds/<first-run>-xN.json` records the runs
+  and mean / sd / min / max per metric every run reported. `gates derive
+  --seed-study FILE` takes those runs (the per-metric minimum) alongside
+  `--run`.
 - Reports for non-test splits are named `<run>.<split>.json` (and their
   caches likewise), so a val evaluate no longer overwrites the test report.
   `extras.decode_threshold` records the cut the predictor decoded at.

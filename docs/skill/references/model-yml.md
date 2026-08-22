@@ -138,6 +138,10 @@ never type them:
 maatml gates derive <model-dir> --run <run_id> [--run <run_id2>] --write
 ```
 
+`maatml train --seeds N [--seed S]` trains the same recipe at seeds S..S+N-1 and
+writes `output/seeds/<first-run>-xN.json` with mean / sd / min / max per
+metric; `gates derive --seed-study <that file>` floors on those runs.
+
 `gates derive` reads each run's eval report (`report_version >= 1`), takes the
 per-metric **minimum across runs** so a lucky seed cannot set the contract,
 refuses a rate with fewer than `--min-n` rows, and rewrites `evaluation.gates`
