@@ -563,16 +563,24 @@ every other item writes into it.
 
 **Training tells the truth earlier**
 
-- `training.select_by: <gated val metric>` selects the checkpoint; required
-  when a KD term is configured, since val loss is not comparable across arms
-  once a distillation term enters it (test: KD on and `select_by` absent
-  refuses to train)
-- The KD teacher cache records the split fingerprint it was built on; `train`
-  refuses a cache from another split. This constrains the top-k logit KD
-  item under Later (test)
-- Named pathology signatures at evaluate — "never fires" (precision high,
-  recall near zero, `empty_clean` 1.0), "one class", "identical output across
-  inputs" — reported as `pathologies[]` and failing the smoke tier (test)
+- `training.select_by: <val metric>` selects the checkpoint: every saved
+  `checkpoint-*` and the final weights evaluated on val with the evaluate
+  harness, the best recorded on the run and resolved by the run id from then
+  on; `keep_checkpoints` sets how many survive to compare (test). There is no
+  KD term in maatml yet; when top-k logit KD lands (Later) `select_by` is
+  required with it, since val loss is not comparable across arms once a
+  distillation term enters it
+- `distill` refuses a prompt pool that overlaps a held-out population (by
+  content against `benchmark_samples`, `blind_samples` and the prepared val /
+  test split; by `dataset.pins` against a tagged pool row) before any teacher
+  call, and the teacher cache carries a provenance header (teacher, prompt
+  pools by sha256, benchmark version) (test). The label cache is keyed by
+  prompt hash and teacher, so a cache cannot be "from another split"; the
+  split-fingerprint refusal belongs to the logit KD cache under Later
+- Named pathology signatures at evaluate — "never fires" (no output, or
+  recall near zero with precision high or absent), "one class", "identical
+  output across inputs", plus a plugin's `__pathologies__` — reported as
+  `pathologies[]` and failing the smoke tier (test)
 
 **Runs travel**
 
@@ -599,9 +607,9 @@ differs (test); `operating-point derive --write` followed by a second
 `--confirm-on-test` on the same benchmark version prints a warning and lists
 both spends (test); `evaluate --blind` on an unchanged fingerprint exits
 non-zero without `--force` (test); `prepare` exits non-zero for a source with
-`commercial-use: no` and no `--accept-risk` (test); `train` with a KD cache
-from another split exits non-zero before loading weights (test); a "never
-fires" fixture fails the smoke tier (test); `runs adopt` of a packed run
+`commercial-use: no` and no accepted-risk sign-off (test); `distill` with a
+benchmark prompt in its pool exits non-zero before any teacher call (test); a
+"never fires" fixture fails the smoke tier (test); `runs adopt` of a packed run
 reproduces `maatml runs` output on the receiving machine (test);
 `maatml report` regenerates byte-identically from reports and `runs.jsonl`
 (test).
@@ -609,7 +617,9 @@ reproduces `maatml runs` output on the receiving machine (test);
 ## Later
 
 - Precomputed top-k logit KD (teacher is training-only; eval/serve keep
-  trusting validators); online KD CUDA-only and optional
+  trusting validators); online KD CUDA-only and optional. Lands with
+  `training.select_by` required and a logit cache that records the split
+  fingerprint it was built on, refused by `train` from another split
 - QAT (torchao) for the edge path: post-hoc GGUF/MLX/ONNX quantization loses
   accuracy that quantization-aware training recovers
 - Signing (`verify --require-signature`, fail closed), OCI backend, promotion

@@ -350,6 +350,28 @@ training:
     target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
 ```
 
+### Selecting the checkpoint
+
+```yaml
+training:
+  select_by: all_layers_pass_rate   # a metric the eval harness reports
+  keep_checkpoints: 4               # save_total_limit (default 2)
+```
+
+Without `select_by` a run ships its last weights, and "last" is not a
+selection. With it, after training every saved `checkpoint-<step>` plus the
+final weights is evaluated on the **val** split with the same predictor,
+validator and metrics as `evaluate`, the best by the named metric wins (ties
+go to the later one), and the choice is recorded on the run (`selection`:
+every candidate's score and report; `selected_checkpoint`). From then on the
+run id resolves to that checkpoint for evaluate, export and serve, while
+evidence is still recorded against the run. The per-candidate reports live
+under `output/eval/select/<run>/`; the test split is never read. A metric the
+harness does not report is an error, not a silent fallback to the last
+checkpoint. `keep_checkpoints` is what makes the comparison worth anything —
+at the default of 2 only the last two survive. A seed study records the
+selected value as `select:<metric>`.
+
 `generation.max_new_tokens` is a frequent silent cause of bad scores: a ceiling
 below what the contract needs truncates every long answer, and the validator
 correctly reports the truncation as a contract failure. If a metric collapses
@@ -429,6 +451,27 @@ pass is recorded as smoke-gated in the run record and in the export manifest's
 `output_nonempty_rate` is always reported and is the honest thing for a smoke
 tier to gate on: it says the checkpoint saved, reloaded and produced output,
 without claiming the output was any good.
+
+### Pathologies
+
+Some shapes of output no floor should have to catch. Every evaluate reports
+them as `pathologies[]` (`{name, evidence}`), the gates payload lists their
+names, and at the smoke tier each one is a failing blocking gate
+(`pathology:<name>`), since a rehearsal floor is loose enough for a broken
+model to clear:
+
+- `never_fires` — no output on any row, or a recall-like metric at or below
+  0.01 while its precision counterpart is 0.9 or better (or absent): nothing
+  is being predicted and precision is flattering it.
+- `identical_output` — the same non-empty output on every row.
+- `one_class` — every parsed output carries the same `class` / `category` /
+  `label` / `family` / `intent` / `kind` while the gold rows span two or more
+  categories.
+
+Fewer than five rows report nothing. At the production tier the floors decide,
+with the signature beside them. A metrics plugin contributes its own through a
+`__pathologies__` entry (names, or `{name, evidence}` dicts), lifted out of
+`metrics` like `__counts__`.
 
 ## Overrides that still get recorded
 

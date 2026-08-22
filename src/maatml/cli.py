@@ -224,9 +224,15 @@ def cmd_train(
     _boot_plugins(md)
     arch = normalize_architecture(md.architecture)
     trainer = TRAINERS.get(md.architecture) or TRAINERS.require(arch)
+    from .training.selection import render_selection, select_checkpoint
+
     if seeds is None:
         result = trainer(md, smoke=smoke, limit=limit, device=device, seed=seed, resume=resume)
         console.print(f"[green]done[/] out_dir={result.out_dir} metrics={result.metrics}")
+        selection = select_checkpoint(md, Path(result.out_dir).name, device=device, smoke=smoke)
+        if selection:
+            for line in render_selection(selection):
+                console.print(line)
         return
     if seeds < 2:
         raise typer.BadParameter("--seeds needs at least 2", param_hint="--seeds")
@@ -242,13 +248,13 @@ def cmd_train(
     for value in seed_values:
         console.print(f"[cyan]seeds[/] {len(runs) + 1}/{seeds} seed={value}")
         result = trainer(md, smoke=smoke, limit=limit, device=device, seed=value)
-        runs.append(
-            {
-                "run_id": Path(result.out_dir).name,
-                "seed": value,
-                "metrics": dict(result.metrics or {}),
-            }
-        )
+        metrics = dict(result.metrics or {})
+        selection = select_checkpoint(md, Path(result.out_dir).name, device=device, smoke=smoke)
+        if selection:
+            chosen = next(c for c in selection["candidates"] if c["name"] == selection["selected"])
+            metrics[f"select:{selection['metric']}"] = chosen["value"]
+            console.print(f"  selected {selection['selected']} ({chosen['value']:.4f})")
+        runs.append({"run_id": Path(result.out_dir).name, "seed": value, "metrics": metrics})
     label = f"{runs[0]['run_id']}-x{seeds}"
     path = write_seed_study(md, label=label, seeds=seed_values, runs=runs, smoke=smoke)
     for line in render_seed_study(load_seed_study(path)):
@@ -519,11 +525,10 @@ def cmd_export(
     md = load_model_def(model_dir)
     _boot_plugins(md)
     from .export.bundle import export_model, run_parity_check
-    from .runs import get_run
+    from .runs import run_id_for_checkpoint
 
     ckpt = resolve_checkpoint(md, checkpoint)
-    run_rec = get_run(md, ckpt.name)
-    run_id = run_rec.run_id if run_rec else ckpt.name
+    run_id = run_id_for_checkpoint(md, ckpt)
     out_dir = out if out is not None else (md.output_dir / "export" / run_id)
     try:
         export_model(md, ckpt, out_dir, format=format, run_id=run_id)

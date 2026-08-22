@@ -105,6 +105,27 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   `manifest.json` as `corpus_lock`, and a lock that names sources also ships
   as the bundle's `ATTRIBUTION.md` (listed in the manifest). The auto
   `MODEL_CARD.md` from the Slim tranche will embed the same block.
+- **`training.select_by`**: after training, every saved `checkpoint-<step>`
+  and the final weights are evaluated on val with the evaluate harness; the
+  best by the named metric is recorded on the run (`selection`,
+  `selected_checkpoint`) and the run id resolves to it for evaluate, export
+  and serve, with evidence still recorded against the run
+  (`run_id_for_checkpoint`). Per-candidate reports under
+  `output/eval/select/<run>/`; a metric the harness does not report is an
+  error. `training.keep_checkpoints` sets `save_total_limit` (default 2) for
+  every trainer. `evaluate_model` gained `label`.
+- **Pathologies**: every report carries `pathologies[]` — `never_fires`
+  (no output, or recall ≤ 0.01 with precision ≥ 0.9 / absent),
+  `identical_output`, `one_class` — plus a metrics plugin's own
+  `__pathologies__`. The gates payload lists them; at the smoke tier each is a
+  failing blocking gate (`pathology:<name>`), so a never-firing fixture fails
+  `run --smoke` whatever the floor. Rendered in the markdown summary.
+- **`distill` refuses held-out prompts**: a pool prompt found in
+  `benchmark_samples`, `blind_samples` or the prepared val / test split, or a
+  pool row carrying a pinned group, stops the run before any teacher call. The
+  teacher cache now starts with a `maatml.teacher_cache/1` provenance header
+  (teacher, prompt pools by sha256, benchmark version), repeated on the
+  distill card; a cache that recorded nothing still leaves no file.
 
 ## [0.10.0] - 2026-08-17
 

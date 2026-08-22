@@ -21,6 +21,7 @@ from ..device import resolve_device
 from ..registry import METRICS, PREDICTORS, VALIDATORS, discover_plugins
 from ..utils.io import iter_jsonl, read_json, sha256_file, write_json
 from ..validation.base import ValidationResult
+from .pathologies import PATHOLOGIES_KEY, detect_pathologies, normalize_plugin_pathologies
 from .predictions import prediction_row, predictions_path, write_predictions
 from .stats import wilson_lower
 
@@ -90,6 +91,9 @@ class Report(BaseModel):
     # metric name -> {k, n}. Harness rates and slices always; plugin rates when
     # the plugin reports ``__counts__``.
     counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+    # Named output shapes no floor should have to catch: {name, evidence}.
+    # Reported always; a non-empty list fails the smoke tier.
+    pathologies: list[dict[str, Any]] = Field(default_factory=list)
     latency_ms: Optional[LatencyStats] = None
     baseline_delta: Optional[dict[str, float]] = None
     sample_failures: list[dict] = Field(default_factory=list)
@@ -649,8 +653,9 @@ def _merge_metrics(
     names: list[str],
     *,
     counts_out: Optional[dict[str, dict[str, int]]] = None,
+    pathologies_out: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, float]:
-    """Run every metrics plugin and merge; ``__counts__`` is lifted out.
+    """Run every metrics plugin and merge; ``__counts__`` / ``__pathologies__`` are lifted out.
 
     A plugin reports the evidence behind a rate as
     ``{"__counts__": {"recall": [k, n], ...}}`` (or ``{"k", "n"}`` dicts). It
@@ -660,6 +665,12 @@ def _merge_metrics(
     owner: dict[str, str] = {}
     for name, fn in zip(names, callables, strict=False):
         produced = dict(fn(row_results) or {})
+        raw_pathologies = produced.pop(PATHOLOGIES_KEY, None)
+        if raw_pathologies is not None and pathologies_out is not None:
+            try:
+                pathologies_out.extend(normalize_plugin_pathologies(raw_pathologies, plugin=name))
+            except ValueError as exc:
+                raise GateConfigError(str(exc)) from exc
         raw_counts = produced.pop(COUNTS_KEY, None)
         if raw_counts is not None and counts_out is not None:
             if not isinstance(raw_counts, dict):
@@ -920,8 +931,15 @@ def run_evaluation(
 
     n = len(row_results)
     counts: dict[str, dict[str, int]] = {}
+    pathologies: list[dict[str, Any]] = []
     if metrics_callables:
-        metrics = _merge_metrics(metrics_callables, row_results, metrics_names, counts_out=counts)
+        metrics = _merge_metrics(
+            metrics_callables,
+            row_results,
+            metrics_names,
+            counts_out=counts,
+            pathologies_out=pathologies,
+        )
     else:
         # Layer-pass rates only.
         layer_pass: dict[int, int] = {}
@@ -950,6 +968,7 @@ def run_evaluation(
     }
 
     per_class = _category_buckets(row_results)
+    pathologies.extend(detect_pathologies(row_results, metrics, per_class))
     slice_stats = slice_buckets(row_results, slices or [])
     for field_name, values in slice_stats.items():
         for slice_value, stats in values.items():
@@ -1061,6 +1080,25 @@ def run_evaluation(
             console.print(
                 "[yellow]advisory[/] below floor: " + ", ".join(gates_payload["advisory_failed"])
             )
+        if pathologies:
+            names = sorted({str(p["name"]) for p in pathologies})
+            gates_payload["pathologies"] = names
+            # A rehearsal exists to prove the model works at all; a floor set
+            # for the smoke tier is loose enough for a model that never fires
+            # to clear it, so the signature itself is the failing gate there.
+            if smoke_gated:
+                for name in names:
+                    gates_payload["results"][f"pathology:{name}"] = {
+                        "minimum": None,
+                        "actual": name,
+                        "passed": False,
+                        "tier": "blocking",
+                    }
+                gates_payload["passed"] = False
+            console.print(
+                "[yellow]pathology[/] "
+                + "; ".join(f"{p['name']}: {p['evidence']}" for p in pathologies)
+            )
         passed = bool(gates_payload["passed"])
 
     report = Report(
@@ -1074,6 +1112,7 @@ def run_evaluation(
         per_class=per_class,
         slices=slice_stats,
         counts=counts,
+        pathologies=pathologies,
         latency_ms=latency_stats(timings),
         baseline_delta=baseline_delta(metrics, baseline_path),
         sample_failures=failures,

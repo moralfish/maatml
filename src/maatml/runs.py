@@ -57,6 +57,10 @@ class RunRecord(BaseModel):
     gated_fingerprint: Optional[str] = None
     # Every blind evaluate: {fingerprint, blind_sha256, report, passed, at}.
     blind_spends: Optional[list[dict[str, Any]]] = None
+    # training.select_by: every candidate's val score and the one chosen.
+    selection: Optional[dict[str, Any]] = None
+    # Subdirectory of out_dir the run id resolves to (None = the final weights).
+    selected_checkpoint: Optional[str] = None
 
 
 def _utc_now() -> str:
@@ -363,6 +367,48 @@ def update_run_gates(
     return updated
 
 
+def record_selection(
+    model_def: ModelDefinition,
+    run_id: str,
+    selection: dict[str, Any],
+    *,
+    selected_checkpoint: Optional[str],
+) -> Optional[RunRecord]:
+    """Record a ``training.select_by`` outcome on a run (no-op if unknown)."""
+    rec = get_run(model_def, run_id)
+    if rec is None:
+        return None
+    payload = rec.model_dump()
+    payload["selection"] = selection
+    payload["selected_checkpoint"] = selected_checkpoint
+    updated = RunRecord(**payload)
+    _append_record(model_def, updated)
+    return updated
+
+
+def run_id_for_checkpoint(model_def: ModelDefinition, path: Path) -> str:
+    """The run a checkpoint path belongs to: its own name, or its parent run's.
+
+    A selected ``checkpoint-<step>`` lives inside the run directory; evidence
+    is recorded against the run, never against the subdirectory.
+    """
+    path = Path(path)
+    if get_run(model_def, path.name) is not None:
+        return path.name
+    parent = get_run(model_def, path.parent.name)
+    if parent is not None and parent.selected_checkpoint == path.name:
+        return parent.run_id
+    return path.name
+
+
+def _selected(rec: RunRecord, out: Path) -> Path:
+    if rec.selected_checkpoint:
+        chosen = out / rec.selected_checkpoint
+        if chosen.is_dir():
+            return chosen
+    return out
+
+
 def record_test_spend(
     model_def: ModelDefinition, run_id: str, spend: dict[str, Any]
 ) -> tuple[Optional[RunRecord], int]:
@@ -537,7 +583,7 @@ def resolve_checkpoint(
         if rec is not None:
             out = Path(rec.out_dir)
             if out.exists():
-                return out.resolve()
+                return _selected(rec, out).resolve()
             # A run trained elsewhere records that machine's absolute path. The
             # weights travel home; the path does not. `output/checkpoints/
             # <run_id>` is where they land, so looking there lets a relocated
@@ -546,7 +592,7 @@ def resolve_checkpoint(
             # manifest looks the run up by exactly this id.
             moved = model_def.checkpoints_dir / raw
             if moved.exists():
-                return moved.resolve()
+                return _selected(rec, moved).resolve()
             return out
         cand = model_def.checkpoints_dir / raw
         if cand.exists():
@@ -559,7 +605,7 @@ def resolve_checkpoint(
     if completed is not None:
         out = Path(completed.out_dir)
         if out.exists():
-            return out
+            return _selected(completed, out)
 
     # Legacy fallback: newest mtime under checkpoints/
     ckpt_root = model_def.checkpoints_dir

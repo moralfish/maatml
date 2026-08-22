@@ -63,6 +63,7 @@ def evaluate_model(
     record_gates: bool = True,
     blind: bool = False,
     force: bool = False,
+    label: Optional[str] = None,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
@@ -81,6 +82,7 @@ def evaluate_model(
         get_run,
         record_blind_spend,
         resolve_checkpoint,
+        run_id_for_checkpoint,
         update_run_gates,
     )
     from . import predictors as _predictors  # noqa: F401  register built-ins
@@ -144,6 +146,7 @@ def evaluate_model(
         blind_sha256 = sha256_file(rows_path)
 
     ckpt = resolve_checkpoint(model_def, checkpoint)
+    run_id = run_id_for_checkpoint(model_def, ckpt)
     from .operating_point import report_name
 
     if blind:
@@ -151,21 +154,21 @@ def evaluate_model(
         gate = True
         if gate_spec is None:
             gate_spec = resolve_gate_spec(model_def, smoke=False)
-        rec = get_run(model_def, ckpt.name)
+        rec = get_run(model_def, run_id)
         current_fp = evidence_fingerprint(model_def, ckpt)
         if rec is None:
             raise GateConfigError(
-                f"{ckpt.name} is not in runs.jsonl; a blind evaluate needs a recorded, gated run"
+                f"{run_id} is not in runs.jsonl; a blind evaluate needs a recorded, gated run"
             )
         if not (rec.gates or {}).get("passed") or rec.smoke_gated:
             raise GateConfigError(
-                f"{ckpt.name} has no production gate pass on record; run evaluate --gate "
+                f"{run_id} has no production gate pass on record; run evaluate --gate "
                 "on the benchmark first. The blind population is spent only on a candidate "
                 "that already passed."
             )
         if rec.gated_fingerprint != current_fp:
             raise GateConfigError(
-                f"{ckpt.name} changed since its gate pass (evaluation config or weights); "
+                f"{run_id} changed since its gate pass (evaluation config or weights); "
                 "re-run evaluate --gate before spending the blind population"
             )
         prior = [
@@ -175,7 +178,7 @@ def evaluate_model(
         ]
         if prior and not force:
             raise GateConfigError(
-                f"{ckpt.name} already spent this blind population at this fingerprint "
+                f"{run_id} already spent this blind population at this fingerprint "
                 f"({len(prior)} time(s), last report {prior[-1].get('report')}); "
                 "a blind test is run once per frozen candidate. Pass --force to repeat, "
                 "and say so in the record."
@@ -184,7 +187,7 @@ def evaluate_model(
     target_dir = Path(out_dir) if out_dir is not None else model_def.eval_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     # A val report is named for its split so it never overwrites the test one.
-    out_path = target_dir / f"{report_name(ckpt.name, split)}.json"
+    out_path = target_dir / f"{report_name(label or run_id, split)}.json"
     budget = (
         max_input_tokens if max_input_tokens is not None else model_def.packaging.max_input_tokens
     )
@@ -221,10 +224,10 @@ def evaluate_model(
             "passed": report.passed,
             "forced": bool(force),
         }
-        record_blind_spend(model_def, ckpt.name, spend)
+        record_blind_spend(model_def, run_id, spend)
         return report, out_path
 
-    run_rec = get_run(model_def, ckpt.name) if record_gates else None
+    run_rec = get_run(model_def, run_id) if record_gates else None
     if run_rec is not None and report.gates is not None:
         update_run_gates(
             model_def,
@@ -309,6 +312,10 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
                 f"- n: {report.latency_ms.n}",
             ]
         )
+    if report.pathologies:
+        lines.extend(["", "## Pathologies", ""])
+        for entry in report.pathologies:
+            lines.append(f"- {entry.get('name')}: {entry.get('evidence')}")
     if report.per_class:
         lines.extend(["", "## Per-class", ""])
         for label, vals in sorted(report.per_class.items()):
