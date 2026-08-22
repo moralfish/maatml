@@ -95,9 +95,37 @@ report measured instead of re-running inference. Reports carry
 
 Each floor is the **Wilson 95% lower bound of the observed rate at that
 metric's own denominator**, floored to two places, with the measurement written
-beside it so the number can be audited without rerunning anything. Regenerate
-after every accepted run; a folder should carry a `scripts/derive_gates.py
---write` rather than have floors typed by hand.
+beside it so the number can be audited without rerunning anything. Derive them,
+never type them:
+
+```bash
+maatml gates derive <model-dir> --run <run_id> [--run <run_id2>] --write
+```
+
+`gates derive` reads each run's eval report (`report_version >= 1`), takes the
+per-metric **minimum across runs** so a lucky seed cannot set the contract,
+refuses a rate with fewer than `--min-n` rows, and rewrites `evaluation.gates`
+in place with the measurement as the comment. It also stamps
+`evaluation.gates_benchmark` with the split's content hash: `evaluate --gate`
+warns when it is asked to enforce those floors on a different split and
+refuses under `--strict-population`, because floors describe the population
+they were derived on.
+
+Where rows cluster (frames within a camera, paraphrases within a scenario) a
+row-level bound overstates the evidence. If the run was evaluated with
+`--cache`, `gates derive --cluster-by family` resamples whole groups of the
+prediction cache instead (harness rates and `slice:` gates; a plugin rate needs
+its own per-row verdict), and refuses a rate spanning fewer than
+`--min-groups` groups.
+
+A metrics plugin makes its rates derivable by reporting the evidence behind
+them: `{"recall": 0.315, "__counts__": {"recall": [69087, 219079]}}`. Without
+counts a metric is floored at its observed value and the comment says so.
+
+Gate values are a number or `{min, tier}`; `tier: advisory` is reported and
+recorded but never fails a step. A gate may name a slice:
+`"slice:camera=G339": 0.45` gates that slice's pass rate, and a slice with no
+rows fails rather than passing on an invented number.
 
 ### Why Wilson
 

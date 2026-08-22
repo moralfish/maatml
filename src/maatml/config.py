@@ -272,7 +272,16 @@ _DATASET_KNOWN_KEYS = frozenset(
     }
 )
 _EVALUATION_KNOWN_KEYS = frozenset(
-    {"predictor", "validator", "metrics", "gates", "repair_braces", "slices", "cache_predictions"}
+    {
+        "predictor",
+        "validator",
+        "metrics",
+        "gates",
+        "gates_benchmark",
+        "repair_braces",
+        "slices",
+        "cache_predictions",
+    }
 )
 
 

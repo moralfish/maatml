@@ -366,6 +366,12 @@ def cmd_evaluate(
         "(<run>.predictions.jsonl) so floors and threshold sweeps derive from "
         "it without re-running inference; defaults to evaluation.cache_predictions",
     ),
+    strict_population: bool = typer.Option(
+        False,
+        "--strict-population",
+        help="With --gate: refuse when evaluation.gates_benchmark is not this "
+        "split's content hash, instead of warning",
+    ),
 ) -> None:
     """Evaluate a checkpoint and write report.{json,md} under output/eval/."""
     md = load_model_def(model_dir)
@@ -390,6 +396,7 @@ def cmd_evaluate(
             limit=limit,
             gate=gate,
             cache_predictions=cache,
+            strict_population=strict_population,
         )
     except GateConfigError as exc:
         raise typer.BadParameter(str(exc), param_hint="evaluation") from exc
@@ -512,6 +519,72 @@ def cmd_verify(
 
 manifest_app = typer.Typer(no_args_is_help=True, help="Inspect or amend export manifests")
 app.add_typer(manifest_app, name="manifest")
+
+
+gates_app = typer.Typer(no_args_is_help=True, help="Derive evaluation gates from measured reports")
+app.add_typer(gates_app, name="gates")
+
+
+@gates_app.command("derive")
+def cmd_gates_derive(
+    model_dir: Path = typer.Argument(..., exists=True, file_okay=False),
+    run: list[str] = typer.Option(
+        ...,
+        "--run",
+        help="Run id or report path; repeat to take the per-metric minimum across seeds",
+    ),
+    metric: list[str] = typer.Option(
+        [],
+        "--metric",
+        help="Metric (or slice:<field>=<value>) to floor; defaults to the configured "
+        "gates, then to every rate the reports carry counts for",
+    ),
+    section: str = typer.Option("evaluation", "--section", help="evaluation or smoke"),
+    min_n: int = typer.Option(30, "--min-n", help="Refuse a rate with a thinner denominator"),
+    min_groups: int = typer.Option(
+        3, "--min-groups", help="Refuse a clustered rate spanning fewer groups"
+    ),
+    cluster_by: str = typer.Option(
+        "family",
+        "--cluster-by",
+        help="Row field whose values are resampled by the cluster bootstrap "
+        "(needs the run's predictions cache)",
+    ),
+    write: bool = typer.Option(
+        False, "--write", help="Replace <section>.gates in model.yml and stamp gates_benchmark"
+    ),
+) -> None:
+    """Wilson / cluster-bootstrap floors from eval reports, with the measurement beside each."""
+    md = load_model_def(model_dir)
+    from .evaluation.gates import DeriveError, derive_gates, write_gates
+    from .evaluation.harness import GateConfigError, gate_tiers
+
+    try:
+        result = derive_gates(
+            md,
+            runs=run,
+            metrics=metric or None,
+            section=section,
+            min_n=min_n,
+            min_groups=min_groups,
+            cluster_by=cluster_by,
+        )
+        tiers = gate_tiers(md, smoke=section == "smoke")
+    except (DeriveError, GateConfigError) as exc:
+        raise typer.BadParameter(str(exc), param_hint="--run") from exc
+
+    console.print(f"benchmark {result.benchmark_sha256[:16]}  runs {', '.join(result.runs)}")
+    for line in result.lines():
+        console.print(line)
+    for refusal in result.refusals:
+        console.print(f"[yellow]refused[/] {refusal}")
+    if write:
+        try:
+            path = write_gates(md.resolve("model.yml"), result, tiers)
+        except DeriveError as exc:
+            console.print(f"[red]{exc}[/]")
+            raise typer.Exit(code=1) from exc
+        console.print(f"[green]wrote[/] {len(result.floors)} floors -> {path} ({section}.gates)")
 
 
 @manifest_app.command("amend")

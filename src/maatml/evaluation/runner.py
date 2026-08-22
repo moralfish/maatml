@@ -58,6 +58,7 @@ def evaluate_model(
     gate: bool = False,
     smoke: bool = False,
     cache_predictions: Optional[bool] = None,
+    strict_population: bool = False,
 ) -> tuple["Report", Path]:
     """Evaluate a checkpoint of ``model_def`` and write report.{json,md}.
 
@@ -138,6 +139,7 @@ def evaluate_model(
         smoke_gated=smoke_gated,
         slices=slices,
         cache_predictions=cache_predictions,
+        strict_population=strict_population,
     )
     write_markdown_summary(report, out_path.with_suffix(".md"))
 
@@ -201,9 +203,18 @@ def write_markdown_summary(report: Report, path: str | Path) -> Path:
             lines.append(f"- passed: {report.passed}")
         results = report.gates.get("results") or {}
         for name, info in sorted(results.items()):
+            tier = info.get("tier", "blocking")
+            suffix = "" if tier == "blocking" else f" tier={tier}"
             lines.append(
                 f"- {name}: actual={info.get('actual')} "
-                f"minimum={info.get('minimum')} passed={info.get('passed')}"
+                f"minimum={info.get('minimum')} passed={info.get('passed')}{suffix}"
+            )
+        if report.gates.get("benchmark_sha256"):
+            lines.append(f"- benchmark: `{report.gates['benchmark_sha256']}`")
+        if report.gates.get("population_mismatch"):
+            lines.append(
+                f"- floors derived on `{report.gates.get('floors_benchmark_sha256')}` "
+                "(population mismatch)"
             )
     if report.latency_ms:
         lines.extend(

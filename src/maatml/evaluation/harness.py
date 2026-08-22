@@ -86,6 +86,10 @@ class Report(BaseModel):
     per_class: dict[str, dict[str, float]] = Field(default_factory=dict)
     # evaluation.slices: field -> value -> {n, passed, pass_rate, pass_rate_w95}
     slices: dict[str, dict[str, dict[str, float]]] = Field(default_factory=dict)
+    # Numerator / denominator behind every rate a floor can be derived from:
+    # metric name -> {k, n}. Harness rates and slices always; plugin rates when
+    # the plugin reports ``__counts__``.
+    counts: dict[str, dict[str, int]] = Field(default_factory=dict)
     latency_ms: Optional[LatencyStats] = None
     baseline_delta: Optional[dict[str, float]] = None
     sample_failures: list[dict] = Field(default_factory=list)
@@ -128,12 +132,40 @@ def effective_gates(model_def: Any, *, smoke: bool = False) -> dict[str, float]:
         return {}
     out: dict[str, float] = {}
     for key, value in spec.items():
+        minimum = value.get("min") if isinstance(value, dict) else value
         try:
-            out[str(key)] = float(value)
+            if minimum is None:
+                raise TypeError("missing min")
+            out[str(key)] = float(minimum)
         except (TypeError, ValueError) as exc:
             raise GateConfigError(
-                f"evaluation.gates[{key!r}] must be a number; got {value!r}"
+                f"evaluation.gates[{key!r}] must be a number or {{min, tier}}; got {value!r}"
             ) from exc
+    return out
+
+
+GATE_TIERS = ("blocking", "advisory")
+
+
+def gate_tiers(model_def: Any, *, smoke: bool = False) -> dict[str, str]:
+    """Tier per gate: ``blocking`` (default) fails the step, ``advisory`` is recorded."""
+    evaluation = getattr(model_def, "evaluation", None)
+    spec = evaluation.get("gates") if isinstance(evaluation, dict) else None
+    if smoke:
+        smoke_section = getattr(model_def, "smoke", None)
+        smoke_spec = smoke_section.get("gates") if isinstance(smoke_section, dict) else None
+        if isinstance(smoke_spec, dict) and smoke_spec:
+            spec = smoke_spec
+    if not (isinstance(spec, dict) and spec):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in spec.items():
+        tier = value.get("tier", "blocking") if isinstance(value, dict) else "blocking"
+        if tier not in GATE_TIERS:
+            raise GateConfigError(
+                f"evaluation.gates[{key!r}].tier must be one of {GATE_TIERS}; got {tier!r}"
+            )
+        out[str(key)] = str(tier)
     return out
 
 
@@ -161,28 +193,71 @@ def resolve_gate_spec(model_def: Any, *, smoke: bool = False) -> dict[str, float
     return gates
 
 
+SLICE_GATE_PREFIX = "slice:"
+
+
+def parse_slice_ref(name: str) -> Optional[tuple[str, str]]:
+    """``slice:<field>=<value>`` -> ``(field, value)``; anything else -> None."""
+    if not name.startswith(SLICE_GATE_PREFIX) or "=" not in name:
+        return None
+    field_name, value = name[len(SLICE_GATE_PREFIX) :].split("=", 1)
+    return field_name, value
+
+
+def gate_actual(
+    name: str,
+    metrics: dict[str, float],
+    slices: Optional[dict[str, dict[str, dict[str, float]]]] = None,
+) -> Optional[float]:
+    """The value a gate compares against: a metric, or a slice's pass rate.
+
+    A slice with no rows has no rate, so its gate reads ``None`` and fails
+    rather than passing on an invented 0.0 or 1.0.
+    """
+    if name in metrics:
+        return float(metrics[name])
+    ref = parse_slice_ref(name)
+    if ref is None or not slices:
+        return None
+    field_name, value = ref
+    stats = (slices.get(field_name) or {}).get(value)
+    if not stats or not stats.get("n"):
+        return None
+    return float(stats["pass_rate"])
+
+
 def check_gates(
     metrics: dict[str, float],
     gates: dict[str, float],
+    *,
+    tiers: Optional[dict[str, str]] = None,
+    slices: Optional[dict[str, dict[str, dict[str, float]]]] = None,
 ) -> dict[str, Any]:
     """Compare metrics against minimum thresholds.
 
-    Returns a dict with ``passed`` (bool) and ``results`` mapping each gate
-    name to ``{minimum, actual, passed}``.
+    Returns ``passed`` (every *blocking* gate met), ``results`` mapping each
+    gate to ``{minimum, actual, passed, tier}``, and ``advisory_failed``: the
+    advisory gates that missed, recorded but never fatal.
     """
     results: dict[str, dict[str, Any]] = {}
     all_ok = True
+    advisory_failed: list[str] = []
     for name, minimum in gates.items():
-        actual = metrics.get(name)
+        actual = gate_actual(name, metrics, slices)
         ok = actual is not None and float(actual) >= float(minimum)
+        tier = (tiers or {}).get(name, "blocking")
         results[name] = {
             "minimum": float(minimum),
             "actual": None if actual is None else float(actual),
             "passed": ok,
+            "tier": tier,
         }
         if not ok:
-            all_ok = False
-    return {"passed": all_ok, "results": results}
+            if tier == "advisory":
+                advisory_failed.append(name)
+            else:
+                all_ok = False
+    return {"passed": all_ok, "results": results, "advisory_failed": advisory_failed}
 
 
 @dataclass
@@ -565,15 +640,46 @@ def coverage_metrics(row_results: list[RowEval]) -> dict[str, float]:
     return {COVERAGE_METRIC: nonempty / n}
 
 
+COUNTS_KEY = "__counts__"
+
+
 def _merge_metrics(
     callables: list[Callable[..., dict[str, float]]],
     row_results: list[RowEval],
     names: list[str],
+    *,
+    counts_out: Optional[dict[str, dict[str, int]]] = None,
 ) -> dict[str, float]:
+    """Run every metrics plugin and merge; ``__counts__`` is lifted out.
+
+    A plugin reports the evidence behind a rate as
+    ``{"__counts__": {"recall": [k, n], ...}}`` (or ``{"k", "n"}`` dicts). It
+    never lands in ``metrics``; it is what ``gates derive`` reads.
+    """
     merged: dict[str, float] = {}
     owner: dict[str, str] = {}
     for name, fn in zip(names, callables, strict=False):
-        produced = fn(row_results) or {}
+        produced = dict(fn(row_results) or {})
+        raw_counts = produced.pop(COUNTS_KEY, None)
+        if raw_counts is not None and counts_out is not None:
+            if not isinstance(raw_counts, dict):
+                raise GateConfigError(
+                    f"evaluation.metrics: {name!r} {COUNTS_KEY} must be a mapping"
+                )
+            for metric, kn in raw_counts.items():
+                if isinstance(kn, dict):
+                    k, n = kn.get("k"), kn.get("n")
+                else:
+                    k, n = (list(kn) + [None, None])[:2]
+                if k is None or n is None:
+                    raise GateConfigError(
+                        f"evaluation.metrics: {name!r} {COUNTS_KEY}[{metric!r}] needs k and n"
+                    )
+                if metric in counts_out:
+                    raise GateConfigError(
+                        f"evaluation.metrics: {name!r} reports counts for {metric!r} twice"
+                    )
+                counts_out[str(metric)] = {"k": int(k), "n": int(n)}
         for key, value in produced.items():
             if key in merged:
                 raise GateConfigError(
@@ -610,6 +716,7 @@ def run_evaluation(
     smoke_gated: bool = False,
     slices: Optional[Sequence[SliceSpec]] = None,
     cache_predictions: bool = False,
+    strict_population: bool = False,
 ) -> Report:
     """Run the shared eval loop and write a :class:`Report` JSON.
 
@@ -618,6 +725,8 @@ def run_evaluation(
     ``slices`` adds per-value pass rates for the named row fields;
     ``cache_predictions`` keeps every row's output beside the report, keyed to
     the split's content hash, for derivations that must not re-run inference.
+    ``strict_population`` refuses to enforce floors derived on a different
+    split (``evaluation.gates_benchmark``) instead of warning.
     """
     discover_plugins()
 
@@ -807,8 +916,9 @@ def run_evaluation(
             )
 
     n = len(row_results)
+    counts: dict[str, dict[str, int]] = {}
     if metrics_callables:
-        metrics = _merge_metrics(metrics_callables, row_results, metrics_names)
+        metrics = _merge_metrics(metrics_callables, row_results, metrics_names, counts_out=counts)
     else:
         # Layer-pass rates only.
         layer_pass: dict[int, int] = {}
@@ -820,6 +930,9 @@ def run_evaluation(
                 all_ok += 1
         metrics = {f"layer_{k}_pass_rate": layer_pass.get(k, 0) / n for k in sorted(layer_pass)}
         metrics["all_layers_pass_rate"] = all_ok / n if n else 0.0
+        for k in sorted(layer_pass):
+            counts[f"layer_{k}_pass_rate"] = {"k": layer_pass[k], "n": n}
+        counts["all_layers_pass_rate"] = {"k": all_ok, "n": n}
 
     for key, value in coverage_metrics(row_results).items():
         if key in metrics:
@@ -828,9 +941,20 @@ def run_evaluation(
                 "(prediction coverage). Rename the plugin's metric."
             )
         metrics[key] = value
+    counts[COVERAGE_METRIC] = {
+        "k": sum(1 for item in row_results if item.gen_text and item.gen_text.strip()),
+        "n": n,
+    }
 
     per_class = _category_buckets(row_results)
     slice_stats = slice_buckets(row_results, slices or [])
+    for field_name, values in slice_stats.items():
+        for slice_value, stats in values.items():
+            if stats.get("n"):
+                counts[f"{SLICE_GATE_PREFIX}{field_name}={slice_value}"] = {
+                    "k": int(stats["passed"]),
+                    "n": int(stats["n"]),
+                }
 
     # Anything the predictor did to the raw model output (brace repair) or to
     # the input (truncation at the token budget) is reported, so a pass rate is
@@ -890,10 +1014,36 @@ def run_evaluation(
         # Raises GateConfigError when no gates are configured, enforcement must
         # never pass vacuously.
         spec = gate_spec or resolve_gate_spec(model_def, smoke=smoke_gated)
-        gates_payload = check_gates(metrics, spec)
+        tiers = gate_tiers(model_def, smoke=smoke_gated) if model_def is not None else {}
+        gates_payload = check_gates(metrics, spec, tiers=tiers, slices=slice_stats)
         # A smoke-tier pass is recorded as such wherever it is stored, so it
         # can never be read as a production gate pass later.
         gates_payload["smoke"] = bool(smoke_gated)
+        # Floors describe the population they were derived on. Enforcing them
+        # against another split mixes distribution shift into the regression
+        # signal, so the mismatch is always recorded and, strictly, refused.
+        gates_payload["benchmark_sha256"] = split_sha256
+        evaluation_cfg = getattr(model_def, "evaluation", None) if model_def is not None else None
+        declared = (
+            evaluation_cfg.get("gates_benchmark") if isinstance(evaluation_cfg, dict) else None
+        )
+        if isinstance(declared, str) and declared:
+            gates_payload["floors_benchmark_sha256"] = declared
+            if declared != split_sha256:
+                message = (
+                    f"evaluation.gates_benchmark {declared[:16]} is not this split "
+                    f"({split_sha256[:16]}); the floors were derived on a different "
+                    "population. Re-derive with `maatml gates derive` or evaluate the "
+                    "split they came from."
+                )
+                if strict_population:
+                    raise GateConfigError(message)
+                console.print(f"[yellow]warning[/] {message}")
+                gates_payload["population_mismatch"] = True
+        if gates_payload.get("advisory_failed"):
+            console.print(
+                "[yellow]advisory[/] below floor: " + ", ".join(gates_payload["advisory_failed"])
+            )
         passed = bool(gates_payload["passed"])
 
     report = Report(
@@ -906,6 +1056,7 @@ def run_evaluation(
         metrics=metrics,
         per_class=per_class,
         slices=slice_stats,
+        counts=counts,
         latency_ms=latency_stats(timings),
         baseline_delta=baseline_delta(metrics, baseline_path),
         sample_failures=failures,

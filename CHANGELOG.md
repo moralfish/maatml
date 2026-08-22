@@ -29,7 +29,26 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
   report's `extras` now always carry `split_sha256` and, when cached,
   `predictions_cache`.
 - `maatml.evaluation.stats`: `wilson_interval` / `wilson_lower`, exact at the
-  0 and n boundaries, raising on `n <= 0`.
+  0 and n boundaries, raising on `n <= 0`; `cluster_bootstrap_lower` and
+  `floor2`.
+- **`maatml gates derive`**. Floors from one or more runs' reports: Wilson
+  95 % lower bound at each metric's own denominator, the per-metric minimum
+  across runs, `--min-n` refusal for thin denominators, and a group-cluster
+  bootstrap (`--cluster-by`, `--min-groups`) when the run carries a
+  predictions cache. `--write` rewrites `<section>.gates` in `model.yml`
+  textually, keeping comments and tiers, and stamps
+  `evaluation.gates_benchmark` with the split hash.
+- **Report `counts`**: `{metric: {k, n}}` behind every harness rate and
+  slice; a metrics plugin adds its own through a `__counts__` entry, which is
+  lifted out of `metrics`.
+- **Gate tiers**: a gate value may be `{min, tier}`; `advisory` misses are
+  recorded under `gates.advisory_failed` and never fail evaluate, the
+  lifecycle runner, or `compile --require-gated`.
+- **Slice gates**: `"slice:<field>=<value>"` gates that slice's pass rate; an
+  empty slice reads `None` and fails.
+- **Population stamp**: with `--gate`, the gates payload records the split's
+  `benchmark_sha256`; when `evaluation.gates_benchmark` names another split
+  evaluate warns (`population_mismatch`), and `--strict-population` refuses.
 
 ## [0.10.0] - 2026-08-17
 

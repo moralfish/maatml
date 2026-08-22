@@ -595,7 +595,7 @@ def _step_evaluate(model_def: ModelDefinition, options: RunOptions) -> str:
         failed = [
             name
             for name, info in ((report.gates or {}).get("results") or {}).items()
-            if not info.get("passed")
+            if not info.get("passed") and info.get("tier", "blocking") != "advisory"
         ]
         raise StepError(f"{tier} failed: {', '.join(sorted(failed))} (report {out_path})")
     return f"{tier} passed, report={out_path.name}"
