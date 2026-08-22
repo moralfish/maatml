@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for the Python package and per-model versions under `examples/`.
 
+## [0.11.2] - 2026-08-23
+
+### Fixed
+
+- `maatml validate` no longer warns that the key named by
+  `evaluation.operating_point.threshold_key` is unrecognized: it is the key
+  `operating-point derive --write` sets.
+
 ## [0.11.1] - 2026-08-23
 
 Two gaps found while a real model folder adopted the evidence layer.

@@ -300,7 +300,10 @@ def config_key_warnings(md: ModelDefinition) -> list[str]:
         if key not in _DATASET_KNOWN_KEYS:
             warns.append(f"dataset.{key}: unrecognized key, ignored by known stages")
     ev = md.evaluation if isinstance(md.evaluation, dict) else {}
+    # The key operating-point derive writes is whatever threshold_key names.
+    op = ev.get("operating_point")
+    threshold_key = op.get("threshold_key") if isinstance(op, dict) else None
     for key in ev:
-        if key not in _EVALUATION_KNOWN_KEYS:
+        if key not in _EVALUATION_KNOWN_KEYS and key != threshold_key:
             warns.append(f"evaluation.{key}: unrecognized key, ignored by known stages")
     return warns

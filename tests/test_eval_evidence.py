@@ -249,3 +249,7 @@ def test_known_keys_accept_slices_and_cache(tmp_path: Path) -> None:
     )
     warnings = config_key_warnings(md)  # type: ignore[arg-type]
     assert warnings == ["evaluation.bogus: unrecognized key, ignored by known stages"]
+
+    # The key operating_point.threshold_key names is one maatml itself writes.
+    md.evaluation["operating_point"] = {"threshold_key": "bogus", "objective": "recall"}
+    assert config_key_warnings(md) == []  # type: ignore[arg-type]
