@@ -91,6 +91,20 @@ prediction cache the next derivations read from (ROADMAP: Evidence layer).
 - **Population stamp**: with `--gate`, the gates payload records the split's
   `benchmark_sha256`; when `evaluation.gates_benchmark` names another split
   evaluate warns (`population_mismatch`), and `--strict-population` refuses.
+- **Sources carry their licence** (`dataset.attribution`). A sidecar Markdown
+  table with one row per `source` (`source`, `licence`, `commercial-use`,
+  `sign-off` required; `provenance` / `consent` and `attribution` read when
+  present; long headers and extra columns accepted). `prepare` refuses a row
+  without a `source` or without a table row, a blocked or unsigned sign-off,
+  and a `no` / `unknown` commercial-use whose sign-off does not record an
+  `accepted-risk — <name> <date>`; the acceptance is recorded in the lock
+  rather than passed as a flag.
+- **Corpus lock**: every prepare writes `output/prepared/corpus.lock.json` —
+  input files by sha256 and row count, the attribution rows used, the risk
+  accepted, and a `lock_sha256` over all of it. `export` copies it into
+  `manifest.json` as `corpus_lock`, and a lock that names sources also ships
+  as the bundle's `ATTRIBUTION.md` (listed in the manifest). The auto
+  `MODEL_CARD.md` from the Slim tranche will embed the same block.
 
 ## [0.10.0] - 2026-08-17
 

@@ -544,16 +544,22 @@ every other item writes into it.
 
 **Sources carry their licence**
 
-- `dataset.sources[]`: name, licence, commercial-use (`yes` / `no` /
-  `unknown`), consent basis, sign-off; `prepare` refuses rows whose source
-  has no entry, and refuses `no` / `unknown` commercial-use without
-  `--accept-risk`, recording the acceptance in the corpus lock (test)
+- `dataset.attribution`: a sidecar Markdown table (one row per `source`:
+  licence, commercial-use `yes` / `no` / `unknown`, consent basis, sign-off;
+  `dataset.sources[]` already names input paths, and licence rows are long
+  and shared across folders, so they live beside the corpus). `prepare`
+  refuses rows whose source has no entry or whose sign-off is blocked or
+  unsigned, and refuses `no` / `unknown` commercial-use unless the sign-off
+  itself records an accepted risk (`accepted-risk — <name> <date>`), which
+  the corpus lock then carries; acceptance is signed in the table, not
+  passed as a flag (test)
 - Corpus lock: hash of every seed file that entered `prepare` plus the
   sources table, written under `output/prepared/` and into the export
   manifest (test)
 - The auto `MODEL_CARD.md` (Slim artifact distribution) gains a per-source
   attribution block from the sources table; still declared metadata only, no
-  inference or lookup (test)
+  inference or lookup. Until that card exists the block ships as the
+  bundle's `ATTRIBUTION.md`, listed in the manifest (test)
 
 **Training tells the truth earlier**
 

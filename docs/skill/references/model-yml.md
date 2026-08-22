@@ -106,6 +106,57 @@ error, not a warning. A benchmark is pinned to test on purpose: it is the
 population release decisions are made against, and it should be able to grow
 without retraining.
 
+### Sources carry their licence
+
+```yaml
+dataset:
+  attribution: datasets/ATTRIBUTION.md   # a sidecar Markdown table, one row per `source`
+```
+
+The table is the execute-time licence record, kept beside the corpus rather
+than inside `model.yml` because licence rows are long and shared across model
+folders. The first Markdown table whose first column is `source` is read;
+columns are matched by the casefolded prefix of their header, so a real table
+with long headers and extra columns parses as it is:
+
+```markdown
+| source     | licence   | commercial-use | provenance/consent | attribution         | sign-off                           |
+| ---        | ---       | ---            | ---                | ---                 | ---                                |
+| meva       | CC BY 4.0 | yes            | consented actors   | © Kitware and IARPA | cleared — A. Name 2026-08-17       |
+| crowdhuman | research  | no             | third-party photos | CrowdHuman          | accepted-risk — A. Name 2026-08-17 |
+| dukemtmc   | withdrawn | no             | non-consented      | —                   | do not use                         |
+```
+
+`source`, `licence` (or `license`), `commercial-use` and `sign-off` are
+required; `provenance` / `consent` and `attribution` are read when present.
+`commercial-use` is read from the start of the cell — `yes`, `no`, anything
+else is `unknown` — so a hedge like `unknown until filtered` stays unknown.
+
+With the key declared, `prepare` checks every row that enters (seed,
+benchmark and blind) and refuses to write splits when:
+
+- a row carries no `source`, or its source has no table row;
+- the sign-off is blocked (`do not use`, `blocked`, `fixtures only`) or
+  unsigned (empty or `*unsigned*`);
+- commercial-use is `no` or `unknown` and the sign-off does not record an
+  accepted risk.
+
+Risk is accepted in the table, not on the command line: a sign-off such as
+`accepted-risk — A. Name 2026-08-17` admits a `no` / `unknown` source and is
+recorded against it in the corpus lock, so the acceptance carries a name and
+a date rather than a flag nobody can trace later. A blocked row is never
+admitted by an acceptance.
+
+Every prepare — with or without a table — writes
+`output/prepared/corpus.lock.json`: each input file by path, sha256 and row
+count, the table rows the corpus actually used with their row counts, the
+risk accepted, and a `lock_sha256` over all of it. `maatml export` copies the
+lock into `manifest.json` as `corpus_lock`, and when it names sources the
+bundle also ships an `ATTRIBUTION.md` rendered from those rows (listed in the
+manifest, so `verify` covers it). Nothing is looked up or inferred at export:
+the block is the declared table and nothing else. When the auto
+`MODEL_CARD.md` lands it embeds the same block.
+
 ## Evaluation and gates
 
 ```yaml

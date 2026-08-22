@@ -31,6 +31,7 @@ _PATH_KEYS = frozenset(
         "contracts",
         "tokenizer",
         "template_dir",
+        "attribution",
     }
 )
 
@@ -273,6 +274,7 @@ _DATASET_KNOWN_KEYS = frozenset(
         "isolation",
         "pins",
         "blind_samples",
+        "attribution",
     }
 )
 _EVALUATION_KNOWN_KEYS = frozenset(

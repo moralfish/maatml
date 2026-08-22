@@ -13,13 +13,20 @@ import json
 import warnings
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Optional, Sequence
 
 from rich.console import Console
 
 from ..config import ModelDefinition, get_dataset_cfg
 from ..registry import SANITIZERS, register_format
 from ..utils.io import iter_jsonl, stable_hash, write_jsonl
+from .attribution import (
+    AttributionError,
+    check_sources,
+    read_attribution,
+    resolve_attribution,
+    write_corpus_lock,
+)
 from .populations import (
     apply_pins,
     benchmark_version,
@@ -327,6 +334,7 @@ def prepare_rows(
     benchmark_label: Optional[str] = None,
     sanitize_applied: Optional[list[str]] = None,
     blind_rows: Optional[list[dict]] = None,
+    input_files: Optional[Sequence[Path]] = None,
 ) -> dict:
     """Split already-loaded rows and write train/val/test + dataset card.
 
@@ -339,6 +347,10 @@ def prepare_rows(
     ``sanitize_applied`` is the list of sanitizer tags actually run on the rows
     (the card reports these, not the declared config, so it never claims a
     sanitizer ran when it did not).
+
+    With ``dataset.attribution`` declared every row's ``source`` must hold a
+    signed entry; the corpus lock records ``input_files`` (the seed,
+    benchmark and blind files as they were read) by sha256.
     """
     cfg = get_dataset_cfg(model_def)
     out = Path(out_dir) if out_dir else model_def.prepared_dir
@@ -432,6 +444,18 @@ def prepare_rows(
             request_field=str(cfg.get("request_field") or cfg.get("raw_field") or "") or None,
         )
 
+    attribution_path = resolve_attribution(model_def)
+    source_check = None
+    if attribution_path is not None:
+        entries = read_attribution(attribution_path)
+        every_row = [row for rows in by_split.values() for row in rows] + list(blind_rows or [])
+        source_check = check_sources(every_row, entries)
+        if not source_check.ok:
+            raise AttributionError(
+                f"{attribution_path.name} refuses to prepare:\n  "
+                + "\n  ".join(source_check.refusals)
+            )
+
     # After benchmark pinning: test may be non-empty only because of it.
     _warn_on_empty_splits(by_split, n_groups=len(group_assignment))
 
@@ -447,6 +471,20 @@ def prepare_rows(
 
     paths = {split.value: str(_write_split(rows, out, split)) for split, rows in by_split.items()}
     split_counts = {split.value: len(rows) for split, rows in by_split.items()}
+    lock_files = (
+        list(input_files)
+        if input_files is not None
+        else [
+            Path(label)
+            for label in (seed_label, benchmark_label)
+            if label and Path(label).is_file()
+        ]
+    )
+    lock = write_corpus_lock(
+        out, files=lock_files, attribution_path=attribution_path, check=source_check
+    )
+    lock_sha = json.loads(lock.read_text(encoding="utf-8"))["lock_sha256"]
+    accepted_risk = dict(source_check.accepted_risk) if source_check else {}
     card = _write_dataset_card(
         out,
         title=f"{model_def.identity} dataset",
@@ -464,6 +502,9 @@ def prepare_rows(
             f"Pins: {pinned if pinned else 'none'}",
             f"Isolation: {isolation.policy if isolation else 'none'}",
             f"Blind rows (checked, not written): {len(blind_rows or [])}",
+            f"Attribution: {attribution_path or 'none'}",
+            f"Accepted risk: {accepted_risk if accepted_risk else 'none'}",
+            f"Corpus lock: {lock_sha}",
         ],
     )
 
@@ -479,6 +520,8 @@ def prepare_rows(
         "benchmark_version": version,
         "pins": pinned,
         "blind_rows": len(blind_rows or []),
+        "corpus_lock": lock_sha,
+        "accepted_risk": accepted_risk,
     }
     console.print(
         f"[green]prepare complete[/] ({model_def.identity}): {summary['split_counts']} "
@@ -521,7 +564,11 @@ def prepare(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
 
     blind_rows: list[dict] = []
     blind_path = cfg.get("blind_samples")
+    input_files = [seed_path]
+    if benchmark_path:
+        input_files.append(model_def.resolve(benchmark_path))
     if blind_path:
+        input_files.append(model_def.resolve(blind_path))
         for raw in iter_jsonl(model_def.resolve(blind_path)):
             blind_rows.append(_apply_sanitize(raw, sanitize_tags, request_field))
 
@@ -534,4 +581,5 @@ def prepare(model_def: ModelDefinition, out_dir: Optional[Path] = None) -> dict:
         benchmark_label=bench_label,
         sanitize_applied=sanitize_tags,
         blind_rows=blind_rows or None,
+        input_files=input_files,
     )
