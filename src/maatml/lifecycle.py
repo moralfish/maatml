@@ -474,6 +474,13 @@ class EvaluationSpec(BaseModel):
     gates on, so a typo here would otherwise be discovered only after training
     finished. Unknown keys are rejected for the same reason ``model.yml``'s
     top level rejects them.
+
+    Rejecting unknown keys means carrying every *known* one. The fields below
+    the divider are not read here - they are declared so that a section
+    ``config.py`` accepts, ``validate`` passes and ``evaluate`` honours is not
+    refused by ``run`` alone. A folder that configures slices or a prediction
+    cache could otherwise run every stage individually and nothing end to end,
+    which is the opposite of the check this class exists to make.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -483,6 +490,14 @@ class EvaluationSpec(BaseModel):
     metrics: Optional[Union[str, list[str]]] = None
     gates: dict[str, float] = Field(default_factory=dict)
     repair_braces: bool = False
+
+    # Known to config.py, not depended on by the runner. Keep in step with
+    # ``config._EVALUATION_KNOWN_KEYS``.
+    gates_benchmark: Optional[str] = None
+    operating_point: Optional[dict[str, Any]] = None
+    slices: Optional[list[Any]] = None
+    cache_predictions: bool = False
+    batch_size: Optional[int] = None
 
 
 def validate_run_config(
