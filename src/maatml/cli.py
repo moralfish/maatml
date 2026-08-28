@@ -31,6 +31,7 @@ from typing import Any, Optional
 import typer
 from rich.console import Console
 
+from . import __version__
 from .config import config_key_warnings, get_dataset_cfg, load_model_def
 from .overrides import (
     apply_overrides,
@@ -73,6 +74,13 @@ _USER_ERRORS = (
 )
 
 
+def _version_callback(value: bool) -> None:
+    """Prints `maatml <version>` and exits, so tool probes can read the version."""
+    if value:
+        console.print(f"maatml {__version__}")
+        raise typer.Exit
+
+
 @app.callback()
 def _main_callback(
     debug: bool = typer.Option(
@@ -80,6 +88,13 @@ def _main_callback(
         "--debug",
         help="Print full tracebacks for user errors (missing files, invalid "
         "model.yml, unknown plugins) instead of a single line.",
+    ),
+    version: bool = typer.Option(
+        False,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Print the maatml version and exit.",
     ),
 ) -> None:
     """maatml CLI."""
