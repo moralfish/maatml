@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 for the Python package and per-model versions under `examples/`.
 
+## [0.13.0] - 2026-08-28
+
+### Fixed
+
+- **`run` accepts every evaluation key `config` does.** `EvaluationSpec`
+  forbids extra keys so a typo is caught before training spends the compute,
+  but it knew five keys where `config._EVALUATION_KNOWN_KEYS` knows eleven. A
+  folder declaring `slices`, `cache_predictions`, `gates_benchmark`,
+  `operating_point` or `batch_size` passed `validate`, passed `evaluate`, and
+  was refused by `run` with `evaluation: section is invalid: Extra inputs are
+  not permitted` — every stage individually, nothing end to end, which left the
+  evidence layer unreachable through the runner. The remaining known keys are
+  now declared; the runner does not read them, it carries them so the section
+  it validates is the section `config.py` accepts. The extra-forbid typo check
+  is unchanged, and a test asserts `EvaluationSpec` covers
+  `_EVALUATION_KNOWN_KEYS` so the two cannot drift apart again.
+
+### Added
+
+- **`maatml --version`.** Prints `maatml <version>` and exits, so a tool probe
+  can read the version without loading a model folder. `maatml.__version__`
+  comes from the installed package metadata and falls back to
+  `0.0.0+unknown` in a source tree with no install.
+
 ## [0.12.0] - 2026-08-23
 
 ### Added
